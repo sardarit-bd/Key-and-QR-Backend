@@ -1,12 +1,18 @@
 import app from "./app/app.js";
+import { connectCloudinary } from "./config/cloudinary.js";
 import connectDB from "./config/database.js";
 import env from "./config/env.js";
+import { startMediaCleanupJob } from "./jobs/mediaCleanup.job.js";
 import createAdmin from "./seeders/createAdmin.js";
 import logger from "./utils/logger.js";
 
 const startServer = async () => {
   try {
     await connectDB();
+
+    await connectCloudinary();
+
+    startMediaCleanupJob();
 
     // create admin automatically
     await createAdmin();

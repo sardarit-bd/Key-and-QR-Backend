@@ -4,7 +4,10 @@ import httpStatus from "../../constants/httpStatus.js";
 import productService from "./product.service.js";
 
 const createProduct = catchAsync(async (req, res) => {
-  const result = await productService.createProduct(req.body);
+  const image = req.files?.image?.[0];
+  const gallery = req.files?.gallery || [];
+
+  const result = await productService.createProduct(req.body, image, gallery);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
@@ -15,13 +18,14 @@ const createProduct = catchAsync(async (req, res) => {
 });
 
 const getAllProducts = catchAsync(async (req, res) => {
-  const result = await productService.getAllProducts();
+  const result = await productService.getAllProducts(req.query);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Products fetched successfully",
-    data: result,
+    meta: result.meta,
+    data: result.data,
   });
 });
 
@@ -37,9 +41,14 @@ const getProductById = catchAsync(async (req, res) => {
 });
 
 const updateProduct = catchAsync(async (req, res) => {
+  const image = req.files?.image?.[0];
+  const gallery = req.files?.gallery || [];
+
   const result = await productService.updateProduct(
     req.params.id,
-    req.body
+    req.body,
+    image,
+    gallery
   );
 
   sendResponse(res, {
@@ -51,12 +60,34 @@ const updateProduct = catchAsync(async (req, res) => {
 });
 
 const deleteProduct = catchAsync(async (req, res) => {
-  const result = await productService.deleteProduct(req.params.id);
+  const result = await productService.softDeleteProduct(req.params.id);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
-    message: "Product deleted successfully",
+    message: "Product moved to trash successfully",
+    data: result,
+  });
+});
+
+const restoreProduct = catchAsync(async (req, res) => {
+  const result = await productService.restoreProduct(req.params.id);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Product restored successfully",
+    data: result,
+  });
+});
+
+const permanentDeleteProduct = catchAsync(async (req, res) => {
+  const result = await productService.permanentDeleteProduct(req.params.id);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Product permanently deleted successfully",
     data: result,
   });
 });
@@ -67,4 +98,6 @@ export default {
   getProductById,
   updateProduct,
   deleteProduct,
+  restoreProduct,
+  permanentDeleteProduct,
 };
