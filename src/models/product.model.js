@@ -1,5 +1,13 @@
 import mongoose from "mongoose";
 
+const imageSchema = new mongoose.Schema(
+  {
+    public_id: String,
+    url: String,
+  },
+  { _id: false }
+);
+
 const productSchema = new mongoose.Schema(
   {
     name: {
@@ -22,21 +30,20 @@ const productSchema = new mongoose.Schema(
     brand: {
       type: String,
       default: "",
+      trim: true,
     },
 
-    image: {
-      type: String,
-      required: true,
-    },
+    image: imageSchema,
 
     gallery: {
-      type: [String],
+      type: [imageSchema],
       default: [],
     },
 
     description: {
       type: String,
       required: true,
+      trim: true,
     },
 
     stock: {
@@ -47,13 +54,17 @@ const productSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
+    },
+
+    deletedAt: {
+      type: Date,
+      default: null,
     },
   },
-  {
-    timestamps: true,
-  }
+  { timestamps: true }
 );
 
-const Product = mongoose.model("Product", productSchema);
+productSchema.index({ name: "text", category: "text", brand: "text" });
 
-export default Product;
+export default mongoose.model("Product", productSchema);
