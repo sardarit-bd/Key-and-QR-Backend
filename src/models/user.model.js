@@ -1,6 +1,14 @@
 import mongoose from "mongoose";
 import roles from "../constants/roles.js";
 
+const imageSchema = new mongoose.Schema(
+  {
+    public_id: String,
+    url: String,
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -10,6 +18,7 @@ const userSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 50,
     },
+
     email: {
       type: String,
       required: [true, "Email is required"],
@@ -17,26 +26,36 @@ const userSchema = new mongoose.Schema(
       lowercase: true,
       trim: true,
     },
+
     password: {
       type: String,
       required: [true, "Password is required"],
       minlength: 6,
       select: false,
     },
+
     role: {
       type: String,
       enum: [roles.USER, roles.ADMIN],
       default: roles.USER,
     },
+
+    profileImage: {
+      type: imageSchema,
+      default: null,
+    },
+
     isDeleted: {
       type: Boolean,
       default: false,
     },
+
     passwordResetToken: {
       type: String,
       default: null,
       select: false,
     },
+
     passwordResetExpires: {
       type: Date,
       default: null,

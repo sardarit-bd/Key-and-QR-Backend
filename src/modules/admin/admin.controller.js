@@ -3,12 +3,8 @@ import sendResponse from "../../utils/sendResponse.js";
 import httpStatus from "../../constants/httpStatus.js";
 import adminService from "./admin.service.js";
 
-
-
-
 const createAdmin = catchAsync(async (req, res) => {
     const result = await adminService.createAdmin(req.body);
-
     sendResponse(res, {
         statusCode: httpStatus.CREATED,
         success: true,
@@ -19,7 +15,6 @@ const createAdmin = catchAsync(async (req, res) => {
 
 const getAllUsers = catchAsync(async (req, res) => {
     const result = await adminService.getAllUsers();
-
     sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
@@ -30,7 +25,6 @@ const getAllUsers = catchAsync(async (req, res) => {
 
 const getUserById = catchAsync(async (req, res) => {
     const result = await adminService.getUserById(req.params.id);
-
     sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
@@ -40,11 +34,7 @@ const getUserById = catchAsync(async (req, res) => {
 });
 
 const updateUserRole = catchAsync(async (req, res) => {
-    const result = await adminService.updateUserRole(
-        req.params.id,
-        req.body.role
-    );
-
+    const result = await adminService.updateUserRole(req.params.id, req.body.role);
     sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
@@ -53,9 +43,20 @@ const updateUserRole = catchAsync(async (req, res) => {
     });
 });
 
+const updateAdminProfile = catchAsync(async (req, res) => {
+    const userId = req.user._id.toString();
+    const image = req.file;
+    const result = await adminService.updateAdminProfile(userId, req.body, image);
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Profile updated successfully",
+        data: result,
+    });
+});
+
 const deleteUser = catchAsync(async (req, res) => {
     const result = await adminService.deleteUser(req.params.id);
-
     sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
@@ -69,5 +70,6 @@ export default {
     getAllUsers,
     getUserById,
     updateUserRole,
+    updateAdminProfile,
     deleteUser,
 };
