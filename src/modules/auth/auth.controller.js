@@ -10,10 +10,17 @@ const refreshCookieOptions = {
   sameSite: env.nodeEnv === "production" ? "none" : "lax",
 };
 
+const roleCookieOptions = {
+  httpOnly: false,
+  secure: env.nodeEnv === "production",
+  sameSite: env.nodeEnv === "production" ? "none" : "lax",
+};
+
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
 
   res.cookie("refreshToken", result.refreshToken, refreshCookieOptions);
+  res.cookie("userRole", result.user.role, roleCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
@@ -30,6 +37,7 @@ const login = catchAsync(async (req, res) => {
   const result = await authService.loginUser(req.body);
 
   res.cookie("refreshToken", result.refreshToken, refreshCookieOptions);
+  res.cookie("userRole", result.user.role, roleCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -67,6 +75,7 @@ const refreshToken = catchAsync(async (req, res) => {
 
 const logout = catchAsync(async (req, res) => {
   res.clearCookie("refreshToken", refreshCookieOptions);
+  res.clearCookie("userRole", roleCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
