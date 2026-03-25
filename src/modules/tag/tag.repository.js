@@ -1,3 +1,4 @@
+// modules/tag/tag.repository.js
 import Tag from "./tag.model.js";
 
 const createTag = (payload) => {
@@ -20,10 +21,28 @@ const updateTag = (id, payload) => {
   return Tag.findByIdAndUpdate(id, payload, { new: true });
 };
 
+const findUnusedTag = async () => {
+  return Tag.findOne({
+    isActivated: false,
+    owner: null,
+    isActive: true,
+    // reservedForOrder: null,
+  }).sort({ createdAt: 1 });
+};
+
+// const findUnusedTagSimple = async () => {
+//   return Tag.findOne({
+//     isActivated: false,
+//     owner: null,
+//     isActive: true,
+//   }).sort({ createdAt: 1 });
+// };
+
 export default {
   createTag,
   findByTagCode,
   getAllTags,
   findById,
   updateTag,
+  findUnusedTag, 
 };

@@ -2,7 +2,8 @@ import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import tagRepository from "../tag/tag.repository.js";
 import scanRepository from "./scan.repository.js";
-import Quote from "../quote/quote.model.js"; // later create korba
+import Quote from "../quote/quote.model.js";
+import subscriptionService from "../subscription/subscription.service.js";
 
 const getTodayKey = () => {
   return new Date().toISOString().split("T")[0];
@@ -27,44 +28,59 @@ const unlockTag = async (tagCode, user, category) => {
 
   const todayKey = getTodayKey();
 
-  const todayScans = await scanRepository.getTodayScans(
-    tag._id,
-    todayKey
-  );
+  // subscription rules
+  const rules = subscriptionService.getRules(tag.subscriptionType);
 
-  const scanCount = todayScans.length;
+  // today's scan count
+  const scanCount = await scanRepository.countTodayScans(tag._id, todayKey);
 
-  // 🔑 FREE USER
-  if (tag.subscriptionType === "free") {
-    if (scanCount >= 1) {
-      return {
-        status: "LIMIT_REACHED",
-        message: "Come back tomorrow",
-      };
-    }
+  // limit check
+  if (scanCount >= rules.dailyLimit) {
+    return {
+      status: "LIMIT_REACHED",
+      message: "Come back tomorrow",
+    };
   }
 
-  // 💎 SUBSCRIBER
-  if (tag.subscriptionType === "subscriber") {
-    if (scanCount >= 3) {
-      return {
-        status: "LIMIT_REACHED",
-        message: "Come back tomorrow",
-      };
-    }
+  // category control (subscriber only)
+  let selectedCategory = null;
+  if (rules.canChooseCategory && category) {
+    selectedCategory = category;
   }
 
-  // 🎯 Get quote
-  let query = { isActive: true };
+  // build quote query
+  const query = { isActive: true };
 
-  if (category) {
-    query.category = category;
+  if (selectedCategory) {
+    query.category = selectedCategory;
   }
 
-  const quote = await Quote.aggregate([
+  // prevent duplicate quote for today
+  const usedQuoteIds = await scanRepository.getUsedQuoteIds(tag._id, todayKey);
+
+  if (usedQuoteIds.length > 0) {
+    query._id = { $nin: usedQuoteIds };
+  }
+
+  // get random quote
+  let quote = await Quote.aggregate([
     { $match: query },
     { $sample: { size: 1 } },
   ]);
+
+  // fallback: if all quotes already used today
+  if (!quote.length) {
+    const fallbackQuery = { isActive: true };
+
+    if (selectedCategory) {
+      fallbackQuery.category = selectedCategory;
+    }
+
+    quote = await Quote.aggregate([
+      { $match: fallbackQuery },
+      { $sample: { size: 1 } },
+    ]);
+  }
 
   if (!quote.length) {
     throw new AppError(httpStatus.NOT_FOUND, "No quote found");
@@ -72,10 +88,10 @@ const unlockTag = async (tagCode, user, category) => {
 
   const selectedQuote = quote[0];
 
-  // 💾 Save scan
+  // save scan history
   await scanRepository.createScan({
     tag: tag._id,
-    user: tag.owner,
+    user: user.userId,
     quote: selectedQuote._id,
     category: selectedQuote.category,
     scanDateKey: todayKey,
@@ -86,6 +102,7 @@ const unlockTag = async (tagCode, user, category) => {
     data: {
       quote: selectedQuote.text,
       category: selectedQuote.category,
+      remaining: rules.dailyLimit - (scanCount + 1),
     },
   };
 };

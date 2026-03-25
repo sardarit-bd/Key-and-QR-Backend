@@ -5,6 +5,7 @@ import productRoutes from "../modules/product/product.routes.js";
 import tagRoutes from "../modules/tag/tag.routes.js";
 import scanRoutes from "../modules/scan/scan.routes.js";
 import quoteRoutes from "../modules/quote/quote.routes.js";
+import orderRoutes from "../modules/order/order.routes.js"
 
 const router = express.Router();
 
@@ -14,6 +15,7 @@ router.use("/products", productRoutes);
 router.use("/tags", tagRoutes);
 router.use("/scan", scanRoutes);
 router.use("/quotes", quoteRoutes);
+router.use("/orders", orderRoutes);
 
 
 export default router;
