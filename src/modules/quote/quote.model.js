@@ -17,10 +17,14 @@ const quoteSchema = new mongoose.Schema(
     isActive: {
       type: Boolean,
       default: true,
+      index: true,
     },
   },
   { timestamps: true }
 );
+
+// Create index for faster random queries
+quoteSchema.index({ category: 1, isActive: 1 });
 
 const Quote = mongoose.model("Quote", quoteSchema);
 export default Quote;

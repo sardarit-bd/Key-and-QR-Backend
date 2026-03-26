@@ -18,8 +18,31 @@ const getUsedQuoteIds = (tagId, dateKey) => {
   }).distinct("quote");
 };
 
+const getLastScan = async (tagId) => {
+  return ScanHistory.findOne({ tag: tagId })
+    .sort({ createdAt: -1 })
+    .populate("quote", "text category");
+};
+
+const getTodayScan = async (tagId, dateKey) => {
+  return ScanHistory.findOne({
+    tag: tagId,
+    scanDateKey: dateKey,
+  }).populate("quote", "text category");
+};
+
+const getScanByTagAndDate = async (tagId, dateKey) => {
+  return ScanHistory.findOne({
+    tag: tagId,
+    scanDateKey: dateKey,
+  }).populate("quote", "text category");
+};
+
 export default {
   createScan,
   countTodayScans,
   getUsedQuoteIds,
+  getLastScan,
+  getTodayScan,
+  getScanByTagAndDate,
 };

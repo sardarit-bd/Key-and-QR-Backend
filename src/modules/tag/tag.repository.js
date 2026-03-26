@@ -1,4 +1,3 @@
-// modules/tag/tag.repository.js
 import Tag from "./tag.model.js";
 
 const createTag = (payload) => {
@@ -9,8 +8,43 @@ const findByTagCode = (tagCode) => {
   return Tag.findOne({ tagCode });
 };
 
-const getAllTags = () => {
-  return Tag.find().populate("owner", "name email");
+const getAllTags = async (query = {}) => {
+  const { page = 1, limit = 10, search, isActivated, isActive } = query;
+
+  const filter = {};
+
+  if (search) {
+    filter.tagCode = { $regex: search, $options: "i" };
+  }
+
+  if (isActivated !== undefined) {
+    filter.isActivated = isActivated === "true";
+  }
+
+  if (isActive !== undefined) {
+    filter.isActive = isActive === "true";
+  }
+
+  const skip = (page - 1) * limit;
+
+  const [data, total] = await Promise.all([
+    Tag.find(filter)
+      .populate("owner", "name email")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit)),
+    Tag.countDocuments(filter)
+  ]);
+
+  return {
+    meta: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      totalPage: Math.ceil(total / limit)
+    },
+    data
+  };
 };
 
 const findById = (id) => {
@@ -26,17 +60,20 @@ const findUnusedTag = async () => {
     isActivated: false,
     owner: null,
     isActive: true,
-    // reservedForOrder: null,
   }).sort({ createdAt: 1 });
 };
 
-// const findUnusedTagSimple = async () => {
-//   return Tag.findOne({
-//     isActivated: false,
-//     owner: null,
-//     isActive: true,
-//   }).sort({ createdAt: 1 });
-// };
+const updatePersonalMessage = async (tagCode, message) => {
+  return Tag.findOneAndUpdate(
+    { tagCode },
+    { personalMessage: message },
+    { new: true }
+  );
+};
+
+const findByTagCodeWithOwner = async (tagCode) => {
+  return Tag.findOne({ tagCode }).populate("owner", "name email");
+};
 
 export default {
   createTag,
@@ -44,5 +81,7 @@ export default {
   getAllTags,
   findById,
   updateTag,
-  findUnusedTag, 
+  findUnusedTag,
+  updatePersonalMessage,
+  findByTagCodeWithOwner,
 };

@@ -21,6 +21,29 @@ const unlockTag = catchAsync(async (req, res) => {
   });
 });
 
+const getLastUnlock = catchAsync(async (req, res) => {
+  const { tagCode } = req.params;
+
+  const tag = await tagRepository.findByTagCode(tagCode);
+  if (!tag) {
+    throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
+  }
+
+  const lastScan = await scanRepository.getLastScan(tag._id);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    data: lastScan ? {
+      quote: lastScan.quote?.text,
+      category: lastScan.category,
+      scannedAt: lastScan.createdAt,
+      scanDateKey: lastScan.scanDateKey,
+    } : null,
+  });
+});
+
 export default {
   unlockTag,
+  getLastUnlock,
 };

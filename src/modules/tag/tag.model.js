@@ -35,6 +35,13 @@ const tagSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+    
+    personalMessage: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: 500,
+    },
   },
   { timestamps: true }
 );

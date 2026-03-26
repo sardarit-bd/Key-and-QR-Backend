@@ -11,10 +11,30 @@ import {
 
 const router = express.Router();
 
-// Admin only
+// ==================== PUBLIC ROUTES ====================
+// Tag resolution for QR scan (first API call when scanning)
+router.get("/resolve/:tagCode", tagController.resolveTag);
+
+// Get tag info by code
+router.get("/:tagCode", tagController.getTagByCode);
+
+// Get personal message (public - anyone can see)
+router.get("/:tagCode/personal-message", tagController.getPersonalMessage);
+
+// ==================== AUTHENTICATED ROUTES ====================
+// Activate tag (requires login)
+router.post("/activate/:tagCode", auth(), tagController.activateTag);
+
+router.put(
+  "/:tagCode/personal-message",
+  auth(),
+  tagController.setPersonalMessage
+);
+
+// ==================== ADMIN ONLY ROUTES ====================
 router.post(
   "/",
-  auth(),
+  auth(roles.ADMIN),
   roleMiddleware(roles.ADMIN),
   validateRequest(createTagValidation),
   tagController.createTag
@@ -22,24 +42,14 @@ router.post(
 
 router.get(
   "/",
-  auth(),
+  auth(roles.ADMIN),
   roleMiddleware(roles.ADMIN),
   tagController.getAllTags
 );
 
-router.get("/:tagCode", tagController.getTagByCode);
-
-router.get("/t/:tagCode", tagController.resolveTag);
-
-router.post(
-  "/activate/:tagCode",
-  auth(),
-  tagController.activateTag
-);
-
 router.patch(
   "/:id",
-  auth(),
+  auth(roles.ADMIN),
   roleMiddleware(roles.ADMIN),
   validateRequest(updateTagValidation),
   tagController.updateTag

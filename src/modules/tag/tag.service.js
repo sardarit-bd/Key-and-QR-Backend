@@ -12,8 +12,8 @@ const createTag = async (payload) => {
   return tagRepository.createTag(payload);
 };
 
-const getAllTags = async () => {
-  return tagRepository.getAllTags();
+const getAllTags = async (query) => {
+  return tagRepository.getAllTags(query);
 };
 
 const getTagByCode = async (tagCode) => {
@@ -60,12 +60,55 @@ const activateTag = async (tagCode, userId) => {
 
 const getUnusedTag = async () => {
   const tag = await tagRepository.findUnusedTag();
-  
+
   if (!tag) {
     throw new AppError(httpStatus.BAD_REQUEST, "No available tags");
   }
-  
+
   return tag;
+};
+
+// Set personal message
+const setPersonalMessage = async (tagCode, userId, message) => {
+  const tag = await tagRepository.findByTagCode(tagCode);
+
+  if (!tag) {
+    throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
+  }
+
+  // Check if user owns the tag
+  if (!tag.owner || tag.owner.toString() !== userId) {
+    throw new AppError(httpStatus.FORBIDDEN, "You don't own this tag");
+  }
+
+  // Validate message length
+  if (message && message.length > 500) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Personal message cannot exceed 500 characters");
+  }
+
+  const updated = await tagRepository.updateTag(tag._id, {
+    personalMessage: message || null,
+  });
+
+  return {
+    personalMessage: updated.personalMessage,
+    tagCode: updated.tagCode,
+  };
+};
+
+// Get personal message
+const getPersonalMessage = async (tagCode) => {
+  const tag = await tagRepository.findByTagCode(tagCode);
+
+  if (!tag) {
+    throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
+  }
+
+  return {
+    hasPersonalMessage: !!tag.personalMessage,
+    personalMessage: tag.personalMessage,
+    tagCode: tag.tagCode,
+  };
 };
 
 export default {
@@ -75,4 +118,6 @@ export default {
   updateTag,
   activateTag,
   getUnusedTag,
+  setPersonalMessage,
+  getPersonalMessage,
 };

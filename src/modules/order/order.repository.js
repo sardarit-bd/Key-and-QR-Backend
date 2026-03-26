@@ -20,7 +20,6 @@ const findByUser = (userId) => {
     .sort({ createdAt: -1 });
 };
 
-
 export default {
   createOrder,
   findById,

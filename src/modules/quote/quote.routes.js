@@ -11,7 +11,7 @@ import {
 
 const router = express.Router();
 
-// Admin only
+// Admin only routes
 router.post(
   "/",
   auth(),
@@ -20,7 +20,19 @@ router.post(
   quoteController.createQuote
 );
 
-router.get("/", auth(), roleMiddleware(roles.ADMIN), quoteController.getAllQuotes);
+router.get(
+  "/",
+  auth(),
+  roleMiddleware(roles.ADMIN),
+  quoteController.getAllQuotes
+);
+
+router.get(
+  "/:id",
+  auth(),
+  roleMiddleware(roles.ADMIN),
+  quoteController.getQuoteById
+);
 
 router.patch(
   "/:id",
@@ -28,6 +40,13 @@ router.patch(
   roleMiddleware(roles.ADMIN),
   validateRequest(updateQuoteValidation),
   quoteController.updateQuote
+);
+
+router.patch(
+  "/:id/toggle",
+  auth(),
+  roleMiddleware(roles.ADMIN),
+  quoteController.toggleQuoteActive
 );
 
 router.delete(

@@ -6,4 +6,8 @@ const router = express.Router();
 
 router.post("/unlock/:tagCode", auth(), scanController.unlockTag);
 
+router.post("/unlock/:tagCode", auth(), scanController.unlockTag);
+
+router.get("/last/:tagCode", auth(), scanController.getLastUnlock);
+
 export default router;
