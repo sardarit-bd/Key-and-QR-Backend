@@ -19,7 +19,7 @@ const scanHistorySchema = new mongoose.Schema(
     quote: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Quote",
-      required: true,
+      default: null,
     },
 
     category: {
@@ -28,7 +28,7 @@ const scanHistorySchema = new mongoose.Schema(
     },
 
     scanDateKey: {
-      type: String, // e.g. "2026-03-25"
+      type: String,
       required: true,
       index: true,
     },
@@ -36,8 +36,10 @@ const scanHistorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// compound index for daily lookup
+// compound indexes for better query performance
 scanHistorySchema.index({ tag: 1, scanDateKey: 1 });
+scanHistorySchema.index({ user: 1, createdAt: -1 });
+scanHistorySchema.index({ user: 1, scanDateKey: 1 });
 
 const ScanHistory = mongoose.model("ScanHistory", scanHistorySchema);
 

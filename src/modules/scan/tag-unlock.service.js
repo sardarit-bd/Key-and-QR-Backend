@@ -28,7 +28,7 @@ const unlockTag = async (tagCode, user, category) => {
 
   const todayKey = getTodayKey();
 
-  // ==================== 🆕 PERSONAL MESSAGE CHECK ====================
+  // ==================== PERSONAL MESSAGE CHECK ====================
   if (tag.personalMessage && tag.personalMessage.trim() !== "") {
     await scanRepository.createScan({
       tag: tag._id,

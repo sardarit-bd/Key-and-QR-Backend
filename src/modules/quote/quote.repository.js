@@ -6,18 +6,18 @@ const createQuote = (payload) => {
 
 const getAllQuotes = async (page = 1, limit = 10, search = "", category = null) => {
   const skip = (page - 1) * limit;
-  
+
   // Build filter
   const filter = {};
-  
+
   if (search) {
     filter.text = { $regex: search, $options: "i" };
   }
-  
+
   if (category && category !== "all") {
     filter.category = category;
   }
-  
+
   const [data, total] = await Promise.all([
     Quote.find(filter)
       .sort({ createdAt: -1 })
@@ -25,7 +25,7 @@ const getAllQuotes = async (page = 1, limit = 10, search = "", category = null) 
       .limit(limit),
     Quote.countDocuments(filter)
   ]);
-  
+
   return {
     meta: {
       page: parseInt(page),
@@ -49,10 +49,13 @@ const deleteQuote = (id) => {
   return Quote.findByIdAndDelete(id);
 };
 
-const toggleActive = (id) => {
+const toggleActive = async (id) => {
+  const quote = await Quote.findById(id);
+  if (!quote) return null;
+
   return Quote.findByIdAndUpdate(
     id,
-    [{ $set: { isActive: { $not: "$isActive" } } }],
+    { isActive: !quote.isActive },
     { new: true }
   );
 };
@@ -62,12 +65,12 @@ const getRandomQuoteByCategory = async (category, excludeIds = []) => {
   if (excludeIds.length > 0) {
     filter._id = { $nin: excludeIds };
   }
-  
+
   const quotes = await Quote.aggregate([
     { $match: filter },
     { $sample: { size: 1 } }
   ]);
-  
+
   return quotes[0] || null;
 };
 
