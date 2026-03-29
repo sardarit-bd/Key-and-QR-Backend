@@ -1,4 +1,3 @@
-// routes/stripe.webhook.js
 import express from "express";
 import stripe from "../config/stripe.js";
 import env from "../config/env.js";
