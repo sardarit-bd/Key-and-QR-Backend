@@ -7,7 +7,6 @@ const createQuote = (payload) => {
 const getAllQuotes = async (page = 1, limit = 10, search = "", category = null) => {
   const skip = (page - 1) * limit;
 
-  // Build filter
   const filter = {};
 
   if (search) {
@@ -60,8 +59,13 @@ const toggleActive = async (id) => {
   );
 };
 
-const getRandomQuoteByCategory = async (category, excludeIds = []) => {
-  const filter = { isActive: true, category };
+const getRandomQuoteByCategory = async (category = null, excludeIds = []) => {
+  const filter = { isActive: true };
+  
+  if (category) {
+    filter.category = category;
+  }
+  
   if (excludeIds.length > 0) {
     filter._id = { $nin: excludeIds };
   }

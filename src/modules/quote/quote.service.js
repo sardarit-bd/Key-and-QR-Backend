@@ -42,9 +42,9 @@ const toggleQuoteActive = async (id) => {
   return quoteRepository.toggleActive(id);
 };
 
-// For scan/unlock service
-const getRandomQuote = async (category, excludeIds = []) => {
-  return quoteRepository.getRandomQuoteByCategory(category, excludeIds);
+// Get random quote - updated to handle null category
+const getRandomQuote = async (category = null) => {
+  return quoteRepository.getRandomQuoteByCategory(category);
 };
 
 export default {

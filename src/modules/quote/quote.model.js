@@ -14,6 +14,12 @@ const quoteSchema = new mongoose.Schema(
       enum: ["faith", "love", "hope", "success", "motivation"],
     },
 
+    author: {
+      type: String,
+      default: "InspireTag",
+      trim: true,
+    },
+
     isActive: {
       type: Boolean,
       default: true,

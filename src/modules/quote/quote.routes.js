@@ -11,6 +11,9 @@ import {
 
 const router = express.Router();
 
+// PUBLIC ROUTE - Get random quote (no auth required)
+router.get("/random", quoteController.getRandomQuote);
+
 // Admin only routes
 router.post(
   "/",

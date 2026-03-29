@@ -12,6 +12,8 @@ import stripeWebhook from "../routes/stripe.webhook.js";
 
 const app = express();
 
+app.set("trust proxy", 1);
+
 // ✅ Allowed origins
 const allowedOrigins = [
   "http://localhost:3000",

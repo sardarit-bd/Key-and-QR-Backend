@@ -75,6 +75,59 @@ const toggleQuoteActive = catchAsync(async (req, res) => {
   });
 });
 
+// Get random quote by category
+const getRandomQuote = catchAsync(async (req, res) => {
+  const category = req.query.category || "random";
+  
+  // Convert category for query
+  let queryCategory = category;
+  if (category === "random") {
+    queryCategory = null;
+  } else if (category === "gratitude") {
+    // Map gratitude to hope or other existing category
+    queryCategory = "hope";
+  } else if (category === "healing") {
+    queryCategory = "hope";
+  }
+  
+  const result = await quoteService.getRandomQuote(queryCategory);
+  
+  if (!result) {
+    // Fallback: get any active quote
+    const fallbackResult = await quoteService.getRandomQuote(null);
+    if (!fallbackResult) {
+      return sendResponse(res, {
+        statusCode: httpStatus.NOT_FOUND,
+        success: false,
+        message: "No quotes found",
+        data: null,
+      });
+    }
+    
+    return sendResponse(res, {
+      statusCode: httpStatus.OK,
+      success: true,
+      data: {
+        _id: fallbackResult._id,
+        text: fallbackResult.text,
+        category: fallbackResult.category,
+        author: "InspireTag",
+      },
+    });
+  }
+  
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    data: {
+      _id: result._id,
+      text: result.text,
+      category: result.category,
+      author: "InspireTag",
+    },
+  });
+});
+
 export default {
   createQuote,
   getAllQuotes,
@@ -82,4 +135,5 @@ export default {
   updateQuote,
   deleteQuote,
   toggleQuoteActive,
+  getRandomQuote,
 };
