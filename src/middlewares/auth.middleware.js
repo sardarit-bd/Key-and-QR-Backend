@@ -6,13 +6,20 @@ import { verifyAccessToken } from "../utils/jwt.js";
 const auth = (...requiredRoles) => {
   return async (req, res, next) => {
     try {
+      let token = null;
+
       const authorization = req.headers.authorization;
 
-      if (!authorization || !authorization.startsWith("Bearer ")) {
+      if (authorization && authorization.startsWith("Bearer ")) {
+        token = authorization.split(" ")[1];
+      } else if (req.cookies?.accessToken) {
+        token = req.cookies.accessToken;
+      }
+
+      if (!token) {
         throw new AppError(httpStatus.UNAUTHORIZED, "Unauthorized access");
       }
 
-      const token = authorization.split(" ")[1];
       const decoded = verifyAccessToken(token);
 
       const user = await User.findById(decoded.userId).select("-password");

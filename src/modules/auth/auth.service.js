@@ -31,6 +31,9 @@ const buildAuthResponse = (user) => {
       name: user.name,
       email: user.email,
       role: user.role,
+      profileImage: user.profileImage,
+      provider: user.provider,
+      isEmailVerified: user.isEmailVerified,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     },
@@ -49,6 +52,8 @@ const registerUser = async (payload) => {
   const createdUser = await authRepository.createUser({
     ...payload,
     password: hashedPassword,
+    provider: "local",
+    isEmailVerified: false,
   });
 
   return buildAuthResponse(createdUser);
@@ -61,10 +66,76 @@ const loginUser = async (payload) => {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
+  // Check if user signed up with social login
+  if (user.provider !== "local") {
+    throw new AppError(
+      httpStatus.UNAUTHORIZED,
+      `Please login with ${user.provider}`
+    );
+  }
+
   const isPasswordMatched = await bcrypt.compare(payload.password, user.password);
 
   if (!isPasswordMatched) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
+  }
+
+  return buildAuthResponse(user);
+};
+
+// Social Login Handler
+const handleSocialLogin = async (profile, provider) => {
+  let user = null;
+
+  // Try to find by provider ID first
+  if (provider === "google") {
+    user = await authRepository.findUserByGoogleId(profile.id);
+  } else if (provider === "apple") {
+    user = await authRepository.findUserByAppleId(profile.id);
+  }
+
+  // If not found by provider ID, try by email
+  if (!user && profile.email) {
+    user = await authRepository.findUserByEmail(profile.email);
+    
+    if (user) {
+      // Link existing account with social provider
+      const updateData = {
+        provider: provider,
+        isEmailVerified: true,
+      };
+      
+      if (provider === "google") {
+        updateData.googleId = profile.id;
+      } else if (provider === "apple") {
+        updateData.appleId = profile.id;
+      }
+      
+      user = await authRepository.updateUser(user._id, updateData);
+    }
+  }
+
+  // If still no user, create new one
+  if (!user) {
+    const userName = provider === "google" 
+      ? profile.displayName 
+      : profile.name?.firstName + " " + profile.name?.lastName || `${provider} User`;
+    
+    const userData = {
+      name: userName,
+      email: profile.email,
+      provider: provider,
+      isEmailVerified: true,
+      password: null, // No password for social login
+    };
+    
+    if (provider === "google") {
+      userData.googleId = profile.id;
+    } else if (provider === "apple") {
+      userData.appleId = profile.id;
+    }
+    
+    user = await authRepository.createUser(userData);
   }
 
   return buildAuthResponse(user);
@@ -107,6 +178,14 @@ const forgotPassword = async (email) => {
 
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User not found with this email");
+  }
+
+  // Check if user is social login user
+  if (user.provider !== "local") {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `You signed up with ${user.provider}. Please login with ${user.provider}`
+    );
   }
 
   const rawToken = crypto.randomBytes(32).toString("hex");
@@ -152,6 +231,14 @@ const changePassword = async (userId, oldPassword, newPassword) => {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
 
+  // Check if user is social login user
+  if (user.provider !== "local") {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      `You signed up with ${user.provider}. Password change is not available`
+    );
+  }
+
   const isOldPasswordMatched = await bcrypt.compare(oldPassword, user.password);
 
   if (!isOldPasswordMatched) {
@@ -177,6 +264,7 @@ const changePassword = async (userId, oldPassword, newPassword) => {
 export default {
   registerUser,
   loginUser,
+  handleSocialLogin,
   getMe,
   refreshAccessToken,
   forgotPassword,

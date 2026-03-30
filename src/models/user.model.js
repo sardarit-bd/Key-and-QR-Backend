@@ -25,13 +25,14 @@ const userSchema = new mongoose.Schema(
       unique: true,
       lowercase: true,
       trim: true,
+      index: true,
     },
 
     password: {
       type: String,
-      required: [true, "Password is required"],
       minlength: 6,
       select: false,
+      // Password is optional for social login users
     },
 
     role: {
@@ -43,6 +44,30 @@ const userSchema = new mongoose.Schema(
     profileImage: {
       type: imageSchema,
       default: null,
+    },
+
+    // Social login fields
+    provider: {
+      type: String,
+      enum: ["local", "google", "apple"],
+      default: "local",
+    },
+
+    googleId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+
+    appleId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
     },
 
     isDeleted: {
@@ -66,6 +91,12 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Indexes for better query performance
+userSchema.index({ email: 1 });
+userSchema.index({ googleId: 1 }, { sparse: true });
+userSchema.index({ appleId: 1 }, { sparse: true });
+userSchema.index({ provider: 1 });
 
 const User = mongoose.model("User", userSchema);
 
