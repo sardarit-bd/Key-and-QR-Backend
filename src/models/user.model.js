@@ -1,6 +1,14 @@
 import mongoose from "mongoose";
 import roles from "../constants/roles.js";
 
+const imageSchema = new mongoose.Schema(
+  {
+    public_id: String,
+    url: String,
+  },
+  { _id: false }
+);
+
 const userSchema = new mongoose.Schema(
   {
     name: {
@@ -10,33 +18,69 @@ const userSchema = new mongoose.Schema(
       minlength: 2,
       maxlength: 50,
     },
+
     email: {
       type: String,
       required: [true, "Email is required"],
       unique: true,
       lowercase: true,
       trim: true,
+      index: true,
     },
+
     password: {
       type: String,
-      required: [true, "Password is required"],
       minlength: 6,
       select: false,
+      // Password is optional for social login users
     },
+
     role: {
       type: String,
       enum: [roles.USER, roles.ADMIN],
       default: roles.USER,
     },
+
+    profileImage: {
+      type: imageSchema,
+      default: null,
+    },
+
+    // Social login fields
+    provider: {
+      type: String,
+      enum: ["local", "google", "apple"],
+      default: "local",
+    },
+
+    googleId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+
+    appleId: {
+      type: String,
+      sparse: true,
+      index: true,
+    },
+
+    isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
     isDeleted: {
       type: Boolean,
       default: false,
     },
+
     passwordResetToken: {
       type: String,
       default: null,
       select: false,
     },
+
     passwordResetExpires: {
       type: Date,
       default: null,
@@ -47,6 +91,12 @@ const userSchema = new mongoose.Schema(
     timestamps: true,
   }
 );
+
+// Indexes for better query performance
+userSchema.index({ email: 1 });
+userSchema.index({ googleId: 1 }, { sparse: true });
+userSchema.index({ appleId: 1 }, { sparse: true });
+userSchema.index({ provider: 1 });
 
 const User = mongoose.model("User", userSchema);
 

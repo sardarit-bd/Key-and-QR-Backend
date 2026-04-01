@@ -3,24 +3,43 @@ import httpStatus from "../../constants/httpStatus.js";
 import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import authService from "./auth.service.js";
+import passport from "../../config/passport.js";
+import { generateAccessToken, generateRefreshToken } from "../../utils/jwt.js";
+
+const accessCookieOptions = {
+  httpOnly: true,
+  secure: env.nodeEnv === "production",
+  sameSite: env.nodeEnv === "production" ? "none" : "lax",
+  maxAge: 15 * 60 * 1000, // 15 minutes
+};
 
 const refreshCookieOptions = {
   httpOnly: true,
   secure: env.nodeEnv === "production",
   sameSite: env.nodeEnv === "production" ? "none" : "lax",
+  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+};
+
+const roleCookieOptions = {
+  httpOnly: false,
+  secure: env.nodeEnv === "production",
+  sameSite: env.nodeEnv === "production" ? "none" : "lax",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
 
-  res.cookie("refreshToken", result.refreshToken, refreshCookieOptions);
+  res
+    .cookie("accessToken", result.accessToken, accessCookieOptions)
+    .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
+    .cookie("userRole", result.user.role, roleCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
     success: true,
     message: "User registered successfully",
     data: {
-      accessToken: result.accessToken,
       user: result.user,
     },
   });
@@ -29,14 +48,16 @@ const register = catchAsync(async (req, res) => {
 const login = catchAsync(async (req, res) => {
   const result = await authService.loginUser(req.body);
 
-  res.cookie("refreshToken", result.refreshToken, refreshCookieOptions);
+  res
+    .cookie("accessToken", result.accessToken, accessCookieOptions)
+    .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
+    .cookie("userRole", result.user.role, roleCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "User logged in successfully",
     data: {
-      accessToken: result.accessToken,
       user: result.user,
     },
   });
@@ -55,18 +76,28 @@ const getMe = catchAsync(async (req, res) => {
 
 const refreshToken = catchAsync(async (req, res) => {
   const token = req.cookies.refreshToken || req.body.refreshToken;
+
+  if (!token) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Refresh token is required");
+  }
+
   const result = await authService.refreshAccessToken(token);
+
+  res.cookie("accessToken", result.accessToken, accessCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Access token refreshed successfully",
-    data: result,
+    data: {},
   });
 });
 
 const logout = catchAsync(async (req, res) => {
-  res.clearCookie("refreshToken", refreshCookieOptions);
+  res
+    .clearCookie("accessToken", accessCookieOptions)
+    .clearCookie("refreshToken", refreshCookieOptions)
+    .clearCookie("userRole", roleCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -111,6 +142,100 @@ const changePassword = catchAsync(async (req, res) => {
   });
 });
 
+// ============= GOOGLE OAUTH =============
+const googleLogin = passport.authenticate("google", {
+  scope: ["profile", "email"],
+  session: false,
+});
+
+const googleCallback = catchAsync(async (req, res, next) => {
+  passport.authenticate("google", { session: false }, async (err, profile) => {
+    if (err || !profile) {
+      console.error("Google auth error:", err);
+      return res.redirect(`${env.clientUrl}/login?error=google_auth_failed`);
+    }
+
+    try {
+      const result = await authService.handleSocialLogin(profile, "google");
+
+      res
+        .cookie("accessToken", result.accessToken, accessCookieOptions)
+        .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
+        .cookie("userRole", result.user.role, roleCookieOptions);
+
+      res.redirect(`${env.clientUrl}/auth-success`);
+    } catch (error) {
+      console.error("Social login error:", error);
+      res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
+    }
+  })(req, res, next);
+});
+
+
+const updateProfile = catchAsync(async (req, res) => {
+  const result = await authService.updateProfile(req.user.userId, req.body);
+
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Profile updated successfully",
+    data: result,
+  });
+});
+
+const uploadAvatar = catchAsync(async (req, res) => {
+  if (!req.file) {
+    throw new AppError(httpStatus.BAD_REQUEST, "No image file provided");
+  }
+
+  const result = await authService.uploadAvatar(req.user.userId, req.file.buffer);
+
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Avatar uploaded successfully",
+    data: result,
+  });
+});
+
+// ============= APPLE OAUTH =============
+// const appleLogin = passport.authenticate("apple", {
+//   session: false,
+// });
+
+// const appleCallback = catchAsync(async (req, res, next) => {
+//   passport.authenticate("apple", { session: false }, async (err, profile) => {
+//     if (err || !profile) {
+//       console.error("Apple auth error:", err);
+//       return res.redirect(`${env.clientUrl}/login?error=apple_auth_failed`);
+//     }
+
+//     try {
+//       const result = await authService.handleSocialLogin(profile, "apple");
+
+//       res
+//         .cookie("accessToken", result.accessToken, accessCookieOptions)
+//         .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
+//         .cookie("userRole", result.user.role, roleCookieOptions);
+
+//       res.redirect(`${env.clientUrl}/auth/success`);
+//     } catch (error) {
+//       console.error("Social login error:", error);
+//       res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
+//     }
+//   })(req, res, next);
+// });
+
+// ============= SOCIAL LOGIN SUCCESS =============
+const socialLoginSuccess = catchAsync(async (req, res) => {
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Social login successful",
+    data: null,
+  });
+});
+
 export default {
   register,
   login,
@@ -120,4 +245,11 @@ export default {
   forgotPassword,
   resetPassword,
   changePassword,
+  googleLogin,
+  googleCallback,
+  // appleLogin,
+  // appleCallback,
+  socialLoginSuccess,
+  updateProfile,
+  uploadAvatar,
 };

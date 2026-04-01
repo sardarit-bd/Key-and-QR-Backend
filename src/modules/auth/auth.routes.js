@@ -7,13 +7,14 @@ import {
   changePasswordValidationSchema,
   forgotPasswordValidationSchema,
   loginValidationSchema,
-  refreshTokenValidationSchema,
   registerValidationSchema,
   resetPasswordValidationSchema,
 } from "./auth.validation.js";
+import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 
 const router = express.Router();
 
+// Local auth routes
 router.post(
   "/register",
   validateRequest(registerValidationSchema),
@@ -26,19 +27,8 @@ router.post(
   authController.login
 );
 
-router.post(
-  "/refresh-token",
-  (req, res, next) => {
-    if (req.cookies.refreshToken) {
-      return next();
-    }
-    return validateRequest(refreshTokenValidationSchema)(req, res, next);
-  },
-  authController.refreshToken
-);
-
+router.post("/refresh-token", authController.refreshToken);
 router.post("/logout", authController.logout);
-
 router.get("/me", auth(roles.USER, roles.ADMIN), authController.getMe);
 
 router.post(
@@ -59,5 +49,30 @@ router.post(
   validateRequest(changePasswordValidationSchema),
   authController.changePassword
 );
+
+// ============= GOOGLE OAUTH ROUTES =============
+router.get("/google", authController.googleLogin);
+router.get("/google/callback", authController.googleCallback);
+
+// ============= APPLE OAUTH ROUTES =============
+// router.get("/apple", authController.appleLogin);
+// router.get("/apple/callback", authController.appleCallback);
+
+// ============= SOCIAL LOGIN SUCCESS =============
+router.get("/social/success", authController.socialLoginSuccess);
+
+router.patch(
+  "/update-profile",
+  auth(roles.USER, roles.ADMIN),
+  authController.updateProfile
+);
+
+router.post(
+  "/upload-avatar",
+  auth(roles.USER, roles.ADMIN),
+  uploadSingleImage,
+  authController.uploadAvatar
+);
+
 
 export default router;

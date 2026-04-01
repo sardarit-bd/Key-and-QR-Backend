@@ -2,6 +2,7 @@ import express from "express";
 import auth from "../../middlewares/auth.middleware.js";
 import roles from "../../constants/roles.js";
 import adminController from "./admin.controller.js";
+import { uploadProductImages, uploadSingleImage } from "../../middlewares/upload.middleware.js";
 
 const router = express.Router();
 
@@ -21,6 +22,14 @@ router.get(
   "/users/:id",
   auth(roles.ADMIN),
   adminController.getUserById
+);
+
+
+router.patch(
+  "/profile",
+  auth(roles.ADMIN),
+  uploadSingleImage,
+  adminController.updateAdminProfile
 );
 
 router.patch(
