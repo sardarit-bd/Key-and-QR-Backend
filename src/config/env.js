@@ -1,7 +1,7 @@
 import dotenv from "dotenv";
 import path from "path";
 
-dotenv.config({ path: path.join(process.cwd(), '.env') });
+// dotenv.config({ path: path.join(process.cwd(), '.env') });
 
 let clientUrl = process.env.CLIENT_URL;
 if (clientUrl && clientUrl.includes('# CLIENT_URL')) {
