@@ -22,4 +22,3 @@ router.use("/pending-quotes", pendingQuoteRoutes);
 router.use("/favorites", favoriteRoutes);
 
 export default router;
-                                                                                                                                                                                                                                                                                                                                                                                                                          

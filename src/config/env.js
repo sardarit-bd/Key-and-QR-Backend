@@ -1,7 +1,9 @@
 import dotenv from "dotenv";
 import path from "path";
 
-// dotenv.config({ path: path.join(process.cwd(), '.env') });
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config({ path: path.join(process.cwd(), '.env') });
+}
 
 let clientUrl = process.env.CLIENT_URL;
 if (clientUrl && clientUrl.includes('# CLIENT_URL')) {
@@ -19,7 +21,7 @@ const env = {
   // Server Configuration
   port: process.env.PORT || 5000,
   nodeEnv: process.env.NODE_ENV || "development",
-  mongoURI: process.env.MONGO_URI,
+  mongoURI: process.env.MONGO_URI || process.env.MONGO_URL,
 
   // JWT Configuration
   jwtAccessSecret: process.env.JWT_ACCESS_SECRET,
@@ -55,15 +57,9 @@ const env = {
   stripeSecretKey: process.env.STRIPE_SECRET_KEY,
   stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
 
-  // ============= GOOGLE OAUTH =============
+  // Google OAuth
   googleClientId: process.env.GOOGLE_CLIENT_ID,
   googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
-
-  // ============= APPLE OAUTH (Disabled for now) =============
-  // appleClientId: process.env.APPLE_CLIENT_ID,
-  // appleTeamId: process.env.APPLE_TEAM_ID,
-  // appleKeyId: process.env.APPLE_KEY_ID,
-  // applePrivateKey: process.env.APPLE_PRIVATE_KEY,
 };
 
 // Validate required environment variables
@@ -73,7 +69,13 @@ const requiredEnvVars = [
   'MONGO_URI',
 ];
 
-const missingEnvVars = requiredEnvVars.filter(varName => !process.env[varName]);
+const hasMongoURI = env.mongoURI;
+const missingEnvVars = requiredEnvVars.filter(varName => {
+  if (varName === 'MONGO_URI') {
+    return !hasMongoURI;
+  }
+  return !process.env[varName];
+});
 
 if (missingEnvVars.length > 0) {
   console.error('❌ Missing required environment variables:', missingEnvVars.join(', '));
@@ -82,8 +84,9 @@ if (missingEnvVars.length > 0) {
     JWT_REFRESH_SECRET: env.jwtRefreshSecret ? '✅ Set' : '❌ Missing',
     MONGO_URI: env.mongoURI ? '✅ Set' : '❌ Missing',
   });
+  
   if (env.nodeEnv === 'production') {
-    process.exit(1);
+    console.warn('⚠️ Warning: Some environment variables are missing. App may not work correctly.');
   }
 } else {
   console.log('✅ All required environment variables are set');
@@ -95,8 +98,8 @@ console.log('Environment loaded:', {
   clientUrl: env.clientUrl,
   apiUrl: env.apiUrl,
   port: env.port,
+  mongoURI: env.mongoURI ? '✅ Set' : '❌ Missing',
   googleOAuth: env.googleClientId ? '✅ Configured' : '❌ Not configured',
-  appleOAuth: '⏸️ Disabled (commented)',
   stripe: env.stripeSecretKey ? '✅ Configured' : '❌ Not configured',
   email: env.emailUser ? '✅ Configured' : '❌ Not configured',
   cloudinary: env.cloudinaryCloudName ? '✅ Configured' : '❌ Not configured',
