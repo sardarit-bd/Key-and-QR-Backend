@@ -12,6 +12,7 @@ import {
 } from "../../utils/jwt.js";
 import authRepository from "./auth.repository.js";
 import resetPasswordTemplate from "../../templates/resetPasswordTemplate.js";
+import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
 
 const buildAuthResponse = (user) => {
   const jwtPayload = {
@@ -97,30 +98,30 @@ const handleSocialLogin = async (profile, provider) => {
   // If not found by provider ID, try by email
   if (!user && profile.email) {
     user = await authRepository.findUserByEmail(profile.email);
-    
+
     if (user) {
       // Link existing account with social provider
       const updateData = {
         provider: provider,
         isEmailVerified: true,
       };
-      
+
       if (provider === "google") {
         updateData.googleId = profile.id;
       } else if (provider === "apple") {
         updateData.appleId = profile.id;
       }
-      
+
       user = await authRepository.updateUser(user._id, updateData);
     }
   }
 
   // If still no user, create new one
   if (!user) {
-    const userName = provider === "google" 
-      ? profile.displayName 
+    const userName = provider === "google"
+      ? profile.displayName
       : profile.name?.firstName + " " + profile.name?.lastName || `${provider} User`;
-    
+
     const userData = {
       name: userName,
       email: profile.email,
@@ -128,13 +129,13 @@ const handleSocialLogin = async (profile, provider) => {
       isEmailVerified: true,
       password: null, // No password for social login
     };
-    
+
     if (provider === "google") {
       userData.googleId = profile.id;
     } else if (provider === "apple") {
       userData.appleId = profile.id;
     }
-    
+
     user = await authRepository.createUser(userData);
   }
 
@@ -261,6 +262,29 @@ const changePassword = async (userId, oldPassword, newPassword) => {
   return null;
 };
 
+const updateProfile = async (userId, updateData) => {
+  const user = await authRepository.updateUser(userId, updateData);
+  if (!user) {
+    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+  return user;
+};
+
+const uploadAvatar = async (userId, imageBuffer) => {
+  // Upload to Cloudinary
+  const uploadResult = await uploadImageBuffer(imageBuffer, "key-and-qr/avatars");
+
+  // Update user profile image
+  const imageData = {
+    public_id: uploadResult.public_id,
+    url: uploadResult.secure_url,
+  };
+
+  const user = await authRepository.updateUser(userId, { profileImage: imageData });
+
+  return user.profileImage;
+};
+
 export default {
   registerUser,
   loginUser,
@@ -270,4 +294,6 @@ export default {
   forgotPassword,
   resetPassword,
   changePassword,
+  updateProfile,
+  uploadAvatar,
 };

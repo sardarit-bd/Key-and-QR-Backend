@@ -171,6 +171,33 @@ const googleCallback = catchAsync(async (req, res, next) => {
   })(req, res, next);
 });
 
+
+const updateProfile = catchAsync(async (req, res) => {
+  const result = await authService.updateProfile(req.user.userId, req.body);
+
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Profile updated successfully",
+    data: result,
+  });
+});
+
+const uploadAvatar = catchAsync(async (req, res) => {
+  if (!req.file) {
+    throw new AppError(httpStatus.BAD_REQUEST, "No image file provided");
+  }
+
+  const result = await authService.uploadAvatar(req.user.userId, req.file.buffer);
+
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Avatar uploaded successfully",
+    data: result,
+  });
+});
+
 // ============= APPLE OAUTH =============
 // const appleLogin = passport.authenticate("apple", {
 //   session: false,
@@ -223,4 +250,6 @@ export default {
   // appleLogin,
   // appleCallback,
   socialLoginSuccess,
+  updateProfile,
+  uploadAvatar,
 };

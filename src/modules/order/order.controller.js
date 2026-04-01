@@ -6,12 +6,10 @@ import orderService from "./order.service.js";
 
 // create + checkout
 const createCheckout = catchAsync(async (req, res) => {
-    const order = await orderService.createOrder(
+    const session = await orderService.createCheckout(
         req.user.userId,
         req.body
     );
-
-    const session = await orderService.createCheckoutSession(order._id);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

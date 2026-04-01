@@ -10,6 +10,7 @@ import {
   registerValidationSchema,
   resetPasswordValidationSchema,
 } from "./auth.validation.js";
+import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 
 const router = express.Router();
 
@@ -59,5 +60,19 @@ router.get("/google/callback", authController.googleCallback);
 
 // ============= SOCIAL LOGIN SUCCESS =============
 router.get("/social/success", authController.socialLoginSuccess);
+
+router.patch(
+  "/update-profile",
+  auth(roles.USER, roles.ADMIN),
+  authController.updateProfile
+);
+
+router.post(
+  "/upload-avatar",
+  auth(roles.USER, roles.ADMIN),
+  uploadSingleImage,
+  authController.uploadAvatar
+);
+
 
 export default router;

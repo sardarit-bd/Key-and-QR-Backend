@@ -23,6 +23,33 @@ const createOrder = async (userId, payload) => {
     });
 };
 
+const createCheckout = async (userId, payload) => {
+    let order;
+
+    // CASE 1: Existing order payment
+    if (payload.orderId) {
+        order = await orderRepository.findById(payload.orderId);
+
+        if (!order) {
+            throw new AppError(httpStatus.NOT_FOUND, "Order not found");
+        }
+
+        if (order.user.toString() !== userId.toString()) {
+            throw new AppError(httpStatus.FORBIDDEN, "Unauthorized");
+        }
+
+        if (order.paymentStatus === "paid") {
+            throw new AppError(httpStatus.BAD_REQUEST, "Order already paid");
+        }
+    }
+    // CASE 2: New order from cart
+    else {
+        order = await createOrder(userId, payload);
+    }
+
+    return createCheckoutSession(order._id);
+};
+
 
 // Create Stripe Checkout Session
 const createCheckoutSession = async (orderId) => {
@@ -497,6 +524,7 @@ const completeReturn = async (orderId) => {
 
 export default {
     createOrder,
+    createCheckout,
     createCheckoutSession,
     confirmPaymentAndAssignTag,
     getOrderById,
