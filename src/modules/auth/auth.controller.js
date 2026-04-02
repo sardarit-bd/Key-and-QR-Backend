@@ -11,14 +11,14 @@ const accessCookieOptions = {
   httpOnly: true,
   secure: env.nodeEnv === "production",
   sameSite: env.nodeEnv === "production" ? "none" : "lax",
-  maxAge: 15 * 60 * 1000, // 15 minutes
+  maxAge: 15 * 60 * 1000,
 };
 
 const refreshCookieOptions = {
   httpOnly: true,
   secure: env.nodeEnv === "production",
   sameSite: env.nodeEnv === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+  maxAge: 7 * 24 * 60 * 60 * 1000,
 };
 
 const roleCookieOptions = {
@@ -42,6 +42,8 @@ const register = catchAsync(async (req, res) => {
     message: "User registered successfully",
     data: {
       user: result.user,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     },
   });
 });
@@ -60,6 +62,8 @@ const login = catchAsync(async (req, res) => {
     message: "User logged in successfully",
     data: {
       user: result.user,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     },
   });
 });
@@ -90,7 +94,9 @@ const refreshToken = catchAsync(async (req, res) => {
     statusCode: httpStatus.OK,
     success: true,
     message: "Access token refreshed successfully",
-    data: {},
+    data: {
+      accessToken: result.accessToken,
+    },
   });
 });
 
@@ -176,14 +182,15 @@ const googleCallback = catchAsync(async (req, res, next) => {
         .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
         .cookie("userRole", result.user.role, roleCookieOptions);
 
-      res.redirect(`${env.clientUrl}/auth-success`);
+      res.redirect(
+        `${env.clientUrl}/auth-success?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}`
+      );
     } catch (error) {
       console.error("Social login error:", error);
       res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
     }
   })(req, res, next);
 });
-
 
 const updateProfile = catchAsync(async (req, res) => {
   const result = await authService.updateProfile(req.user.userId, req.body);
@@ -211,34 +218,6 @@ const uploadAvatar = catchAsync(async (req, res) => {
   });
 });
 
-// ============= APPLE OAUTH =============
-// const appleLogin = passport.authenticate("apple", {
-//   session: false,
-// });
-
-// const appleCallback = catchAsync(async (req, res, next) => {
-//   passport.authenticate("apple", { session: false }, async (err, profile) => {
-//     if (err || !profile) {
-//       console.error("Apple auth error:", err);
-//       return res.redirect(`${env.clientUrl}/login?error=apple_auth_failed`);
-//     }
-
-//     try {
-//       const result = await authService.handleSocialLogin(profile, "apple");
-
-//       res
-//         .cookie("accessToken", result.accessToken, accessCookieOptions)
-//         .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
-//         .cookie("userRole", result.user.role, roleCookieOptions);
-
-//       res.redirect(`${env.clientUrl}/auth/success`);
-//     } catch (error) {
-//       console.error("Social login error:", error);
-//       res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
-//     }
-//   })(req, res, next);
-// });
-
 // ============= SOCIAL LOGIN SUCCESS =============
 const socialLoginSuccess = catchAsync(async (req, res) => {
   sendResponse(res, {
@@ -260,8 +239,6 @@ export default {
   changePassword,
   googleLogin,
   googleCallback,
-  // appleLogin,
-  // appleCallback,
   socialLoginSuccess,
   updateProfile,
   uploadAvatar,
