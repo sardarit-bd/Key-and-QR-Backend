@@ -5,6 +5,7 @@ import sendResponse from "../../utils/sendResponse.js";
 import authService from "./auth.service.js";
 import passport from "../../config/passport.js";
 import { generateAccessToken, generateRefreshToken } from "../../utils/jwt.js";
+import AppError from "../../utils/AppError.js";
 
 const accessCookieOptions = {
   httpOnly: true,
@@ -75,10 +76,10 @@ const getMe = catchAsync(async (req, res) => {
 });
 
 const refreshToken = catchAsync(async (req, res) => {
-  const token = req.cookies.refreshToken || req.body.refreshToken;
+  const token = req.cookies?.refreshToken || req.body?.refreshToken;
 
   if (!token) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Refresh token is required");
+    throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required");
   }
 
   const result = await authService.refreshAccessToken(token);
@@ -95,9 +96,21 @@ const refreshToken = catchAsync(async (req, res) => {
 
 const logout = catchAsync(async (req, res) => {
   res
-    .clearCookie("accessToken", accessCookieOptions)
-    .clearCookie("refreshToken", refreshCookieOptions)
-    .clearCookie("userRole", roleCookieOptions);
+    .clearCookie("accessToken", {
+      httpOnly: true,
+      secure: env.nodeEnv === "production",
+      sameSite: env.nodeEnv === "production" ? "none" : "lax",
+    })
+    .clearCookie("refreshToken", {
+      httpOnly: true,
+      secure: env.nodeEnv === "production",
+      sameSite: env.nodeEnv === "production" ? "none" : "lax",
+    })
+    .clearCookie("userRole", {
+      httpOnly: false,
+      secure: env.nodeEnv === "production",
+      sameSite: env.nodeEnv === "production" ? "none" : "lax",
+    });
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
