@@ -4,67 +4,65 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import authService from "./auth.service.js";
 import passport from "../../config/passport.js";
-import { generateAccessToken, generateRefreshToken } from "../../utils/jwt.js";
-import AppError from "../../utils/AppError.js";
 
-const accessCookieOptions = {
-  httpOnly: true,
-  secure: env.nodeEnv === "production",
-  sameSite: env.nodeEnv === "production" ? "none" : "lax",
-  maxAge: 15 * 60 * 1000,
+const getCookieOptions = (maxAge, httpOnly = true) => ({
+  httpOnly: httpOnly,
+  secure: env.isProduction || env.nodeEnv === "production",
+  sameSite: env.isProduction || env.nodeEnv === "production" ? "none" : "lax",
+  maxAge: maxAge,
+  path: "/",
+});
+
+const accessCookieOptions = getCookieOptions(15 * 60 * 1000, true); // 15 minutes
+const refreshCookieOptions = getCookieOptions(7 * 24 * 60 * 60 * 1000, true); // 7 days
+const roleCookieOptions = getCookieOptions(7 * 24 * 60 * 60 * 1000, false); // 7 days
+
+// Clear all auth cookies
+const clearAuthCookies = (res) => {
+  const clearOptions = {
+    path: "/",
+    secure: env.isProduction || env.nodeEnv === "production",
+    sameSite: env.isProduction || env.nodeEnv === "production" ? "none" : "lax",
+  };
+
+  res.clearCookie("accessToken", clearOptions);
+  res.clearCookie("refreshToken", clearOptions);
+  res.clearCookie("userRole", {
+    ...clearOptions,
+    httpOnly: false,
+  });
 };
 
-const refreshCookieOptions = {
-  httpOnly: true,
-  secure: env.nodeEnv === "production",
-  sameSite: env.nodeEnv === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-};
-
-const roleCookieOptions = {
-  httpOnly: false,
-  secure: env.nodeEnv === "production",
-  sameSite: env.nodeEnv === "production" ? "none" : "lax",
-  maxAge: 7 * 24 * 60 * 60 * 1000,
+// Set auth cookies
+const setAuthCookies = (res, accessToken, refreshToken, userRole) => {
+  res.cookie("accessToken", accessToken, accessCookieOptions);
+  res.cookie("refreshToken", refreshToken, refreshCookieOptions);
+  res.cookie("userRole", userRole, roleCookieOptions);
 };
 
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
 
-  res
-    .cookie("accessToken", result.accessToken, accessCookieOptions)
-    .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
-    .cookie("userRole", result.user.role, roleCookieOptions);
+  setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
     success: true,
     message: "User registered successfully",
-    data: {
-      user: result.user,
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    },
+    data: { user: result.user }, // ❌ No tokens in response
   });
 });
 
 const login = catchAsync(async (req, res) => {
   const result = await authService.loginUser(req.body);
 
-  res
-    .cookie("accessToken", result.accessToken, accessCookieOptions)
-    .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
-    .cookie("userRole", result.user.role, roleCookieOptions);
+  setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "User logged in successfully",
-    data: {
-      user: result.user,
-      accessToken: result.accessToken,
-      refreshToken: result.refreshToken,
-    },
+    data: { user: result.user }, // ❌ No tokens in response
   });
 });
 
@@ -80,43 +78,33 @@ const getMe = catchAsync(async (req, res) => {
 });
 
 const refreshToken = catchAsync(async (req, res) => {
-  const token = req.cookies?.refreshToken || req.body?.refreshToken;
+  // Get refresh token from cookie only (not from body)
+  const token = req.cookies?.refreshToken;
 
   if (!token) {
-    throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required");
+    return sendResponse(res, {
+      statusCode: httpStatus.UNAUTHORIZED,
+      success: false,
+      message: "Refresh token is required",
+      data: null,
+    });
   }
 
   const result = await authService.refreshAccessToken(token);
 
+  // Only set new access token cookie
   res.cookie("accessToken", result.accessToken, accessCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Access token refreshed successfully",
-    data: {
-      accessToken: result.accessToken,
-    },
+    data: null, // ❌ No token in response body
   });
 });
 
 const logout = catchAsync(async (req, res) => {
-  res
-    .clearCookie("accessToken", {
-      httpOnly: true,
-      secure: env.nodeEnv === "production",
-      sameSite: env.nodeEnv === "production" ? "none" : "lax",
-    })
-    .clearCookie("refreshToken", {
-      httpOnly: true,
-      secure: env.nodeEnv === "production",
-      sameSite: env.nodeEnv === "production" ? "none" : "lax",
-    })
-    .clearCookie("userRole", {
-      httpOnly: false,
-      secure: env.nodeEnv === "production",
-      sameSite: env.nodeEnv === "production" ? "none" : "lax",
-    });
+  clearAuthCookies(res);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -150,7 +138,6 @@ const resetPassword = catchAsync(async (req, res) => {
 
 const changePassword = catchAsync(async (req, res) => {
   const { oldPassword, newPassword } = req.body;
-
   await authService.changePassword(req.user.userId, oldPassword, newPassword);
 
   sendResponse(res, {
@@ -161,7 +148,7 @@ const changePassword = catchAsync(async (req, res) => {
   });
 });
 
-// ============= GOOGLE OAUTH =============
+// Google OAuth
 const googleLogin = passport.authenticate("google", {
   scope: ["profile", "email"],
   session: false,
@@ -177,14 +164,10 @@ const googleCallback = catchAsync(async (req, res, next) => {
     try {
       const result = await authService.handleSocialLogin(profile, "google");
 
-      res
-        .cookie("accessToken", result.accessToken, accessCookieOptions)
-        .cookie("refreshToken", result.refreshToken, refreshCookieOptions)
-        .cookie("userRole", result.user.role, roleCookieOptions);
+      setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
 
-      res.redirect(
-        `${env.clientUrl}/auth-success?accessToken=${result.accessToken}&refreshToken=${result.refreshToken}`
-      );
+      // Redirect without tokens in URL
+      res.redirect(`${env.clientUrl}/callback?success=true`);
     } catch (error) {
       console.error("Social login error:", error);
       res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
@@ -218,7 +201,6 @@ const uploadAvatar = catchAsync(async (req, res) => {
   });
 });
 
-// ============= SOCIAL LOGIN SUCCESS =============
 const socialLoginSuccess = catchAsync(async (req, res) => {
   sendResponse(res, {
     statusCode: httpStatus.OK,

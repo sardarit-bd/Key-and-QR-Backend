@@ -1,104 +1,79 @@
 import dotenv from "dotenv";
+import path from "path";
 
-dotenv.config();
+if (process.env.NODE_ENV !== 'production') {
+  dotenv.config({ path: path.join(process.cwd(), '.env') });
+}
+
+const getEnv = (key, defaultValue = null) => {
+  return process.env[key] || defaultValue;
+};
 
 const env = {
   // Server
-  port: Number(process.env.PORT) || 5000,
-  nodeEnv: process.env.NODE_ENV || "development",
-
+  port: parseInt(getEnv('PORT', '5000')),
+  nodeEnv: getEnv('NODE_ENV', 'development'),
+  isProduction: getEnv('NODE_ENV') === 'production',
+  
   // Database
-  mongoURI: process.env.MONGO_URI,
-
+  mongoURI: getEnv('MONGO_URI'),
+  
   // JWT
-  jwtAccessSecret: process.env.JWT_ACCESS_SECRET,
-  jwtAccessExpiresIn: process.env.JWT_ACCESS_EXPIRES_IN || "15m",
-  jwtRefreshSecret: process.env.JWT_REFRESH_SECRET,
-  jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || "7d",
-
+  jwtAccessSecret: getEnv('JWT_ACCESS_SECRET'),
+  jwtAccessExpiresIn: getEnv('JWT_ACCESS_EXPIRES_IN', '15m'),
+  jwtRefreshSecret: getEnv('JWT_REFRESH_SECRET'),
+  jwtRefreshExpiresIn: getEnv('JWT_REFRESH_EXPIRES_IN', '7d'),
+  
   // Bcrypt
-  bcryptSaltRounds: Number(process.env.BCRYPT_SALT_ROUNDS) || 10,
-
-  // URLs
-  clientUrl: process.env.CLIENT_URL || "http://localhost:3000",
-  apiUrl: process.env.API_URL || "http://localhost:5000",
-
-  // Admin
-  adminEmail: process.env.ADMIN_EMAIL,
-  adminPassword: process.env.ADMIN_PASSWORD,
-
+  bcryptSaltRounds: parseInt(getEnv('BCRYPT_SALT_ROUNDS', '10')),
+  
+  clientUrl: getEnv('CLIENT_URL', 'http://localhost:3000'),
+  apiUrl: getEnv('API_URL', 'http://localhost:5000'),
+  
+  adminEmail: getEnv('ADMIN_EMAIL'),
+  adminPassword: getEnv('ADMIN_PASSWORD'),
+  
   // Email
-  emailHost: process.env.EMAIL_HOST,
-  emailPort: Number(process.env.EMAIL_PORT) || 587,
-  emailUser: process.env.EMAIL_USER,
-  emailPass: process.env.EMAIL_PASS,
-  emailFrom: process.env.EMAIL_FROM,
-
+  emailHost: getEnv('EMAIL_HOST'),
+  emailPort: parseInt(getEnv('EMAIL_PORT', '587')),
+  emailUser: getEnv('EMAIL_USER'),
+  emailPass: getEnv('EMAIL_PASS'),
+  emailFrom: getEnv('EMAIL_FROM'),
+  
   // Cloudinary
-  cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME,
-  cloudinaryApiKey: process.env.CLOUDINARY_API_KEY,
-  cloudinaryApiSecret: process.env.CLOUDINARY_API_SECRET,
-
+  cloudinaryCloudName: getEnv('CLOUDINARY_CLOUD_NAME'),
+  cloudinaryApiKey: getEnv('CLOUDINARY_API_KEY'),
+  cloudinaryApiSecret: getEnv('CLOUDINARY_API_SECRET'),
+  
   // Stripe
-  stripeSecretKey: process.env.STRIPE_SECRET_KEY,
-  stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
-
+  stripeSecretKey: getEnv('STRIPE_SECRET_KEY'),
+  stripeWebhookSecret: getEnv('STRIPE_WEBHOOK_SECRET'),
+  
   // Google OAuth
-  googleClientId: process.env.GOOGLE_CLIENT_ID,
-  googleClientSecret: process.env.GOOGLE_CLIENT_SECRET,
-
-  // Apple OAuth
-  appleClientId: process.env.APPLE_CLIENT_ID,
-  appleTeamId: process.env.APPLE_TEAM_ID,
-  appleKeyId: process.env.APPLE_KEY_ID,
-  applePrivateKey: process.env.APPLE_PRIVATE_KEY,
+  googleClientId: getEnv('GOOGLE_CLIENT_ID'),
+  googleClientSecret: getEnv('GOOGLE_CLIENT_SECRET'),
+  
+  cookieOptions: {
+    httpOnly: true,
+    secure: getEnv('NODE_ENV') === 'production',
+    sameSite: getEnv('NODE_ENV') === 'production' ? 'none' : 'lax',
+    domain: getEnv('COOKIE_DOMAIN', null),
+    path: '/',
+  },
 };
 
-const requiredEnvVars = [
-  "MONGO_URI",
-  "JWT_ACCESS_SECRET",
-  "JWT_REFRESH_SECRET",
-];
+const requiredEnvVars = ['JWT_ACCESS_SECRET', 'JWT_REFRESH_SECRET', 'MONGO_URI'];
+const missingVars = requiredEnvVars.filter(key => !process.env[key]);
 
-const missingEnvVars = requiredEnvVars.filter((key) => !process.env[key]);
-
-if (missingEnvVars.length > 0) {
-  console.error(
-    `❌ Missing required environment variables: ${missingEnvVars.join(", ")}`
-  );
-
-  console.log("Current values:", {
-    MONGO_URI: env.mongoURI ? "✅ Set" : "❌ Missing",
-    JWT_ACCESS_SECRET: env.jwtAccessSecret ? "✅ Set" : "❌ Missing",
-    JWT_REFRESH_SECRET: env.jwtRefreshSecret ? "✅ Set" : "❌ Missing",
-  });
-
-  if (env.nodeEnv === "production") {
-    process.exit(1);
+if (missingVars.length > 0) {
+  console.warn(`⚠️ Missing env vars: ${missingVars.join(', ')}`);
+  if (!env.isProduction) {
+    console.warn('⚠️ Using fallback values for development');
   }
-} else {
-  console.log("✅ Required environment variables are set");
 }
 
-console.log("Environment loaded:", {
-  nodeEnv: env.nodeEnv,
-  port: env.port,
-  clientUrl: env.clientUrl,
-  apiUrl: env.apiUrl,
-  googleOAuth:
-    env.googleClientId && env.googleClientSecret
-      ? "✅ Configured"
-      : "❌ Not configured",
-  appleOAuth:
-    env.appleClientId &&
-    env.appleTeamId &&
-    env.appleKeyId &&
-    env.applePrivateKey
-      ? "✅ Configured"
-      : "⏸️ Not configured",
-  stripe: env.stripeSecretKey ? "✅ Configured" : "❌ Not configured",
-  email: env.emailUser ? "✅ Configured" : "❌ Not configured",
-  cloudinary: env.cloudinaryCloudName ? "✅ Configured" : "❌ Not configured",
-});
+console.log(`✅ Environment: ${env.nodeEnv}`);
+console.log(`✅ Client URL: ${env.clientUrl}`);
+console.log(`✅ API URL: ${env.apiUrl}`);
 
 export default env;
