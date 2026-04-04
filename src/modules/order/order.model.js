@@ -13,6 +13,13 @@ const orderSchema = new mongoose.Schema(
       ref: "Product",
       required: true,
     },
+    
+    quantity: {
+      type: Number,
+      required: true,
+      min: 1,
+      default: 1,
+    },
 
     assignedTag: {
       type: mongoose.Schema.Types.ObjectId,
@@ -48,27 +55,27 @@ const orderSchema = new mongoose.Schema(
       enum: ["none", "requested", "approved", "completed", "rejected"],
       default: "none",
     },
-    
+
     refundAmount: {
       type: Number,
       default: 0,
     },
-    
+
     refundReason: {
       type: String,
       default: null,
     },
-    
+
     refundRequestedAt: {
       type: Date,
       default: null,
     },
-    
+
     refundProcessedAt: {
       type: Date,
       default: null,
     },
-    
+
     refundTransactionId: {
       type: String,
       default: null,
@@ -78,12 +85,12 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    
+
     cancelledAt: {
       type: Date,
       default: null,
     },
-    
+
     cancelledBy: {
       type: String,
       enum: ["user", "admin"],
@@ -95,32 +102,32 @@ const orderSchema = new mongoose.Schema(
       enum: ["none", "requested", "approved", "shipped", "received", "completed", "rejected"],
       default: "none",
     },
-    
+
     returnReason: {
       type: String,
       default: null,
     },
-    
+
     returnRequestedAt: {
       type: Date,
       default: null,
     },
-    
+
     returnApprovedAt: {
       type: Date,
       default: null,
     },
-    
+
     returnShippedAt: {
       type: Date,
       default: null,
     },
-    
+
     returnReceivedAt: {
       type: Date,
       default: null,
     },
-    
+
     returnTrackingNumber: {
       type: String,
       default: null,
@@ -131,7 +138,7 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
-    
+
     stripeSessionId: {
       type: String,
       default: null,

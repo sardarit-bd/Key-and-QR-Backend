@@ -15,9 +15,14 @@ const createOrder = async (userId, payload) => {
         throw new AppError(httpStatus.NOT_FOUND, "Product not found");
     }
 
+    if (product.stock < (Number(payload.quantity) || 1)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Not enough stock available");
+    }
+
     return orderRepository.createOrder({
         user: userId,
         product: payload.productId,
+        quantity: Number(payload.quantity) || 1,
         purchaseType: payload.purchaseType || "self",
         giftMessage: payload.giftMessage || null,
     });
@@ -72,7 +77,7 @@ const createCheckoutSession = async (orderId) => {
                     },
                     unit_amount: order.product.price * 100,
                 },
-                quantity: 1,
+                quantity: order.quantity || 1,
             },
         ],
 
@@ -96,31 +101,37 @@ const confirmPaymentAndAssignTag = async (orderId, paymentIntentId = null) => {
     const order = await orderRepository.findById(orderId);
 
     if (!order) {
-        console.error("❌ Order not found:", orderId);
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
-
     if (order.paymentStatus === "paid") {
-        console.log("⚠️ Order already paid:", orderId);
         return order;
     }
 
     const tag = await tagRepository.findUnusedTag();
 
     if (!tag) {
-        console.error("❌ No available tags found in database!");
-        console.log("💡 Please insert some tags into the database");
         throw new AppError(httpStatus.BAD_REQUEST, "No available tags. Please contact support.");
     }
 
+    // ✅ STOCK LOGIC ADD HERE
+    const quantity = order.quantity || 1;
 
-    const updatedTag = await tagRepository.updateTag(tag._id, {
+    const updatedProduct = await productRepository.decreaseStock(
+        order.product._id,
+        quantity
+    );
+
+    if (!updatedProduct) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Insufficient stock");
+    }
+
+    // Assign tag
+    await tagRepository.updateTag(tag._id, {
         owner: order.user,
         isActivated: true,
         activatedAt: new Date(),
     });
-
 
     // Update order
     const updatedOrder = await orderRepository.updateOrder(orderId, {
@@ -308,6 +319,13 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
         ...(refundProcessed && { paymentStatus: "refunded" }),
     });
 
+    if (order.paymentStatus === "paid" && order.fulfillmentStatus !== "cancelled") {
+        await productRepository.increaseStock(
+            order.product._id,
+            order.quantity || 1
+        );
+    }
+
     // If tag was assigned, free it up
     if (order.assignedTag) {
         await tagRepository.updateTag(order.assignedTag._id, {
@@ -379,7 +397,7 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
     try {
         const refund = await stripe.refunds.create({
             payment_intent: order.stripePaymentIntentId,
-            amount: order.product.price * 100, // Full refund
+            amount: order.product.price * (order.quantity || 1) * 100,
             reason: "requested_by_customer",
         });
 
@@ -393,6 +411,11 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
             cancelledBy: "admin",
             cancellationReason: "Refund processed",
         });
+
+        await productRepository.increaseStock(
+            order.product._id,
+            order.quantity || 1
+        );
 
         // Free up the tag if assigned
         if (order.assignedTag) {
@@ -495,6 +518,7 @@ const completeReturn = async (orderId) => {
         try {
             await stripe.refunds.create({
                 payment_intent: order.stripePaymentIntentId,
+                amount: order.product.price * (order.quantity || 1) * 100,
                 reason: "returned_item",
             });
             refundProcessed = true;
@@ -509,6 +533,11 @@ const completeReturn = async (orderId) => {
         fulfillmentStatus: "returned",
         ...(refundProcessed && { paymentStatus: "refunded" }),
     });
+
+    await productRepository.increaseStock(
+        order.product._id,
+        order.quantity || 1
+    );
 
     // Free up the tag if assigned
     if (order.assignedTag) {

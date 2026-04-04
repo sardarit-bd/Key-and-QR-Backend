@@ -75,6 +75,22 @@ const permanentDeleteProduct = async (id) => {
   return Product.findByIdAndDelete(id);
 };
 
+const decreaseStock = async (id, quantity) => {
+  return Product.findOneAndUpdate(
+    { _id: id, stock: { $gte: quantity } },
+    { $inc: { stock: -quantity } },
+    { new: true }
+  );
+};
+
+const increaseStock = async (id, quantity) => {
+  return Product.findByIdAndUpdate(
+    id,
+    { $inc: { stock: quantity } },
+    { new: true }
+  );
+};
+
 export default {
   createProduct,
   getProductById,
@@ -83,4 +99,6 @@ export default {
   softDeleteProduct,
   restoreProduct,
   permanentDeleteProduct,
+  decreaseStock,
+  increaseStock,
 };
