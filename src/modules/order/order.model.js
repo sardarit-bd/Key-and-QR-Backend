@@ -13,7 +13,7 @@ const orderSchema = new mongoose.Schema(
       ref: "Product",
       required: true,
     },
-    
+
     quantity: {
       type: Number,
       required: true,
@@ -35,6 +35,24 @@ const orderSchema = new mongoose.Schema(
 
     giftMessage: {
       type: String,
+      default: null,
+    },
+
+    // ===== Gift specific fields =====
+    giftStatus: {
+      type: String,
+      enum: ["none", "pending_claim", "claimed"],
+      default: "none",
+    },
+
+    giftClaimedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    giftClaimedAt: {
+      type: Date,
       default: null,
     },
 
@@ -133,7 +151,6 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
-    // Stripe payment intent ID for refund
     stripePaymentIntentId: {
       type: String,
       default: null,
@@ -147,12 +164,12 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Indexes for better query performance
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ fulfillmentStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
 orderSchema.index({ refundStatus: 1 });
 orderSchema.index({ returnStatus: 1 });
+orderSchema.index({ purchaseType: 1, giftStatus: 1 });
 
 const Order = mongoose.model("Order", orderSchema);
 export default Order;

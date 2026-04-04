@@ -42,4 +42,6 @@ router.post("/:id/return/process", auth(), roleMiddleware(roles.ADMIN), orderCon
 // Complete return (admin)
 router.post("/:id/return/complete", auth(), roleMiddleware(roles.ADMIN), orderController.completeReturn);
 
+router.post("/:id/claim-gift",auth(roles.USER, roles.ADMIN),orderController.claimGiftOrder);
+
 export default router;
