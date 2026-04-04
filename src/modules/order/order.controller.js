@@ -172,6 +172,21 @@ const completeReturn = catchAsync(async (req, res) => {
     });
 });
 
+const claimGiftOrder = catchAsync(async (req, res) => {
+    const result = await orderService.claimGiftOrder(
+        req.params.id,
+        req.user.userId
+    );
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Gift claimed successfully",
+        data: result,
+    });
+});
+
+
 export default {
     createCheckout,
     getOrderById,
@@ -185,4 +200,5 @@ export default {
     requestReturn,
     processReturn,
     completeReturn,
+    claimGiftOrder,
 };

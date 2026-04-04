@@ -15,18 +15,26 @@ const createOrder = async (userId, payload) => {
         throw new AppError(httpStatus.NOT_FOUND, "Product not found");
     }
 
+    if (product.stock < (Number(payload.quantity) || 1)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Not enough stock available");
+    }
+
+    const purchaseType = payload.purchaseType || "self";
+
     return orderRepository.createOrder({
         user: userId,
         product: payload.productId,
-        purchaseType: payload.purchaseType || "self",
-        giftMessage: payload.giftMessage || null,
+        quantity: Number(payload.quantity) || 1,
+        purchaseType,
+        giftMessage: purchaseType === "gift" ? payload.giftMessage || null : null,
+        giftStatus: purchaseType === "gift" ? "pending_claim" : "none",
     });
 };
+
 
 const createCheckout = async (userId, payload) => {
     let order;
 
-    // CASE 1: Existing order payment
     if (payload.orderId) {
         order = await orderRepository.findById(payload.orderId);
 
@@ -41,9 +49,7 @@ const createCheckout = async (userId, payload) => {
         if (order.paymentStatus === "paid") {
             throw new AppError(httpStatus.BAD_REQUEST, "Order already paid");
         }
-    }
-    // CASE 2: New order from cart
-    else {
+    } else {
         order = await createOrder(userId, payload);
     }
 
@@ -62,7 +68,6 @@ const createCheckoutSession = async (orderId) => {
     const session = await stripe.checkout.sessions.create({
         payment_method_types: ["card"],
         mode: "payment",
-
         line_items: [
             {
                 price_data: {
@@ -72,66 +77,129 @@ const createCheckoutSession = async (orderId) => {
                     },
                     unit_amount: order.product.price * 100,
                 },
-                quantity: 1,
+                quantity: order.quantity || 1,
             },
         ],
-
         success_url: `${env.clientUrl}/success?orderId=${orderId}`,
         cancel_url: `${env.clientUrl}/cancel`,
-
         metadata: {
             orderId: orderId.toString(),
         },
     });
 
-    // Save session ID
     await orderRepository.updateOrder(orderId, { stripeSessionId: session.id });
 
     return session;
 };
 
-const confirmPaymentAndAssignTag = async (orderId, paymentIntentId = null) => {
-    console.log("🔍 confirmPaymentAndAssignTag called for order:", orderId);
 
+const confirmPaymentAndAssignTag = async (orderId, paymentIntentId = null) => {
     const order = await orderRepository.findById(orderId);
 
     if (!order) {
-        console.error("❌ Order not found:", orderId);
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
-
     if (order.paymentStatus === "paid") {
-        console.log("⚠️ Order already paid:", orderId);
         return order;
     }
 
     const tag = await tagRepository.findUnusedTag();
 
     if (!tag) {
-        console.error("❌ No available tags found in database!");
-        console.log("💡 Please insert some tags into the database");
         throw new AppError(httpStatus.BAD_REQUEST, "No available tags. Please contact support.");
     }
 
+    const quantity = order.quantity || 1;
 
-    const updatedTag = await tagRepository.updateTag(tag._id, {
-        owner: order.user,
-        isActivated: true,
-        activatedAt: new Date(),
+    const updatedProduct = await productRepository.decreaseStock(
+        order.product._id,
+        quantity
+    );
+
+    if (!updatedProduct) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Insufficient stock");
+    }
+
+    // ===== SELF PURCHASE =====
+    if (order.purchaseType === "self") {
+        await tagRepository.updateTag(tag._id, {
+            owner: order.user,
+            isActivated: true,
+            activatedAt: new Date(),
+        });
+
+        return orderRepository.updateOrder(orderId, {
+            paymentStatus: "paid",
+            fulfillmentStatus: "assigned",
+            assignedTag: tag._id,
+            stripePaymentIntentId: paymentIntentId,
+            giftStatus: "none",
+        });
+    }
+
+    // ===== GIFT PURCHASE =====
+    await tagRepository.updateTag(tag._id, {
+        owner: null,
+        isActivated: false,
+        activatedAt: null,
     });
 
-
-    // Update order
-    const updatedOrder = await orderRepository.updateOrder(orderId, {
+    return orderRepository.updateOrder(orderId, {
         paymentStatus: "paid",
         fulfillmentStatus: "assigned",
         assignedTag: tag._id,
         stripePaymentIntentId: paymentIntentId,
+        giftStatus: "pending_claim",
+    });
+};
+
+const claimGiftOrder = async (orderId, userId) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(httpStatus.NOT_FOUND, "Order not found");
+    }
+
+    if (order.purchaseType !== "gift") {
+        throw new AppError(httpStatus.BAD_REQUEST, "This order is not a gift order");
+    }
+
+    if (order.paymentStatus !== "paid") {
+        throw new AppError(httpStatus.BAD_REQUEST, "Gift order is not paid yet");
+    }
+
+    if (!order.assignedTag) {
+        throw new AppError(httpStatus.BAD_REQUEST, "No tag assigned to this gift order");
+    }
+
+    if (order.giftStatus === "claimed") {
+        throw new AppError(httpStatus.BAD_REQUEST, "This gift has already been claimed");
+    }
+
+    const tag = await tagRepository.findById(order.assignedTag);
+
+    if (!tag) {
+        throw new AppError(httpStatus.NOT_FOUND, "Assigned tag not found");
+    }
+
+    if (tag.owner) {
+        throw new AppError(httpStatus.BAD_REQUEST, "This gift tag is already owned by someone");
+    }
+
+    await tagRepository.updateTag(tag._id, {
+        owner: userId,
+        isActivated: true,
+        activatedAt: new Date(),
     });
 
-    return updatedOrder;
+    return orderRepository.updateOrder(orderId, {
+        giftStatus: "claimed",
+        giftClaimedBy: userId,
+        giftClaimedAt: new Date(),
+    });
 };
+
 
 
 const getOrderById = async (id) => {
@@ -308,6 +376,13 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
         ...(refundProcessed && { paymentStatus: "refunded" }),
     });
 
+    if (order.paymentStatus === "paid" && order.fulfillmentStatus !== "cancelled") {
+        await productRepository.increaseStock(
+            order.product._id,
+            order.quantity || 1
+        );
+    }
+
     // If tag was assigned, free it up
     if (order.assignedTag) {
         await tagRepository.updateTag(order.assignedTag._id, {
@@ -379,7 +454,7 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
     try {
         const refund = await stripe.refunds.create({
             payment_intent: order.stripePaymentIntentId,
-            amount: order.product.price * 100, // Full refund
+            amount: order.product.price * (order.quantity || 1) * 100,
             reason: "requested_by_customer",
         });
 
@@ -393,6 +468,11 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
             cancelledBy: "admin",
             cancellationReason: "Refund processed",
         });
+
+        await productRepository.increaseStock(
+            order.product._id,
+            order.quantity || 1
+        );
 
         // Free up the tag if assigned
         if (order.assignedTag) {
@@ -495,6 +575,7 @@ const completeReturn = async (orderId) => {
         try {
             await stripe.refunds.create({
                 payment_intent: order.stripePaymentIntentId,
+                amount: order.product.price * (order.quantity || 1) * 100,
                 reason: "returned_item",
             });
             refundProcessed = true;
@@ -509,6 +590,11 @@ const completeReturn = async (orderId) => {
         fulfillmentStatus: "returned",
         ...(refundProcessed && { paymentStatus: "refunded" }),
     });
+
+    await productRepository.increaseStock(
+        order.product._id,
+        order.quantity || 1
+    );
 
     // Free up the tag if assigned
     if (order.assignedTag) {
@@ -527,6 +613,7 @@ export default {
     createCheckout,
     createCheckoutSession,
     confirmPaymentAndAssignTag,
+    claimGiftOrder,
     getOrderById,
     getUserOrders,
     getAllOrders,
