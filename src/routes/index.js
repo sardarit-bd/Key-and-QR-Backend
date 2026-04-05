@@ -8,6 +8,7 @@ import quoteRoutes from "../modules/quote/quote.routes.js";
 import orderRoutes from "../modules/order/order.routes.js";
 import pendingQuoteRoutes from "../modules/pendingQuote/pendingQuote.routes.js";
 import favoriteRoutes from "../modules/favorite/favorite.routes.js";
+import subscriptionRoutes from "../modules/subscription/subscription.routes.js";
 
 const router = express.Router();
 
@@ -20,5 +21,6 @@ router.use("/quotes", quoteRoutes);
 router.use("/orders", orderRoutes);
 router.use("/pending-quotes", pendingQuoteRoutes);
 router.use("/favorites", favoriteRoutes);
+router.use("/subscriptions", subscriptionRoutes);
 
 export default router;

@@ -59,8 +59,10 @@ const env = {
   cloudinaryApiSecret: getEnv("CLOUDINARY_API_SECRET"),
 
   // Stripe
+  // Stripe
   stripeSecretKey: getEnv("STRIPE_SECRET_KEY"),
   stripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET"),
+  stripeSubscriptionPriceId: getEnv("STRIPE_SUBSCRIPTION_PRICE_ID"),
 
   // Google OAuth
   googleClientId: getEnv("GOOGLE_CLIENT_ID"),
