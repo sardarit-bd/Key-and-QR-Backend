@@ -11,8 +11,7 @@ import favoriteRoutes from "../modules/favorite/favorite.routes.js";
 import subscriptionRoutes from "../modules/subscription/subscription.routes.js";
 
 
-// Main router. No change. All routes should be added here.
-
+// Main router. No change.
 
 const router = express.Router();
 
