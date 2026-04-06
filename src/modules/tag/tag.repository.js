@@ -75,6 +75,12 @@ const findByTagCodeWithOwner = async (tagCode) => {
   return Tag.findOne({ tagCode }).populate("owner", "name email");
 };
 
+const findTagsByOwner = async (ownerId) => {
+  return Tag.find({ owner: ownerId })
+    .populate("owner", "name email")
+    .sort({ createdAt: -1 });
+};
+
 export default {
   createTag,
   findByTagCode,
@@ -84,4 +90,5 @@ export default {
   findUnusedTag,
   updatePersonalMessage,
   findByTagCodeWithOwner,
+  findTagsByOwner,
 };

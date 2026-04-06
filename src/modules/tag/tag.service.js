@@ -111,6 +111,10 @@ const getPersonalMessage = async (tagCode) => {
   };
 };
 
+const getMyTags = async (userId) => {
+  return tagRepository.findTagsByOwner(userId);
+};
+
 export default {
   createTag,
   getAllTags,
@@ -120,4 +124,5 @@ export default {
   getUnusedTag,
   setPersonalMessage,
   getPersonalMessage,
+  getMyTags,
 };

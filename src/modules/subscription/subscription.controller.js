@@ -28,7 +28,8 @@ const getMySubscriptions = catchAsync(async (req, res) => {
 const createCheckoutSession = catchAsync(async (req, res) => {
   const result = await subscriptionService.createCheckoutSession(
     req.user.userId,
-    req.body.tagCode
+    req.body.tagCode,
+    req.body.preferredCategory
   );
 
   sendResponse(res, {

@@ -31,7 +31,7 @@ const getMySubscriptions = async (userId) => {
   return subscriptionRepository.findUserSubscriptions(userId);
 };
 
-const createCheckoutSession = async (userId, tagCode) => {
+const createCheckoutSession = async (userId, tagCode, preferredCategory = null) => {
   const tag = await tagRepository.findByTagCode(tagCode);
 
   if (!tag) {
@@ -81,6 +81,7 @@ const createCheckoutSession = async (userId, tagCode) => {
       userId: userId.toString(),
       tagId: tag._id.toString(),
       tagCode: tag.tagCode,
+      preferredCategory: preferredCategory || "",
     },
   });
 
@@ -94,6 +95,7 @@ const createCheckoutSession = async (userId, tagCode) => {
       status: "checkout_pending",
       stripeCheckoutSessionId: session.id,
       stripePriceId: env.stripeSubscriptionPriceId,
+      preferredCategory: preferredCategory || null,
     }
   );
 
@@ -148,6 +150,7 @@ const cancelMySubscription = async (userId, tagCode) => {
 const activateFromCheckoutSession = async (session) => {
   const userId = session.metadata?.userId;
   const tagId = session.metadata?.tagId;
+  const preferredCategory = session.metadata?.preferredCategory || null;
 
   if (!userId || !tagId) {
     throw new AppError(httpStatus.BAD_REQUEST, "Missing checkout metadata");
@@ -167,6 +170,7 @@ const activateFromCheckoutSession = async (session) => {
       tag: tagId,
       subscriptionType: "subscriber",
       status: mapStripeStatusToLocal(stripeSubscription.status),
+      preferredCategory,
       stripeCustomerId: fullSession.customer || null,
       stripeSubscriptionId: stripeSubscription.id,
       stripeCheckoutSessionId: session.id,

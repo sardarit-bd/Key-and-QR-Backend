@@ -15,6 +15,8 @@ const router = express.Router();
 // Tag resolution for QR scan (first API call when scanning)
 router.get("/resolve/:tagCode", tagController.resolveTag);
 
+router.get("/me", auth(), tagController.getMyTags);
+
 // Get tag info by code
 router.get("/:tagCode", tagController.getTagByCode);
 
