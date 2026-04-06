@@ -20,28 +20,22 @@ const allowedOrigins = [
   env.clientUrl,
 ].filter(Boolean);
 
-const corsOptions = {
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
+app.use(
+  cors({
+    origin: function (origin, callback) {
+      if (!origin) return callback(null, true);
 
-    const isAllowed =
-      allowedOrigins.includes(origin) ||
-      origin.includes("ngrok-free.dev") ||
-      origin.endsWith(".vercel.app");
+      if (allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
 
-    if (isAllowed) {
-      callback(null, true);
-    } else {
       console.log("CORS blocked origin:", origin);
-      callback(new Error("Not allowed by CORS"));
-    }
-  },
-  credentials: true,
-  methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-};
-
-app.use(cors(corsOptions));
-// app.options("(.*)", cors(corsOptions));
+      return callback(new Error("Not allowed by CORS"));
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+  })
+);
 
 app.use(
   helmet({

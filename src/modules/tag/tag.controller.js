@@ -124,6 +124,18 @@ const getPersonalMessage = catchAsync(async (req, res) => {
   });
 });
 
+const getMyTags = catchAsync(async (req, res) => {
+  const userId = req.user.userId;
+  const result = await tagService.getMyTags(userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "My tags fetched successfully",
+    data: result,
+  });
+});
+
 export default {
   createTag,
   getAllTags,
@@ -133,4 +145,5 @@ export default {
   resolveTag,
   setPersonalMessage,
   getPersonalMessage,
+  getMyTags,
 };
