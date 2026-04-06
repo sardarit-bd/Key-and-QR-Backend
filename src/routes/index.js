@@ -10,6 +10,9 @@ import pendingQuoteRoutes from "../modules/pendingQuote/pendingQuote.routes.js";
 import favoriteRoutes from "../modules/favorite/favorite.routes.js";
 import subscriptionRoutes from "../modules/subscription/subscription.routes.js";
 
+
+// Main router. No change.
+
 const router = express.Router();
 
 router.use("/auth", authRoutes);
