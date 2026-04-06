@@ -8,12 +8,10 @@ import AppError from "../../utils/AppError.js";
 
 const getCookieOptions = (maxAge, httpOnly = true) => ({
   httpOnly,
-  secure: env.isProduction || env.nodeEnv === "production",
-  sameSite:
-    env.isProduction || env.nodeEnv === "production" ? "none" : "lax",
+  secure: env.isProduction,
+  sameSite: "lax",
   maxAge,
   path: "/",
-  ...(env.cookieDomain ? { domain: env.cookieDomain } : {}),
 });
 
 const accessCookieOptions = getCookieOptions(15 * 60 * 1000, true);
@@ -23,10 +21,8 @@ const roleCookieOptions = getCookieOptions(7 * 24 * 60 * 60 * 1000, false);
 const clearAuthCookies = (res) => {
   const clearOptions = {
     path: "/",
-    secure: env.isProduction || env.nodeEnv === "production",
-    sameSite:
-      env.isProduction || env.nodeEnv === "production" ? "none" : "lax",
-    ...(env.cookieDomain ? { domain: env.cookieDomain } : {}),
+    secure: env.isProduction,
+    sameSite: "lax",
   };
 
   res.clearCookie("accessToken", clearOptions);
@@ -42,6 +38,7 @@ const setAuthCookies = (res, accessToken, refreshToken, userRole) => {
   res.cookie("refreshToken", refreshToken, refreshCookieOptions);
   res.cookie("userRole", userRole, roleCookieOptions);
 };
+
 
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
