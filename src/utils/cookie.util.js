@@ -1,25 +1,32 @@
 import env from '../config/env.js';
 
-export const getCookieOptions = (maxAge) => ({
-  httpOnly: true,
-  secure: env.isProduction,
-  sameSite: env.isProduction ? 'none' : 'lax',
-  maxAge: maxAge,
-  path: '/',
-});
-
-export const accessTokenCookieOptions = getCookieOptions(15 * 60 * 1000); // 15 minutes
-export const refreshTokenCookieOptions = getCookieOptions(7 * 24 * 60 * 60 * 1000); // 7 days
-export const userRoleCookieOptions = {
-  httpOnly: false,
-  secure: env.isProduction,
-  sameSite: env.isProduction ? 'none' : 'lax',
-  maxAge: 7 * 24 * 60 * 60 * 1000,
-  path: '/',
+const getBaseCookieOptions = (maxAge, httpOnly = true) => {
+  // Cross-domain cookie handling
+  const isCrossDomain = env.isProduction && env.clientUrl !== env.apiUrl;
+  
+  return {
+    httpOnly,
+    secure: true,
+    sameSite: isCrossDomain ? 'none' : 'lax',
+    maxAge,
+    path: '/',
+    // domain: env.isProduction ? '.vercel.app' : undefined,
+  };
 };
 
-export const clearCookies = (res) => {
-  res.clearCookie('accessToken', { path: '/' });
-  res.clearCookie('refreshToken', { path: '/' });
-  res.clearCookie('userRole', { path: '/' });
+export const accessTokenCookieOptions = getBaseCookieOptions(15 * 60 * 1000, true);
+export const refreshTokenCookieOptions = getBaseCookieOptions(7 * 24 * 60 * 60 * 1000, true);
+export const userRoleCookieOptions = getBaseCookieOptions(7 * 24 * 60 * 60 * 1000, false);
+
+export const setAuthCookies = (res, accessToken, refreshToken, userRole) => {
+  res.cookie('accessToken', accessToken, accessTokenCookieOptions);
+  res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
+  res.cookie('userRole', userRole, userRoleCookieOptions);
+};
+
+export const clearAuthCookies = (res) => {
+  const options = { path: '/' };
+  res.clearCookie('accessToken', options);
+  res.clearCookie('refreshToken', options);
+  res.clearCookie('userRole', options);
 };
