@@ -14,26 +14,49 @@ const app = express();
 
 app.set("trust proxy", 1);
 
-const allowedOrigins = [
-  "http://localhost:3000",
-  "https://key-and-qr.vercel.app",
-  env.clientUrl,
-].filter(Boolean);
+// Dynamic allowed origins
+const getAllowedOrigins = () => {
+  const origins = [
+    "http://localhost:3000",
+    "http://localhost:5000",
+    env.clientUrl,
+  ];
+  
+  // Add Vercel URLs if in production
+  if (env.isProduction) {
+    origins.push(/\.vercel\.app$/);
+    if (process.env.FRONTEND_URL) origins.push(process.env.FRONTEND_URL);
+  }
+  
+  return origins.filter(Boolean);
+};
 
 app.use(
   cors({
     origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, postman)
       if (!origin) return callback(null, true);
-
-      if (allowedOrigins.includes(origin)) {
+      
+      const allowedOrigins = getAllowedOrigins();
+      
+      // Check if origin is allowed
+      const isAllowed = allowedOrigins.some(allowed => {
+        if (allowed instanceof RegExp) {
+          return allowed.test(origin);
+        }
+        return allowed === origin;
+      });
+      
+      if (isAllowed) {
         return callback(null, true);
       }
-
-      console.log("CORS blocked origin:", origin);
-      return callback(new Error("Not allowed by CORS"));
+      
+      console.warn("CORS blocked origin:", origin);
+      callback(new Error("Not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie"],
   })
 );
 
@@ -56,6 +79,7 @@ app.get("/", (req, res) => {
   res.status(200).json({
     success: true,
     message: "Backend is running",
+    environment: env.nodeEnv,
   });
 });
 

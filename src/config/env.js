@@ -1,6 +1,7 @@
 import dotenv from "dotenv";
 import path from "path";
 
+// Load environment variables
 if (process.env.NODE_ENV !== "production") {
   dotenv.config({ path: path.join(process.cwd(), ".env") });
 }
@@ -15,6 +16,7 @@ const env = {
   port: Number(getEnv("PORT", "5000")),
   nodeEnv: getEnv("NODE_ENV", "development"),
   isProduction: getEnv("NODE_ENV", "development") === "production",
+  isVercel: !!process.env.VERCEL, // Vercel detection
 
   // Database
   mongoURI: getEnv("MONGO_URI"),
@@ -28,19 +30,17 @@ const env = {
   // Bcrypt
   bcryptSaltRounds: Number(getEnv("BCRYPT_SALT_ROUNDS", "10")),
 
-  // URLs
-  clientUrl: getEnv("CLIENT_URL", "http://localhost:3000"),
-  apiUrl: getEnv("API_URL", "http://localhost:5000"),
-
-  // Cookie
-  cookieDomain: getEnv("COOKIE_DOMAIN", undefined),
-  cookieOptions: {
-    httpOnly: true,
-    secure: getEnv("NODE_ENV", "development") === "production",
-    sameSite: getEnv("NODE_ENV", "development") === "production" ? "none" : "lax",
-    domain: getEnv("COOKIE_DOMAIN", undefined),
-    path: "/",
-  },
+  // URLs - Dynamic based on environment
+  clientUrl: getEnv("CLIENT_URL", 
+    process.env.VERCEL_URL 
+      ? `https://${process.env.VERCEL_URL}` 
+      : "http://localhost:3000"
+  ),
+  apiUrl: getEnv("API_URL",
+    process.env.VERCEL_URL && process.env.BACKEND_URL
+      ? process.env.BACKEND_URL
+      : `http://localhost:5000`
+  ),
 
   // Admin
   adminEmail: getEnv("ADMIN_EMAIL"),
@@ -59,7 +59,6 @@ const env = {
   cloudinaryApiSecret: getEnv("CLOUDINARY_API_SECRET"),
 
   // Stripe
-  // Stripe
   stripeSecretKey: getEnv("STRIPE_SECRET_KEY"),
   stripeWebhookSecret: getEnv("STRIPE_WEBHOOK_SECRET"),
   stripeSubscriptionPriceId: getEnv("STRIPE_SUBSCRIPTION_PRICE_ID"),
@@ -69,29 +68,25 @@ const env = {
   googleClientSecret: getEnv("GOOGLE_CLIENT_SECRET"),
 };
 
-const requiredEnvVars = [
-  "JWT_ACCESS_SECRET",
-  "JWT_REFRESH_SECRET",
-  "MONGO_URI",
-  "CLIENT_URL",
-  "API_URL",
-];
+// Validate required env vars
+const requiredEnvVars = ["JWT_ACCESS_SECRET", "JWT_REFRESH_SECRET", "MONGO_URI"];
+
+if (env.isProduction) {
+  requiredEnvVars.push("CLIENT_URL", "API_URL");
+}
 
 const missingVars = requiredEnvVars.filter((key) => !process.env[key]);
 
 if (missingVars.length > 0) {
-  console.warn(`⚠️ Missing env vars: ${missingVars.join(", ")}`);
-
+  console.error(`❌ Missing env vars: ${missingVars.join(", ")}`);
   if (!env.isProduction) {
     console.warn("⚠️ Using fallback values for development");
-  } else {
-    console.error("❌ Required production environment variables are missing");
   }
 }
 
 console.log(`✅ Environment: ${env.nodeEnv}`);
 console.log(`✅ Client URL: ${env.clientUrl}`);
 console.log(`✅ API URL: ${env.apiUrl}`);
-console.log(`✅ Cookie Domain: ${env.cookieDomain || "not set"}`);
+console.log(`✅ Vercel: ${env.isVercel}`);
 
 export default env;
