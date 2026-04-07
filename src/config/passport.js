@@ -3,7 +3,6 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import User from "../models/user.model.js";
 import env from "./env.js";
 
-// Google Strategy
 if (env.googleClientId && env.googleClientSecret) {
   passport.use(
     new GoogleStrategy(
@@ -16,21 +15,35 @@ if (env.googleClientId && env.googleClientSecret) {
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
-          let user = await User.findOne({ email: profile.emails[0]?.value });
+          const email = profile.emails[0]?.value;
+
+          if (!email) {
+            return done(new Error("No email found in Google profile"), null);
+          }
+
+          // First try to find by googleId (fastest)
+          let user = await User.findOne({ googleId: profile.id });
 
           if (!user) {
-            user = await User.create({
-              name: profile.displayName,
-              email: profile.emails[0]?.value,
-              provider: "google",
-              googleId: profile.id,
-              isEmailVerified: true,
-            });
-          } else if (!user.googleId) {
-            user.googleId = profile.id;
-            user.provider = "google";
-            user.isEmailVerified = true;
-            await user.save();
+            // Try by email
+            user = await User.findOne({ email });
+
+            if (user) {
+              // Link existing account with Google
+              user.googleId = profile.id;
+              user.provider = "google";
+              user.isEmailVerified = true;
+              await user.save();
+            } else {
+              // Create new user
+              user = await User.create({
+                name: profile.displayName,
+                email,
+                provider: "google",
+                googleId: profile.id,
+                isEmailVerified: true,
+              });
+            }
           }
 
           return done(null, user);
@@ -41,7 +54,8 @@ if (env.googleClientId && env.googleClientSecret) {
       }
     )
   );
-  console.log('✅ Google OAuth configured');
+
+  console.log("✅ Google OAuth configured");
 }
 
 passport.serializeUser((user, done) => {

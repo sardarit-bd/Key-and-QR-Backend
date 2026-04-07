@@ -14,43 +14,30 @@ const app = express();
 
 app.set("trust proxy", 1);
 
-// Dynamic allowed origins
 const getAllowedOrigins = () => {
   const origins = [
     "http://localhost:3000",
     "http://localhost:5000",
     env.clientUrl,
-  ];
-  
-  // Add Vercel URLs if in production
-  if (env.isProduction) {
-    origins.push(/\.vercel\.app$/);
-    if (process.env.FRONTEND_URL) origins.push(process.env.FRONTEND_URL);
-  }
-  
-  return origins.filter(Boolean);
+    process.env.FRONTEND_URL,
+  ].filter(Boolean);
+
+  return origins;
 };
 
 app.use(
   cors({
     origin: function (origin, callback) {
-      // Allow requests with no origin (like mobile apps, postman)
       if (!origin) return callback(null, true);
-      
+
       const allowedOrigins = getAllowedOrigins();
-      
-      // Check if origin is allowed
-      const isAllowed = allowedOrigins.some(allowed => {
-        if (allowed instanceof RegExp) {
-          return allowed.test(origin);
-        }
-        return allowed === origin;
-      });
-      
+
+      const isAllowed = allowedOrigins.some((allowed) => allowed === origin);
+
       if (isAllowed) {
         return callback(null, true);
       }
-      
+
       console.warn("CORS blocked origin:", origin);
       callback(new Error("Not allowed by CORS"));
     },

@@ -1,16 +1,14 @@
 import env from '../config/env.js';
 
 const getBaseCookieOptions = (maxAge, httpOnly = true) => {
-  // Cross-domain cookie handling
   const isCrossDomain = env.isProduction && env.clientUrl !== env.apiUrl;
   
   return {
     httpOnly,
-    secure: true,
+    secure: env.isProduction,
     sameSite: isCrossDomain ? 'none' : 'lax',
     maxAge,
     path: '/',
-    // domain: env.isProduction ? '.vercel.app' : undefined,
   };
 };
 
@@ -25,8 +23,15 @@ export const setAuthCookies = (res, accessToken, refreshToken, userRole) => {
 };
 
 export const clearAuthCookies = (res) => {
-  const options = { path: '/' };
-  res.clearCookie('accessToken', options);
-  res.clearCookie('refreshToken', options);
-  res.clearCookie('userRole', options);
+  const isCrossDomain = env.isProduction && env.clientUrl !== env.apiUrl;
+  
+  const clearOptions = {
+    path: '/',
+    secure: env.isProduction,
+    sameSite: isCrossDomain ? 'none' : 'lax',
+  };
+
+  res.clearCookie('accessToken', clearOptions);
+  res.clearCookie('refreshToken', clearOptions);
+  res.clearCookie('userRole', clearOptions);
 };
