@@ -5,6 +5,7 @@ import AppError from "../../utils/AppError.js";
 import subscriptionRepository from "./subscription.repository.js";
 import tagRepository from "../tag/tag.repository.js";
 import subscriptionRules from "./subscription.config.js";
+import authRepository from "../auth/auth.repository.js";
 
 const mapStripeStatusToLocal = (status) => {
   const allowed = [
@@ -66,9 +67,28 @@ const createCheckoutSession = async (userId, tagCode, preferredCategory = null) 
     );
   }
 
+  // ✅ Using authRepository instead of userRepository
+  const user = await authRepository.findUserById(userId);
+  let customerId = user?.stripeCustomerId;
+
+  if (!customerId) {
+    const customer = await stripe.customers.create({
+      email: user.email,
+      name: user.name,
+      metadata: {
+        userId: userId.toString(),
+      },
+    });
+    customerId = customer.id;
+
+    // ✅ Using authRepository.updateUser
+    await authRepository.updateUser(userId, { stripeCustomerId: customerId });
+  }
+
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     payment_method_types: ["card"],
+    customer: customerId,
     line_items: [
       {
         price: env.stripeSubscriptionPriceId,
@@ -96,6 +116,7 @@ const createCheckoutSession = async (userId, tagCode, preferredCategory = null) 
       stripeCheckoutSessionId: session.id,
       stripePriceId: env.stripeSubscriptionPriceId,
       preferredCategory: preferredCategory || null,
+      stripeCustomerId: customerId,
     }
   );
 
@@ -147,6 +168,24 @@ const cancelMySubscription = async (userId, tagCode) => {
   return updated;
 };
 
+const createCustomerPortalSession = async (userId) => {
+  // ✅ Using authRepository instead of userRepository
+  const user = await authRepository.findUserById(userId);
+
+  if (!user || !user.stripeCustomerId) {
+    throw new AppError(httpStatus.NOT_FOUND, "No Stripe customer found for this user");
+  }
+
+  const session = await stripe.billingPortal.sessions.create({
+    customer: user.stripeCustomerId,
+    return_url: `${env.clientUrl}/dashboard/user/subscription`,
+  });
+
+  return {
+    portalUrl: session.url,
+  };
+};
+
 const activateFromCheckoutSession = async (session) => {
   const userId = session.metadata?.userId;
   const tagId = session.metadata?.tagId;
@@ -157,10 +196,11 @@ const activateFromCheckoutSession = async (session) => {
   }
 
   const fullSession = await stripe.checkout.sessions.retrieve(session.id, {
-    expand: ["subscription"],
+    expand: ["subscription", "customer"],
   });
 
   const stripeSubscription = fullSession.subscription;
+  const customerId = fullSession.customer?.id || null;
 
   const updated = await subscriptionRepository.upsertSubscriptionByUserAndTag(
     userId,
@@ -171,7 +211,7 @@ const activateFromCheckoutSession = async (session) => {
       subscriptionType: "subscriber",
       status: mapStripeStatusToLocal(stripeSubscription.status),
       preferredCategory,
-      stripeCustomerId: fullSession.customer || null,
+      stripeCustomerId: customerId,
       stripeSubscriptionId: stripeSubscription.id,
       stripeCheckoutSessionId: session.id,
       stripePriceId:
@@ -185,6 +225,11 @@ const activateFromCheckoutSession = async (session) => {
       cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end || false,
     }
   );
+
+  if (customerId) {
+    // ✅ Using authRepository.updateUser
+    await authRepository.updateUser(userId, { stripeCustomerId: customerId });
+  }
 
   await tagRepository.updateTag(tagId, {
     subscriptionType: "subscriber",
@@ -228,11 +273,96 @@ const syncFromStripeSubscription = async (stripeSubscription) => {
   return updated;
 };
 
+
+// Admin: Get all subscriptions with filters
+const getAllSubscriptionsForAdmin = async (page = 1, limit = 10, search = "", status = "") => {
+  const skip = (page - 1) * limit;
+
+  const filter = {};
+
+  if (status && status !== "all") {
+    filter.status = status;
+  }
+
+  if (search) {
+    filter.$or = [
+      { "tag.tagCode": { $regex: search, $options: "i" } },
+      { "user.email": { $regex: search, $options: "i" } },
+      { "user.name": { $regex: search, $options: "i" } },
+      { stripeSubscriptionId: { $regex: search, $options: "i" } }
+    ];
+  }
+
+  const [subscriptions, total] = await Promise.all([
+    subscriptionRepository.findSubscriptionsWithFilters(filter, skip, limit),
+    subscriptionRepository.countSubscriptionsWithFilters(filter)
+  ]);
+
+  return {
+    meta: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      totalPage: Math.ceil(total / limit)
+    },
+    data: subscriptions
+  };
+};
+
+// Admin: Get subscription stats
+const getSubscriptionStatsForAdmin = async () => {
+  const subscriptions = await subscriptionRepository.findAllSubscriptions();
+
+  const stats = {
+    total: subscriptions.length,
+    active: subscriptions.filter(s => s.status === "active").length,
+    trialing: subscriptions.filter(s => s.status === "trialing").length,
+    pastDue: subscriptions.filter(s => s.status === "past_due").length,
+    canceled: subscriptions.filter(s => s.status === "canceled").length,
+    unpaid: subscriptions.filter(s => s.status === "unpaid").length,
+    incomplete: subscriptions.filter(s => s.status === "incomplete").length,
+    totalRevenue: subscriptions
+      .filter(s => s.status === "active" || s.status === "trialing")
+      .length * 2.99,
+    monthlyRecurringRevenue: subscriptions
+      .filter(s => s.status === "active")
+      .length * 2.99,
+  };
+
+  return stats;
+};
+
+// Admin: Sync all subscriptions with Stripe
+const syncAllSubscriptionsWithStripe = async () => {
+  const subscriptions = await subscriptionRepository.findSubscriptionsWithStripeId();
+  let synced = 0;
+  let failed = 0;
+
+  for (const sub of subscriptions) {
+    if (sub.stripeSubscriptionId) {
+      try {
+        const stripeSub = await stripe.subscriptions.retrieve(sub.stripeSubscriptionId);
+        await syncFromStripeSubscription(stripeSub);
+        synced++;
+      } catch (error) {
+        console.error(`Failed to sync subscription ${sub._id}:`, error);
+        failed++;
+      }
+    }
+  }
+
+  return { synced, failed, total: subscriptions.length };
+};
+
 export default {
   getPlans,
   getMySubscriptions,
   createCheckoutSession,
   cancelMySubscription,
+  createCustomerPortalSession,
   activateFromCheckoutSession,
   syncFromStripeSubscription,
+  getAllSubscriptionsForAdmin,
+  getSubscriptionStatsForAdmin,
+  syncAllSubscriptionsWithStripe,
 };

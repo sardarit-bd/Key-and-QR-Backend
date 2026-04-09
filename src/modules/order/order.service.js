@@ -383,13 +383,8 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
         );
     }
 
-    // If tag was assigned, free it up
     if (order.assignedTag) {
-        await tagRepository.updateTag(order.assignedTag._id, {
-            owner: null,
-            isActivated: false,
-            activatedAt: null,
-        });
+        await tagRepository.resetTag(order.assignedTag._id);
     }
 
     return updatedOrder;
@@ -474,13 +469,8 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
             order.quantity || 1
         );
 
-        // Free up the tag if assigned
         if (order.assignedTag) {
-            await tagRepository.updateTag(order.assignedTag._id, {
-                owner: null,
-                isActivated: false,
-                activatedAt: null,
-            });
+            await tagRepository.resetTag(order.assignedTag._id);
         }
 
         return updatedOrder;
@@ -596,13 +586,8 @@ const completeReturn = async (orderId) => {
         order.quantity || 1
     );
 
-    // Free up the tag if assigned
     if (order.assignedTag) {
-        await tagRepository.updateTag(order.assignedTag._id, {
-            owner: null,
-            isActivated: false,
-            activatedAt: null,
-        });
+        await tagRepository.resetTag(order.assignedTag._id);
     }
 
     return updatedOrder;
