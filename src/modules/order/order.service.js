@@ -227,25 +227,35 @@ const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus
         filter.fulfillmentStatus = fulfillmentStatus;
     }
 
-    if (search) {
-        filter.$or = [
-            { _id: { $regex: search, $options: "i" } },
-            { "user.name": { $regex: search, $options: "i" } },
-            { "user.email": { $regex: search, $options: "i" } },
-            { "product.name": { $regex: search, $options: "i" } }
-        ];
+    // Get all orders with populate first
+    let query = Order.find(filter)
+        .populate("user", "name email")
+        .populate("product", "name price image")
+        .populate("assignedTag", "tagCode")
+        .sort({ createdAt: -1 });
+
+    let orders = await query.lean();
+    let total = orders.length;
+
+    // Apply search filter in JavaScript (after populate)
+    if (search && search.trim() !== "") {
+        const searchLower = search.toLowerCase().trim();
+        orders = orders.filter(order => {
+            // Search by order ID
+            if (order._id.toString().toLowerCase().includes(searchLower)) return true;
+            // Search by user name
+            if (order.user?.name?.toLowerCase().includes(searchLower)) return true;
+            // Search by user email
+            if (order.user?.email?.toLowerCase().includes(searchLower)) return true;
+            // Search by product name
+            if (order.product?.name?.toLowerCase().includes(searchLower)) return true;
+            return false;
+        });
+        total = orders.length;
     }
 
-    const [orders, total] = await Promise.all([
-        Order.find(filter)
-            .populate("user", "name email")
-            .populate("product", "name price image")
-            .populate("assignedTag", "tagCode")
-            .sort({ createdAt: -1 })
-            .skip(skip)
-            .limit(limit),
-        Order.countDocuments(filter)
-    ]);
+    // Apply pagination
+    const paginatedOrders = orders.slice(skip, skip + limit);
 
     return {
         meta: {
@@ -254,7 +264,7 @@ const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus
             total,
             totalPage: Math.ceil(total / limit)
         },
-        data: orders
+        data: paginatedOrders
     };
 };
 
