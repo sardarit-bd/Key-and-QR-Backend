@@ -9,7 +9,7 @@ const findByTagCode = (tagCode) => {
 };
 
 const getAllTags = async (query = {}) => {
-  const { page = 1, limit = 10, search, isActivated, isActive } = query;
+  const { page = 1, limit = 10, search, isActivated, isActive, unused } = query;
 
   const filter = {};
 
@@ -23,6 +23,11 @@ const getAllTags = async (query = {}) => {
 
   if (isActive !== undefined) {
     filter.isActive = isActive === "true";
+  }
+
+  if (unused === "true") {
+    filter.owner = null;
+    filter.isActive = true;
   }
 
   const skip = (page - 1) * limit;
@@ -57,10 +62,43 @@ const updateTag = (id, payload) => {
 
 const findUnusedTag = async () => {
   return Tag.findOne({
+    owner: null,
+    isActive: true,
+  }).sort({ createdAt: 1 });
+};
+
+const findUnusedTagStrict = async () => {
+  return Tag.findOne({
     isActivated: false,
     owner: null,
     isActive: true,
   }).sort({ createdAt: 1 });
+};
+
+const resetTag = async (tagId) => {
+  return Tag.findByIdAndUpdate(
+    tagId,
+    {
+      owner: null,
+      isActivated: false,
+      activatedAt: null,
+      personalMessage: null,
+    },
+    { new: true }
+  );
+};
+
+
+const removeOwner = async (tagId) => {
+  return Tag.findByIdAndUpdate(
+    tagId,
+    {
+      owner: null,
+      isActivated: false,
+      activatedAt: null,
+    },
+    { new: true }
+  );
 };
 
 const updatePersonalMessage = async (tagCode, message) => {
@@ -81,6 +119,20 @@ const findTagsByOwner = async (ownerId) => {
     .sort({ createdAt: -1 });
 };
 
+const isTagFree = async (tagId) => {
+  const tag = await findById(tagId);
+  return tag && tag.owner === null && tag.isActive === true;
+};
+
+const findMultipleUnusedTags = async (limit = 10) => {
+  return Tag.find({
+    owner: null,
+    isActive: true,
+  })
+    .sort({ createdAt: 1 })
+    .limit(limit);
+};
+
 export default {
   createTag,
   findByTagCode,
@@ -88,7 +140,12 @@ export default {
   findById,
   updateTag,
   findUnusedTag,
+  findUnusedTagStrict,
+  resetTag,
+  removeOwner,
   updatePersonalMessage,
   findByTagCodeWithOwner,
   findTagsByOwner,
+  isTagFree,
+  findMultipleUnusedTags,
 };
