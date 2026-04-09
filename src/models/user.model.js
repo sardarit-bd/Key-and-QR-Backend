@@ -75,6 +75,14 @@ const userSchema = new mongoose.Schema(
       default: false,
     },
 
+    // 🆕 Stripe Customer ID for subscription management
+    stripeCustomerId: {
+      type: String,
+      default: null,
+      index: true,
+      sparse: true,
+    },
+
     passwordResetToken: {
       type: String,
       default: null,
@@ -97,6 +105,7 @@ userSchema.index({ email: 1 });
 userSchema.index({ googleId: 1 }, { sparse: true });
 userSchema.index({ appleId: 1 }, { sparse: true });
 userSchema.index({ provider: 1 });
+userSchema.index({ stripeCustomerId: 1 }, { sparse: true }); // 🆕 Index for stripeCustomerId
 
 const User = mongoose.model("User", userSchema);
 

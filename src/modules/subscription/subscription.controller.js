@@ -54,9 +54,68 @@ const cancelMySubscription = catchAsync(async (req, res) => {
   });
 });
 
+const createCustomerPortalSession = catchAsync(async (req, res) => {
+  const { portalUrl } = await subscriptionService.createCustomerPortalSession(
+    req.user.userId
+  );
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Customer portal session created successfully",
+    data: { url: portalUrl },
+  });
+});
+
+// Add to subscription.controller.js
+const getAllSubscriptionsForAdmin = catchAsync(async (req, res) => {
+  const { page = 1, limit = 10, search, status } = req.query;
+
+  const result = await subscriptionService.getAllSubscriptionsForAdmin(
+    parseInt(page),
+    parseInt(limit),
+    search,
+    status
+  );
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Subscriptions fetched successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+const getSubscriptionStatsForAdmin = catchAsync(async (req, res) => {
+  const stats = await subscriptionService.getSubscriptionStatsForAdmin();
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Subscription stats fetched successfully",
+    data: stats,
+  });
+});
+
+const syncAllSubscriptionsWithStripe = catchAsync(async (req, res) => {
+  const result = await subscriptionService.syncAllSubscriptionsWithStripe();
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Subscriptions synced successfully",
+    data: result,
+  });
+});
+
 export default {
   getPlans,
   getMySubscriptions,
   createCheckoutSession,
   cancelMySubscription,
+  createCustomerPortalSession,
+  getAllSubscriptionsForAdmin,
+  getSubscriptionStatsForAdmin,
+  syncAllSubscriptionsWithStripe,
 };
