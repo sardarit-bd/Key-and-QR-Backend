@@ -1,56 +1,58 @@
 import env from '../config/env.js';
 
 const getBaseCookieOptions = (maxAge, httpOnly = true) => {
-  const isProduction = env.isProduction || process.env.NODE_ENV === 'production';
-  const isVercel = !!process.env.VERCEL || env.isVercel;
+  const isProduction = process.env.NODE_ENV === 'production';
+  const isVercel = !!process.env.VERCEL;
   
-  const isCrossDomain = isProduction || isVercel;
-  
-  console.log('Cookie Config:', {
-    isProduction,
-    isVercel,
-    isCrossDomain,
-    clientUrl: env.clientUrl,
-    apiUrl: env.apiUrl,
-  });
+  const useCrossDomain = isProduction || isVercel;
   
   return {
     httpOnly,
     secure: true,
-    sameSite: 'none',  
+    sameSite: 'none',
     maxAge,
     path: '/',
-    // domain: '.vercel.app', 
   };
 };
 
+// ✅ Access Token Cookie Options (short lived)
 export const accessTokenCookieOptions = getBaseCookieOptions(15 * 60 * 1000, true);
+
+// ✅ Refresh Token Cookie Options (long lived)
 export const refreshTokenCookieOptions = getBaseCookieOptions(7 * 24 * 60 * 60 * 1000, true);
+
+// ✅ User Role Cookie Options (not httpOnly)
 export const userRoleCookieOptions = getBaseCookieOptions(7 * 24 * 60 * 60 * 1000, false);
 
+// ✅ Set Refresh Token Cookie only
+export const setRefreshTokenCookie = (res, refreshToken) => {
+  res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
+};
+
+// ✅ Clear Refresh Token Cookie only
+export const clearRefreshTokenCookie = (res) => {
+  res.clearCookie('refreshToken', {
+    path: '/',
+    secure: true,
+    sameSite: 'none',
+  });
+};
+
+// ✅ Set All Auth Cookies (Access + Refresh + Role)
 export const setAuthCookies = (res, accessToken, refreshToken, userRole) => {
-  // ✅ Ensure headers are sent before setting cookies
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', env.clientUrl);
-  
   res.cookie('accessToken', accessToken, accessTokenCookieOptions);
   res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
   res.cookie('userRole', userRole, userRoleCookieOptions);
-  
-  console.log('Cookies set successfully');
 };
 
+// ✅ Clear All Auth Cookies
 export const clearAuthCookies = (res) => {
-  const isProduction = env.isProduction || process.env.NODE_ENV === 'production';
-  const isVercel = !!process.env.VERCEL || env.isVercel;
-  const isCrossDomain = isProduction || isVercel;
-  
   const clearOptions = {
     path: '/',
     secure: true,
     sameSite: 'none',
   };
-
+  
   res.clearCookie('accessToken', clearOptions);
   res.clearCookie('refreshToken', clearOptions);
   res.clearCookie('userRole', clearOptions);

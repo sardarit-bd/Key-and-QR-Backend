@@ -5,13 +5,14 @@ import sendResponse from "../../utils/sendResponse.js";
 import authService from "./auth.service.js";
 import passport from "../../config/passport.js";
 import AppError from "../../utils/AppError.js";
-import { accessTokenCookieOptions, clearAuthCookies, setAuthCookies } from "../../utils/cookie.util.js";
+import {  setAuthCookies, setRefreshTokenCookie } from "../../utils/cookie.util.js";
+import { clearAuthCookies } from './../../utils/cookie.util.js';
 
 // Register new user
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
   setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
     success: true,
@@ -23,20 +24,24 @@ const register = catchAsync(async (req, res) => {
 // Login user
 const login = catchAsync(async (req, res) => {
   const result = await authService.loginUser(req.body);
-  setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
-  
+
+  setRefreshTokenCookie(res, result.refreshToken);
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "User logged in successfully",
-    data: { user: result.user },
+    data: {
+      user: result.user,
+      accessToken: result.accessToken,
+    },
   });
 });
 
 // Get current user profile
 const getMe = catchAsync(async (req, res) => {
   const result = await authService.getMe(req.user.userId);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -59,22 +64,21 @@ const refreshToken = catchAsync(async (req, res) => {
   }
 
   const result = await authService.refreshAccessToken(token);
-  
-
-  res.cookie("accessToken", result.accessToken, accessTokenCookieOptions);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Access token refreshed successfully",
-    data: null,
+    data: {
+      accessToken: result.accessToken,
+    },
   });
 });
 
 // Logout user
 const logout = catchAsync(async (req, res) => {
   clearAuthCookies(res);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -86,7 +90,7 @@ const logout = catchAsync(async (req, res) => {
 // Forgot password
 const forgotPassword = catchAsync(async (req, res) => {
   await authService.forgotPassword(req.body.email);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -98,7 +102,7 @@ const forgotPassword = catchAsync(async (req, res) => {
 // Reset password
 const resetPassword = catchAsync(async (req, res) => {
   await authService.resetPassword(req.body);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -111,7 +115,7 @@ const resetPassword = catchAsync(async (req, res) => {
 const changePassword = catchAsync(async (req, res) => {
   const { oldPassword, newPassword } = req.body;
   await authService.changePassword(req.user.userId, oldPassword, newPassword);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -146,7 +150,7 @@ const googleCallback = catchAsync(async (req, res, next) => {
 // Update profile
 const updateProfile = catchAsync(async (req, res) => {
   const result = await authService.updateProfile(req.user.userId, req.body);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
