@@ -31,9 +31,9 @@ const env = {
   bcryptSaltRounds: Number(getEnv("BCRYPT_SALT_ROUNDS", "10")),
 
   // URLs - Dynamic based on environment
-  clientUrl: getEnv("CLIENT_URL", 
-    process.env.VERCEL_URL 
-      ? `https://${process.env.VERCEL_URL}` 
+  clientUrl: getEnv("CLIENT_URL",
+    process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
       : "http://localhost:3000"
   ),
   apiUrl: getEnv("API_URL",
@@ -83,6 +83,15 @@ if (missingVars.length > 0) {
     console.warn("⚠️ Using fallback values for development");
   }
 }
+
+console.log('🔐 Cookie Config:', {
+  isProduction: env.isProduction,
+  isVercel: env.isVercel,
+  clientUrl: env.clientUrl,
+  apiUrl: env.apiUrl,
+  sameSite: env.isProduction || env.isVercel ? 'none' : 'lax',
+  secure: env.isProduction || env.isVercel,
+});
 
 console.log(`✅ Environment: ${env.nodeEnv}`);
 console.log(`✅ Client URL: ${env.clientUrl}`);
