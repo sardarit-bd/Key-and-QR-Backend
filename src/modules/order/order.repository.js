@@ -9,7 +9,7 @@ const findById = (id) => {
 };
 
 const updateOrder = (id, payload) => {
-  return Order.findByIdAndUpdate(id, payload, { new: true });
+  return Order.findByIdAndUpdate(id, payload, { returnDocument: 'after' });
 };
 
 
@@ -20,9 +20,17 @@ const findByUser = (userId) => {
     .sort({ createdAt: -1 });
 };
 
+const findByIdWithDetails = (id) => {
+  return Order.findById(id)
+    .populate("user", "name email")
+    .populate("product", "name price image description")
+    .populate("assignedTag", "tagCode");
+};
+
 export default {
   createOrder,
   findById,
   updateOrder,
   findByUser,
+  findByIdWithDetails,
 };

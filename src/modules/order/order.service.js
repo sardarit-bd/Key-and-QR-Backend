@@ -21,6 +21,17 @@ const createOrder = async (userId, payload) => {
 
     const purchaseType = payload.purchaseType || "self";
 
+    // Shipping address from payload
+    const shippingAddress = {
+        fullName: payload.fullName || null,
+        email: payload.email || null,
+        phone: payload.phone || null,
+        address: payload.address || null,
+        city: payload.city || null,
+        postalCode: payload.postalCode || null,
+        country: payload.country || null,
+    };
+
     return orderRepository.createOrder({
         user: userId,
         product: payload.productId,
@@ -28,6 +39,7 @@ const createOrder = async (userId, payload) => {
         purchaseType,
         giftMessage: purchaseType === "gift" ? payload.giftMessage || null : null,
         giftStatus: purchaseType === "gift" ? "pending_claim" : "none",
+        shippingAddress,
     });
 };
 
@@ -48,6 +60,20 @@ const createCheckout = async (userId, payload) => {
 
         if (order.paymentStatus === "paid") {
             throw new AppError(httpStatus.BAD_REQUEST, "Order already paid");
+        }
+
+        // Update shipping address if provided
+        if (payload.address || payload.fullName) {
+            const shippingAddress = {
+                fullName: payload.fullName || order.shippingAddress?.fullName,
+                email: payload.email || order.shippingAddress?.email,
+                phone: payload.phone || order.shippingAddress?.phone,
+                address: payload.address || order.shippingAddress?.address,
+                city: payload.city || order.shippingAddress?.city,
+                postalCode: payload.postalCode || order.shippingAddress?.postalCode,
+                country: payload.country || order.shippingAddress?.country,
+            };
+            await orderRepository.updateOrder(payload.orderId, { shippingAddress });
         }
     } else {
         order = await createOrder(userId, payload);
@@ -104,10 +130,17 @@ const confirmPaymentAndAssignTag = async (orderId, paymentIntentId = null) => {
         return order;
     }
 
+    // Get truly unused tag
     const tag = await tagRepository.findUnusedTag();
 
     if (!tag) {
         throw new AppError(httpStatus.BAD_REQUEST, "No available tags. Please contact support.");
+    }
+
+    // Double check - ensure tag is not already assigned elsewhere
+    const isAlreadyAssigned = await tagRepository.isTagAssignedToActiveOrder(tag._id);
+    if (isAlreadyAssigned) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Tag already assigned to another order");
     }
 
     const quantity = order.quantity || 1;
@@ -227,7 +260,7 @@ const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus
         filter.fulfillmentStatus = fulfillmentStatus;
     }
 
-    // Get all orders with populate first
+    // Get all orders with populate
     let query = Order.find(filter)
         .populate("user", "name email")
         .populate("product", "name price image")
@@ -249,6 +282,9 @@ const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus
             if (order.user?.email?.toLowerCase().includes(searchLower)) return true;
             // Search by product name
             if (order.product?.name?.toLowerCase().includes(searchLower)) return true;
+            // ✅ Search by shipping address
+            if (order.shippingAddress?.address?.toLowerCase().includes(searchLower)) return true;
+            if (order.shippingAddress?.fullName?.toLowerCase().includes(searchLower)) return true;
             return false;
         });
         total = orders.length;
@@ -305,10 +341,41 @@ const updateOrder = async (id, payload) => {
         throw new AppError(400, "Cannot update a returned order");
     }
 
+    // Tag assign validation
     if (payload.assignedTag) {
+        // Check if tag exists
+        const tag = await tagRepository.findById(payload.assignedTag);
+
+        if (!tag) {
+            throw new AppError(404, "Tag not found");
+        }
+
+        // CRITICAL: Check if tag already has an owner
+        if (tag.owner) {
+            throw new AppError(400, "This tag is already assigned to another user/order");
+        }
+
+        // CRITICAL: Check if tag is already assigned to any active order
+        const existingOrderWithTag = await Order.findOne({
+            assignedTag: payload.assignedTag,
+            fulfillmentStatus: { $nin: ["cancelled", "returned"] }
+        });
+
+        if (existingOrderWithTag && existingOrderWithTag._id.toString() !== id) {
+            throw new AppError(400, "This tag is already assigned to another active order");
+        }
+
+        // If tag is being assigned, set owner and activation
+        await tagRepository.updateTag(tag._id, {
+            owner: order.user,
+            isActivated: true,
+            activatedAt: new Date()
+        });
+
         payload.fulfillmentStatus = "assigned";
     }
 
+    // Check if trying to assign assigned status without tag
     if (payload.fulfillmentStatus === "assigned" && !order.assignedTag && !payload.assignedTag) {
         throw new AppError(400, "Assign tag first");
     }
@@ -336,7 +403,6 @@ const updateOrder = async (id, payload) => {
         throw new AppError(400, "Order must be paid before shipping");
     }
 
-    // Add timestamps for specific statuses
     if (payload.fulfillmentStatus === "cancelled") {
         payload.cancelledAt = new Date();
     }
@@ -603,6 +669,39 @@ const completeReturn = async (orderId) => {
     return updatedOrder;
 };
 
+const updateShippingAddress = async (orderId, userId, shippingAddress) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(httpStatus.NOT_FOUND, "Order not found");
+    }
+
+    // Check if user owns the order
+    if (order.user.toString() !== userId) {
+        throw new AppError(httpStatus.FORBIDDEN, "You don't have permission to update this order");
+    }
+
+    // Check if address can be updated (only before shipping)
+    const uneditableStatuses = ["shipped", "delivered", "cancelled", "returned"];
+    if (uneditableStatuses.includes(order.fulfillmentStatus)) {
+        throw new AppError(httpStatus.BAD_REQUEST, `Cannot update address when order status is ${order.fulfillmentStatus}`);
+    }
+
+    // Update shipping address
+    const updatedOrder = await orderRepository.updateOrder(orderId, {
+        shippingAddress: {
+            fullName: shippingAddress.fullName || order.shippingAddress?.fullName,
+            phone: shippingAddress.phone || order.shippingAddress?.phone,
+            address: shippingAddress.address || order.shippingAddress?.address,
+            city: shippingAddress.city || order.shippingAddress?.city,
+            postalCode: shippingAddress.postalCode || order.shippingAddress?.postalCode,
+            country: shippingAddress.country || order.shippingAddress?.country,
+        }
+    });
+
+    return updatedOrder;
+};
+
 export default {
     createOrder,
     createCheckout,
@@ -620,4 +719,5 @@ export default {
     requestReturn,
     processReturn,
     completeReturn,
+    updateShippingAddress,
 };

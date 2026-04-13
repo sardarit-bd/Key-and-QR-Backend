@@ -24,6 +24,8 @@ router.get("/:id", auth(), orderController.getOrderById);
 // Update order (admin)
 router.patch("/:id", auth(), roleMiddleware(roles.ADMIN), orderController.updateOrder);
 
+router.patch("/:id/address", auth(), orderController.updateShippingAddress);
+
 // Cancel order (user or admin)
 router.post("/:id/cancel", auth(), orderController.cancelOrder);
 
