@@ -130,10 +130,17 @@ const confirmPaymentAndAssignTag = async (orderId, paymentIntentId = null) => {
         return order;
     }
 
+    // Get truly unused tag
     const tag = await tagRepository.findUnusedTag();
 
     if (!tag) {
         throw new AppError(httpStatus.BAD_REQUEST, "No available tags. Please contact support.");
+    }
+
+    // Double check - ensure tag is not already assigned elsewhere
+    const isAlreadyAssigned = await tagRepository.isTagAssignedToActiveOrder(tag._id);
+    if (isAlreadyAssigned) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Tag already assigned to another order");
     }
 
     const quantity = order.quantity || 1;
@@ -334,10 +341,41 @@ const updateOrder = async (id, payload) => {
         throw new AppError(400, "Cannot update a returned order");
     }
 
+    // Tag assign validation
     if (payload.assignedTag) {
+        // Check if tag exists
+        const tag = await tagRepository.findById(payload.assignedTag);
+
+        if (!tag) {
+            throw new AppError(404, "Tag not found");
+        }
+
+        // CRITICAL: Check if tag already has an owner
+        if (tag.owner) {
+            throw new AppError(400, "This tag is already assigned to another user/order");
+        }
+
+        // CRITICAL: Check if tag is already assigned to any active order
+        const existingOrderWithTag = await Order.findOne({
+            assignedTag: payload.assignedTag,
+            fulfillmentStatus: { $nin: ["cancelled", "returned"] }
+        });
+
+        if (existingOrderWithTag && existingOrderWithTag._id.toString() !== id) {
+            throw new AppError(400, "This tag is already assigned to another active order");
+        }
+
+        // If tag is being assigned, set owner and activation
+        await tagRepository.updateTag(tag._id, {
+            owner: order.user,
+            isActivated: true,
+            activatedAt: new Date()
+        });
+
         payload.fulfillmentStatus = "assigned";
     }
 
+    // Check if trying to assign assigned status without tag
     if (payload.fulfillmentStatus === "assigned" && !order.assignedTag && !payload.assignedTag) {
         throw new AppError(400, "Assign tag first");
     }
@@ -663,9 +701,6 @@ const updateShippingAddress = async (orderId, userId, shippingAddress) => {
 
     return updatedOrder;
 };
-
-
-
 
 export default {
     createOrder,

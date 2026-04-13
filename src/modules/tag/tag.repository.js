@@ -1,3 +1,4 @@
+import mongoose from "mongoose";
 import Tag from "./tag.model.js";
 
 const createTag = (payload) => {
@@ -26,11 +27,15 @@ const getAllTags = async (query = {}) => {
   }
 
   if (unused === "true") {
+    const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
+    console.log("Assigned tag IDs from active orders:", assignedTagIds.length, assignedTagIds);
+
     filter.owner = null;
     filter.isActive = true;
+    filter._id = { $nin: assignedTagIds };
   }
 
-  const skip = (page - 1) * limit;
+  const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const [data, total] = await Promise.all([
     Tag.find(filter)
@@ -61,9 +66,12 @@ const updateTag = (id, payload) => {
 };
 
 const findUnusedTag = async () => {
+  const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
+
   return Tag.findOne({
     owner: null,
     isActive: true,
+    _id: { $nin: assignedTagIds }
   }).sort({ createdAt: 1 });
 };
 
@@ -124,13 +132,37 @@ const isTagFree = async (tagId) => {
   return tag && tag.owner === null && tag.isActive === true;
 };
 
+// tag.repository.js
 const findMultipleUnusedTags = async (limit = 10) => {
+  const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
+
   return Tag.find({
     owner: null,
     isActive: true,
+    isActivated: false,
+    _id: { $nin: assignedTagIds }
   })
     .sort({ createdAt: 1 })
     .limit(limit);
+};
+
+const isTagAssignedToActiveOrder = async (tagId) => {
+  const Order = mongoose.model("Order");
+  const existingOrder = await Order.findOne({
+    assignedTag: tagId,
+    fulfillmentStatus: { $nin: ["cancelled", "returned"] }
+  });
+  return !!existingOrder;
+};
+
+const getAssignedTagIdsFromActiveOrders = async () => {
+  const Order = mongoose.model("Order");
+  const orders = await Order.find({
+    assignedTag: { $ne: null },
+    fulfillmentStatus: { $nin: ["cancelled", "returned"] }
+  }).select("assignedTag");
+
+  return orders.map(o => o.assignedTag.toString());
 };
 
 export default {
@@ -148,4 +180,6 @@ export default {
   findTagsByOwner,
   isTagFree,
   findMultipleUnusedTags,
+  isTagAssignedToActiveOrder,
+  getAssignedTagIdsFromActiveOrders,
 };
