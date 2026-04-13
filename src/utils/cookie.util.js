@@ -1,14 +1,17 @@
 import env from '../config/env.js';
 
 const getBaseCookieOptions = (maxAge, httpOnly = true) => {
-  const isCrossDomain = env.isProduction || env.isVercel;
+  // Determine if we're in a production environment
+  const isProd = env.isProduction || env.isVercel;
   
   return {
     httpOnly,
-    secure: true,
-    sameSite: isCrossDomain ? 'none' : 'lax',
+    secure: isProd, // Always true in production, false in development (or true if HTTPS)
+    sameSite: isProd ? 'none' : 'lax',
     maxAge,
     path: '/',
+    // Add domain for production if needed
+    ...(isProd && env.nodeEnv === 'production' ? { domain: process.env.COOKIE_DOMAIN } : {})
   };
 };
 
@@ -30,7 +33,7 @@ export const setRefreshTokenCookie = (res, refreshToken) => {
 export const clearRefreshTokenCookie = (res) => {
   res.clearCookie('refreshToken', {
     path: '/',
-    secure: true,
+    secure: env.isProduction || env.isVercel,
     sameSite: env.isProduction || env.isVercel ? 'none' : 'lax',
   });
 };
@@ -40,17 +43,30 @@ export const setAuthCookies = (res, accessToken, refreshToken, userRole) => {
   res.cookie('accessToken', accessToken, accessTokenCookieOptions);
   res.cookie('refreshToken', refreshToken, refreshTokenCookieOptions);
   res.cookie('userRole', userRole, userRoleCookieOptions);
+  
+  // Debug log
+  console.log('Cookies set:', {
+    accessToken: !!accessToken,
+    refreshToken: !!refreshToken,
+    userRole,
+    options: accessTokenCookieOptions
+  });
 };
 
 // Clear All Auth Cookies
 export const clearAuthCookies = (res) => {
   const clearOptions = {
     path: '/',
-    secure: true,
+    secure: env.isProduction || env.isVercel,
     sameSite: env.isProduction || env.isVercel ? 'none' : 'lax',
   };
   
   res.clearCookie('accessToken', clearOptions);
   res.clearCookie('refreshToken', clearOptions);
   res.clearCookie('userRole', clearOptions);
+};
+
+// Helper to verify if cookies are set
+export const hasAuthCookies = (req) => {
+  return !!(req.cookies?.accessToken || req.cookies?.refreshToken);
 };

@@ -14,6 +14,8 @@ import authRepository from "./auth.repository.js";
 import resetPasswordTemplate from "../../templates/resetPasswordTemplate.js";
 import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
 
+
+
 const buildAuthResponse = (user) => {
   const jwtPayload = {
     userId: user._id,
@@ -23,6 +25,14 @@ const buildAuthResponse = (user) => {
 
   const accessToken = generateAccessToken(jwtPayload);
   const refreshToken = generateRefreshToken(jwtPayload);
+
+  // Log for debugging
+  console.log('Auth tokens generated:', {
+    userId: user._id,
+    role: user.role,
+    accessTokenLength: accessToken?.length,
+    refreshTokenLength: refreshToken?.length
+  });
 
   return {
     accessToken,
