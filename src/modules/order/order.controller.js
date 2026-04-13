@@ -186,6 +186,21 @@ const claimGiftOrder = catchAsync(async (req, res) => {
     });
 });
 
+const updateShippingAddress = catchAsync(async (req, res) => {
+    const { id } = req.params;
+    const { shippingAddress } = req.body;
+
+    const result = await orderService.updateShippingAddress(id, req.user.userId, shippingAddress);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Shipping address updated successfully",
+        data: result,
+    });
+});
+
+
 
 export default {
     createCheckout,
@@ -193,6 +208,7 @@ export default {
     getUserOrders,
     getAllOrders,
     getOrderStats,
+    updateShippingAddress,
     updateOrder,
     cancelOrder,
     requestRefund,

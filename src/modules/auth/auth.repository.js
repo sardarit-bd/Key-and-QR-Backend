@@ -38,7 +38,7 @@ const savePasswordResetToken = async (userId, passwordResetToken, passwordResetE
       passwordResetToken,
       passwordResetExpires,
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 };
 
@@ -58,7 +58,7 @@ const updatePassword = async (userId, password) => {
       passwordResetToken: null,
       passwordResetExpires: null,
     },
-    { new: true }
+    { returnDocument: 'after' }
   );
 };
 
@@ -71,7 +71,7 @@ const updateStripeCustomerId = async (userId, stripeCustomerId) => {
   return User.findByIdAndUpdate(
     userId,
     { stripeCustomerId },
-    { new: true }
+    { returnDocument: 'after' }
   );
 };
 

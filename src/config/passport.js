@@ -3,6 +3,7 @@ import { Strategy as GoogleStrategy } from "passport-google-oauth20";
 import User from "../models/user.model.js";
 import env from "./env.js";
 
+// Only configure Google Strategy if credentials exist
 if (env.googleClientId && env.googleClientSecret) {
   passport.use(
     new GoogleStrategy(
@@ -12,8 +13,9 @@ if (env.googleClientId && env.googleClientSecret) {
         callbackURL: `${env.apiUrl}/api/v1/auth/google/callback`,
         scope: ["profile", "email"],
         proxy: true,
+        passReqToCallback: true,
       },
-      async (accessToken, refreshToken, profile, done) => {
+      async (req, accessToken, refreshToken, profile, done) => {
         try {
           const email = profile.emails[0]?.value;
 
@@ -21,29 +23,23 @@ if (env.googleClientId && env.googleClientSecret) {
             return done(new Error("No email found in Google profile"), null);
           }
 
-          // First try to find by googleId (fastest)
-          let user = await User.findOne({ googleId: profile.id });
+          let user = await User.findOne({ email });
 
-          if (!user) {
-            // Try by email
-            user = await User.findOne({ email });
-
-            if (user) {
-              // Link existing account with Google
+          if (user) {
+            if (!user.googleId) {
               user.googleId = profile.id;
               user.provider = "google";
               user.isEmailVerified = true;
               await user.save();
-            } else {
-              // Create new user
-              user = await User.create({
-                name: profile.displayName,
-                email,
-                provider: "google",
-                googleId: profile.id,
-                isEmailVerified: true,
-              });
             }
+          } else {
+            user = await User.create({
+              name: profile.displayName,
+              email,
+              provider: "google",
+              googleId: profile.id,
+              isEmailVerified: true,
+            });
           }
 
           return done(null, user);
@@ -56,8 +52,11 @@ if (env.googleClientId && env.googleClientSecret) {
   );
 
   console.log("✅ Google OAuth configured");
+} else {
+  console.warn("⚠️ Google OAuth credentials missing");
 }
 
+// Serialize and Deserialize
 passport.serializeUser((user, done) => {
   done(null, user.id);
 });
@@ -70,5 +69,10 @@ passport.deserializeUser(async (id, done) => {
     done(error, null);
   }
 });
+
+// Initialize passport
+export const initializePassport = () => {
+  return passport.initialize();
+};
 
 export default passport;

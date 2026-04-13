@@ -5,12 +5,12 @@ import sendResponse from "../../utils/sendResponse.js";
 import authService from "./auth.service.js";
 import passport from "../../config/passport.js";
 import AppError from "../../utils/AppError.js";
-import {  setAuthCookies, setRefreshTokenCookie } from "../../utils/cookie.util.js";
-import { clearAuthCookies } from './../../utils/cookie.util.js';
+import { setAuthCookies, setRefreshTokenCookie, clearAuthCookies } from "../../utils/cookie.util.js";
 
 // Register new user
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
+
   setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
 
   sendResponse(res, {
@@ -25,7 +25,7 @@ const register = catchAsync(async (req, res) => {
 const login = catchAsync(async (req, res) => {
   const result = await authService.loginUser(req.body);
 
-  setRefreshTokenCookie(res, result.refreshToken);
+  setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -64,6 +64,8 @@ const refreshToken = catchAsync(async (req, res) => {
   }
 
   const result = await authService.refreshAccessToken(token);
+
+  setRefreshTokenCookie(res, result.accessToken);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -130,18 +132,23 @@ const googleLogin = passport.authenticate("google", {
   session: false,
 });
 
-// Google Callback
+// Google Callback - FIXED
 const googleCallback = catchAsync(async (req, res, next) => {
   passport.authenticate("google", { session: false }, async (err, profile) => {
     if (err || !profile) {
+      console.error("Google auth error:", err);
       return res.redirect(`${env.clientUrl}/login?error=google_auth_failed`);
     }
 
     try {
       const result = await authService.handleSocialLogin(profile, "google");
+
+      // Use centralized cookie function - consistent with login/register
       setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
+
       return res.redirect(`${env.clientUrl}/callback?success=true`);
     } catch (error) {
+      console.error("Social login error:", error);
       return res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
     }
   })(req, res, next);

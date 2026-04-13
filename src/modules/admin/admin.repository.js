@@ -24,7 +24,7 @@ const updateUserRole = async (id, role) => {
 };
 
 const updateAdminProfile = async (id, payload) => {
-    return User.findByIdAndUpdate(id, payload, { new: true });
+    return User.findByIdAndUpdate(id, payload, { returnDocument: 'after' });
 };
 
 const deleteUser = async (id) => {
