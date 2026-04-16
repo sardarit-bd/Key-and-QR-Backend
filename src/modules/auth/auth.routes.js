@@ -27,6 +27,7 @@ router.post(
   authController.login
 );
 
+// Refresh token endpoint - can accept token from body, header, or cookie
 router.post("/refresh-token", authController.refreshToken);
 router.post("/logout", authController.logout);
 router.get("/me", auth(roles.USER, roles.ADMIN), authController.getMe);
@@ -50,15 +51,11 @@ router.post(
   authController.changePassword
 );
 
-// ============= GOOGLE OAUTH ROUTES =============
+// Google OAuth Routes
 router.get("/google", authController.googleLogin);
 router.get("/google/callback", authController.googleCallback);
 
-// ============= APPLE OAUTH ROUTES =============
-// router.get("/apple", authController.appleLogin);
-// router.get("/apple/callback", authController.appleCallback);
-
-// ============= SOCIAL LOGIN SUCCESS =============
+// Social login success
 router.get("/social/success", authController.socialLoginSuccess);
 
 router.patch(
@@ -73,6 +70,5 @@ router.post(
   uploadSingleImage,
   authController.uploadAvatar
 );
-
 
 export default router;
