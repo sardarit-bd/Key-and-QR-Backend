@@ -16,8 +16,9 @@ router.get("/admin/all", auth(), roleMiddleware(roles.ADMIN), orderController.ge
 router.get("/admin/stats", auth(), roleMiddleware(roles.ADMIN), orderController.getOrderStats);
 
 // User - own orders
-router.get("/", auth(), orderController.getUserOrders);
+// router.get("/", auth(), orderController.getUserOrders);
 
+router.get("/", auth(roles.USER, roles.ADMIN), orderController.getUserOrders);
 // Single order
 router.get("/:id", auth(), orderController.getOrderById);
 

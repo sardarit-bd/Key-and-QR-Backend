@@ -6,6 +6,7 @@ import productRepository from "../product/product.repository.js";
 import stripe from "../../config/stripe.js";
 import env from "../../config/env.js";
 import Order from "./order.model.js";
+import mongoose from "mongoose";
 
 
 const createOrder = async (userId, payload) => {
@@ -245,9 +246,100 @@ const getOrderById = async (id) => {
     return order;
 };
 
-const getUserOrders = async (userId) => {
-    const orders = await orderRepository.findByUser(userId);
-    return orders;
+const getUserOrders = async (userId, page = 1, limit = 10) => {
+    const skip = (page - 1) * limit;
+
+    // Get total count
+    const total = await Order.countDocuments({ user: userId });
+
+    // Get paginated orders
+    const orders = await Order.find({ user: userId })
+        .populate("product", "name price image")
+        .populate("assignedTag", "tagCode")
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit);
+
+    return {
+        data: orders,
+        pagination: {
+            page: parseInt(page),
+            limit: parseInt(limit),
+            total: total,
+            totalPages: Math.ceil(total / limit),
+            hasNextPage: page * limit < total,
+            hasPrevPage: page > 1
+        }
+    };
+};
+
+const getUserTotalSpent = async (userId) => {
+    try {
+        // Convert string ID to ObjectId safely
+        let objectId;
+        try {
+            objectId = new mongoose.Types.ObjectId(userId);
+        } catch (err) {
+            console.error("Invalid userId format:", userId);
+            return 0;
+        }
+
+        const result = await Order.aggregate([
+            {
+                $match: {
+                    user: objectId,
+                    paymentStatus: "paid"
+                }
+            },
+            {
+                $lookup: {
+                    from: "products",
+                    localField: "product",
+                    foreignField: "_id",
+                    as: "productData"
+                }
+            },
+            {
+                $unwind: {
+                    path: "$productData",
+                    preserveNullAndEmptyArrays: true
+                }
+            },
+            {
+                $group: {
+                    _id: null,
+                    total: {
+                        $sum: {
+                            $multiply: [
+                                { $ifNull: ["$productData.price", 0] },
+                                { $ifNull: ["$quantity", 1] }
+                            ]
+                        }
+                    }
+                }
+            }
+        ]);
+
+        return result[0]?.total || 0;
+    } catch (error) {
+        console.error("Error in getUserTotalSpent:", error);
+        // Fallback to simple calculation
+        try {
+            const orders = await Order.find({
+                user: userId,
+                paymentStatus: "paid"
+            }).populate("product", "price");
+
+            return orders.reduce((sum, order) => {
+                const price = order.product?.price || 0;
+                const quantity = order.quantity || 1;
+                return sum + (price * quantity);
+            }, 0);
+        } catch (fallbackError) {
+            console.error("Fallback calculation also failed:", fallbackError);
+            return 0;
+        }
+    }
 };
 
 const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus = null) => {
@@ -710,6 +802,7 @@ export default {
     claimGiftOrder,
     getOrderById,
     getUserOrders,
+    getUserTotalSpent,
     getAllOrders,
     getOrderStats,
     updateOrder,
