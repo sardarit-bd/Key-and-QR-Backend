@@ -55,18 +55,12 @@ const getMe = catchAsync(async (req, res) => {
   });
 });
 
-// 🔥 Refresh access token - ONLY from header (no cookies)
 const refreshToken = catchAsync(async (req, res) => {
-  // Get refresh token ONLY from header
+
   const token = req.headers['x-refresh-token'];
 
   if (!token) {
-    return sendResponse(res, {
-      statusCode: httpStatus.UNAUTHORIZED,
-      success: false,
-      message: "Refresh token is required in x-refresh-token header",
-      data: null,
-    });
+    throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required in x-refresh-token header");
   }
 
   const result = await authService.refreshAccessToken(token);
@@ -145,10 +139,6 @@ const googleCallback = catchAsync(async (req, res, next) => {
 
     try {
       const result = await authService.handleSocialLogin(profile, "google");
-
-      console.log("Google login success, user:", result.user.email);
-      console.log("Access token generated:", !!result.accessToken);
-      console.log("Refresh token generated:", !!result.refreshToken);
 
       // Encode user data properly
       const encodedUser = encodeURIComponent(JSON.stringify(result.user));

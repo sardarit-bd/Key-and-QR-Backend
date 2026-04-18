@@ -14,9 +14,10 @@ import authRepository from "./auth.repository.js";
 import resetPasswordTemplate from "../../templates/resetPasswordTemplate.js";
 import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
 
+
 const buildAuthResponse = (user) => {
   const jwtPayload = {
-    userId: user._id,
+    userId: user._id.toString(),
     email: user.email,
     role: user.role,
   };
@@ -24,7 +25,6 @@ const buildAuthResponse = (user) => {
   const accessToken = generateAccessToken(jwtPayload);
   const refreshToken = generateRefreshToken(jwtPayload);
 
-  // Return all necessary user data for frontend
   return {
     accessToken,
     refreshToken,
@@ -168,26 +168,28 @@ const refreshAccessToken = async (token) => {
     throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required");
   }
 
-  const decoded = verifyRefreshToken(token);
-  const user = await authRepository.findUserById(decoded.userId);
+  try {
+    const decoded = verifyRefreshToken(token);
 
-  if (!user) {
-    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+    const user = await authRepository.findUserById(decoded.userId);
+
+    if (!user) {
+      throw new AppError(httpStatus.UNAUTHORIZED, "User not found or account deleted");
+    }
+
+    const jwtPayload = {
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = generateAccessToken(jwtPayload);
+    const refreshToken = generateRefreshToken(jwtPayload);
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token expired or invalid. Please login again.");
   }
-
-  const accessToken = generateAccessToken({
-    userId: user._id,
-    email: user.email,
-    role: user.role,
-  });
-
-  const refreshToken = generateRefreshToken({
-    userId: user._id,
-    email: user.email,
-    role: user.role,
-  });
-
-  return { accessToken, refreshToken };
 };
 
 const forgotPassword = async (email) => {
