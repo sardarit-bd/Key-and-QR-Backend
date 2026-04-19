@@ -5,19 +5,23 @@ import sendResponse from "../../utils/sendResponse.js";
 import authService from "./auth.service.js";
 import passport from "../../config/passport.js";
 import AppError from "../../utils/AppError.js";
-import { setAuthCookies, setRefreshTokenCookie, clearAuthCookies } from "../../utils/cookie.util.js";
+import { setAuthResponse, clearAuthCookies } from "../../utils/token.util.js";
 
 // Register new user
 const register = catchAsync(async (req, res) => {
   const result = await authService.registerUser(req.body);
 
-  setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
+  const tokens = setAuthResponse(res, result.accessToken, result.refreshToken, result.user.role);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
     success: true,
     message: "User registered successfully",
-    data: { user: result.user },
+    data: {
+      user: result.user,
+      accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
+    },
   });
 });
 
@@ -25,7 +29,7 @@ const register = catchAsync(async (req, res) => {
 const login = catchAsync(async (req, res) => {
   const result = await authService.loginUser(req.body);
 
-  setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
+  const tokens = setAuthResponse(res, result.accessToken, result.refreshToken, result.user.role);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -34,6 +38,7 @@ const login = catchAsync(async (req, res) => {
     data: {
       user: result.user,
       accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     },
   });
 });
@@ -50,22 +55,15 @@ const getMe = catchAsync(async (req, res) => {
   });
 });
 
-// Refresh access token
 const refreshToken = catchAsync(async (req, res) => {
-  const token = req.cookies?.refreshToken;
+
+  const token = req.headers['x-refresh-token'];
 
   if (!token) {
-    return sendResponse(res, {
-      statusCode: httpStatus.UNAUTHORIZED,
-      success: false,
-      message: "Refresh token is required",
-      data: null,
-    });
+    throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required in x-refresh-token header");
   }
 
   const result = await authService.refreshAccessToken(token);
-
-  setRefreshTokenCookie(res, result.accessToken);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -73,14 +71,13 @@ const refreshToken = catchAsync(async (req, res) => {
     message: "Access token refreshed successfully",
     data: {
       accessToken: result.accessToken,
+      refreshToken: result.refreshToken,
     },
   });
 });
 
-// Logout user
+// Logout user - just return success (client clears storage)
 const logout = catchAsync(async (req, res) => {
-  clearAuthCookies(res);
-
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -132,7 +129,7 @@ const googleLogin = passport.authenticate("google", {
   session: false,
 });
 
-// Google Callback - FIXED
+
 const googleCallback = catchAsync(async (req, res, next) => {
   passport.authenticate("google", { session: false }, async (err, profile) => {
     if (err || !profile) {
@@ -143,10 +140,14 @@ const googleCallback = catchAsync(async (req, res, next) => {
     try {
       const result = await authService.handleSocialLogin(profile, "google");
 
-      // Use centralized cookie function - consistent with login/register
-      setAuthCookies(res, result.accessToken, result.refreshToken, result.user.role);
+      // Encode user data properly
+      const encodedUser = encodeURIComponent(JSON.stringify(result.user));
 
-      return res.redirect(`${env.clientUrl}/callback?success=true`);
+      const redirectUrl = `${env.clientUrl}/callback?success=true&accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&user=${encodedUser}`;
+
+      console.log("Redirecting to:", redirectUrl.substring(0, 200) + "...");
+
+      return res.redirect(redirectUrl);
     } catch (error) {
       console.error("Social login error:", error);
       return res.redirect(`${env.clientUrl}/login?error=social_login_failed`);

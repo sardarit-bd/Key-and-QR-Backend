@@ -32,13 +32,21 @@ const getOrderById = catchAsync(async (req, res) => {
 });
 
 const getUserOrders = catchAsync(async (req, res) => {
-    const result = await orderService.getUserOrders(req.user.userId);
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
+
+    const result = await orderService.getUserOrders(req.user.userId, page, limit);
+    const totalSpent = await orderService.getUserTotalSpent(req.user.userId);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,
         success: true,
         message: "Orders fetched successfully",
-        data: result,
+        data: {
+            orders: result.data,
+            pagination: result.pagination,
+            totalSpent: totalSpent
+        }
     });
 });
 

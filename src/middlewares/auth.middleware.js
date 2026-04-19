@@ -1,31 +1,20 @@
 import httpStatus from "../constants/httpStatus.js";
 import User from "../models/user.model.js";
 import AppError from "../utils/AppError.js";
-import { verifyAccessToken, verifyRefreshToken } from "../utils/jwt.js";
-import { generateAccessToken } from "../utils/jwt.js";
+import { verifyAccessToken } from "../utils/jwt.js";
 
 const auth = (...requiredRoles) => {
   return async (req, res, next) => {
     try {
       let token = null;
 
-      // Try to get token from Authorization header
+      // 🔥 ONLY get token from Authorization header (no cookies)
       const authorization = req.headers.authorization;
       if (authorization && authorization.startsWith("Bearer ")) {
         token = authorization.split(" ")[1];
       }
-      
-      // If no token in header, try cookies
-      if (!token && req.cookies?.accessToken) {
-        token = req.cookies.accessToken;
-      }
 
       if (!token) {
-        // Check if refresh token exists for silent refresh
-        if (req.cookies?.refreshToken) {
-          // Token expired but has refresh token - will be handled by frontend
-          throw new AppError(httpStatus.UNAUTHORIZED, "Access token expired");
-        }
         throw new AppError(httpStatus.UNAUTHORIZED, "Unauthorized access");
       }
 
@@ -34,8 +23,7 @@ const auth = (...requiredRoles) => {
       try {
         decoded = verifyAccessToken(token);
       } catch (tokenError) {
-        // If token is expired but has refresh token
-        if (tokenError.name === 'TokenExpiredError' && req.cookies?.refreshToken) {
+        if (tokenError.name === 'TokenExpiredError') {
           throw new AppError(httpStatus.UNAUTHORIZED, "Access token expired");
         }
         throw new AppError(httpStatus.UNAUTHORIZED, "Invalid token");

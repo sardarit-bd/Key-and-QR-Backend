@@ -66,7 +66,7 @@ const updateUser = async (userId, updateData) => {
   return User.findByIdAndUpdate(userId, updateData, { new: true });
 };
 
-// 🆕 Update specific fields (for stripeCustomerId)
+// Update specific fields (for stripeCustomerId)
 const updateStripeCustomerId = async (userId, stripeCustomerId) => {
   return User.findByIdAndUpdate(
     userId,
@@ -75,7 +75,7 @@ const updateStripeCustomerId = async (userId, stripeCustomerId) => {
   );
 };
 
-// 🆕 Get user with subscriptions (aggregation)
+// Get user with subscriptions (aggregation)
 const getUserWithSubscriptions = async (userId) => {
   return User.aggregate([
     { $match: { _id: userId, isDeleted: false } },
@@ -103,12 +103,12 @@ export default {
   findUserByIdWithPassword,
   findUserByGoogleId,
   findUserByAppleId,
-  findUserByStripeCustomerId, // 🆕
+  findUserByStripeCustomerId,
   createUser,
   savePasswordResetToken,
   findUserByResetToken,
   updatePassword,
   updateUser,
-  updateStripeCustomerId, // 🆕
-  getUserWithSubscriptions, // 🆕
+  updateStripeCustomerId,
+  getUserWithSubscriptions,
 };

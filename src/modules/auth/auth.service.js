@@ -15,24 +15,15 @@ import resetPasswordTemplate from "../../templates/resetPasswordTemplate.js";
 import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
 
 
-
 const buildAuthResponse = (user) => {
   const jwtPayload = {
-    userId: user._id,
+    userId: user._id.toString(),
     email: user.email,
     role: user.role,
   };
 
   const accessToken = generateAccessToken(jwtPayload);
   const refreshToken = generateRefreshToken(jwtPayload);
-
-  // Log for debugging
-  console.log('Auth tokens generated:', {
-    userId: user._id,
-    role: user.role,
-    accessTokenLength: accessToken?.length,
-    refreshTokenLength: refreshToken?.length
-  });
 
   return {
     accessToken,
@@ -42,11 +33,12 @@ const buildAuthResponse = (user) => {
       name: user.name,
       email: user.email,
       role: user.role,
-      profileImage: user.profileImage,
+      profileImage: user.profileImage?.url || user.profileImage || null,
       provider: user.provider,
-      isEmailVerified: user.isEmailVerified,
+      isEmailVerified: user.isEmailVerified || false,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
+      stripeCustomerId: user.stripeCustomerId || null,
     },
   };
 };
@@ -77,7 +69,6 @@ const loginUser = async (payload) => {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
-  // Check if user signed up with social login
   if (user.provider !== "local") {
     throw new AppError(
       httpStatus.UNAUTHORIZED,
@@ -94,23 +85,19 @@ const loginUser = async (payload) => {
   return buildAuthResponse(user);
 };
 
-// Social Login Handler
 const handleSocialLogin = async (profile, provider) => {
   let user = null;
 
-  // Try to find by provider ID first
   if (provider === "google") {
     user = await authRepository.findUserByGoogleId(profile.id);
   } else if (provider === "apple") {
     user = await authRepository.findUserByAppleId(profile.id);
   }
 
-  // If not found by provider ID, try by email
   if (!user && profile.email) {
     user = await authRepository.findUserByEmail(profile.email);
 
     if (user) {
-      // Link existing account with social provider
       const updateData = {
         provider: provider,
         isEmailVerified: true,
@@ -126,7 +113,6 @@ const handleSocialLogin = async (profile, provider) => {
     }
   }
 
-  // If still no user, create new one
   if (!user) {
     const userName = provider === "google"
       ? profile.displayName
@@ -137,7 +123,7 @@ const handleSocialLogin = async (profile, provider) => {
       email: profile.email,
       provider: provider,
       isEmailVerified: true,
-      password: null, // No password for social login
+      password: null,
     };
 
     if (provider === "google") {
@@ -152,6 +138,7 @@ const handleSocialLogin = async (profile, provider) => {
   return buildAuthResponse(user);
 };
 
+// getMe returns full user data for server-side use
 const getMe = async (userId) => {
   const user = await authRepository.findUserById(userId);
 
@@ -159,29 +146,50 @@ const getMe = async (userId) => {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
 
-  return user;
+  // Return full user object with all fields
+  return {
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    profileImage: user.profileImage?.url || user.profileImage || null,
+    provider: user.provider,
+    isEmailVerified: user.isEmailVerified || false,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    stripeCustomerId: user.stripeCustomerId || null,
+    isDeleted: user.isDeleted,
+  };
 };
 
+// Refresh access token - returns both tokens
 const refreshAccessToken = async (token) => {
   if (!token) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required");
   }
 
-  const decoded = verifyRefreshToken(token);
+  try {
+    const decoded = verifyRefreshToken(token);
 
-  const user = await authRepository.findUserById(decoded.userId);
+    const user = await authRepository.findUserById(decoded.userId);
 
-  if (!user) {
-    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+    if (!user) {
+      throw new AppError(httpStatus.UNAUTHORIZED, "User not found or account deleted");
+    }
+
+    const jwtPayload = {
+      userId: user._id.toString(),
+      email: user.email,
+      role: user.role,
+    };
+
+    const accessToken = generateAccessToken(jwtPayload);
+    const refreshToken = generateRefreshToken(jwtPayload);
+
+    return { accessToken, refreshToken };
+  } catch (error) {
+    throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token expired or invalid. Please login again.");
   }
-
-  const accessToken = generateAccessToken({
-    userId: user._id,
-    email: user.email,
-    role: user.role,
-  });
-
-  return { accessToken };
 };
 
 const forgotPassword = async (email) => {
@@ -191,7 +199,6 @@ const forgotPassword = async (email) => {
     throw new AppError(httpStatus.NOT_FOUND, "User not found with this email");
   }
 
-  // Check if user is social login user
   if (user.provider !== "local") {
     throw new AppError(
       httpStatus.BAD_REQUEST,
@@ -242,7 +249,6 @@ const changePassword = async (userId, oldPassword, newPassword) => {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
 
-  // Check if user is social login user
   if (user.provider !== "local") {
     throw new AppError(
       httpStatus.BAD_REQUEST,
@@ -277,14 +283,25 @@ const updateProfile = async (userId, updateData) => {
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
-  return user;
+
+  // Return full user data
+  return {
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    profileImage: user.profileImage?.url || user.profileImage || null,
+    provider: user.provider,
+    isEmailVerified: user.isEmailVerified || false,
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt,
+    stripeCustomerId: user.stripeCustomerId || null,
+  };
 };
 
 const uploadAvatar = async (userId, imageBuffer) => {
-  // Upload to Cloudinary
   const uploadResult = await uploadImageBuffer(imageBuffer, "key-and-qr/avatars");
 
-  // Update user profile image
   const imageData = {
     public_id: uploadResult.public_id,
     url: uploadResult.secure_url,
@@ -292,7 +309,10 @@ const uploadAvatar = async (userId, imageBuffer) => {
 
   const user = await authRepository.updateUser(userId, { profileImage: imageData });
 
-  return user.profileImage;
+  return {
+    public_id: imageData.public_id,
+    url: imageData.url,
+  };
 };
 
 export default {
