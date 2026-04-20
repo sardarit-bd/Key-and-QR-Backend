@@ -8,7 +8,7 @@ const auth = (...requiredRoles) => {
     try {
       let token = null;
 
-      // 🔥 ONLY get token from Authorization header (no cookies)
+      // ONLY get token from Authorization header (no cookies)
       const authorization = req.headers.authorization;
       if (authorization && authorization.startsWith("Bearer ")) {
         token = authorization.split(" ")[1];

@@ -8,13 +8,9 @@ import scanRepository from "./scan.repository.js";
 
 const unlockTag = catchAsync(async (req, res) => {
   const { tagCode } = req.params;
-  const { category } = req.body;
+  const { category } = req.body || {};
 
-  const result = await scanService.unlockTag(
-    tagCode,
-    req.user,
-    category
-  );
+  const result = await scanService.unlockTag(tagCode, req.user, category);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -50,9 +46,9 @@ const getLastUnlock = catchAsync(async (req, res) => {
 const getUserScanHistory = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
-  
+
   const result = await scanRepository.getUserScanHistory(req.user.userId, page, limit);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -65,7 +61,7 @@ const getUserScanHistory = catchAsync(async (req, res) => {
 // Get user scan stats
 const getUserScanStats = catchAsync(async (req, res) => {
   const result = await scanRepository.getUserScanStats(req.user.userId);
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
