@@ -37,11 +37,12 @@ const unlockTag = async (tagCode, user, category) => {
     return {
       status: "SUCCESS",
       data: {
+        _id: null,
         quote: tag.personalMessage,
         category: "personal",
         isPersonalMessage: true,
         remaining: null,
-      },
+      }
     };
   }
 
@@ -64,6 +65,7 @@ const unlockTag = async (tagCode, user, category) => {
       return {
         status: "ALREADY_SCANNED_TODAY",
         data: {
+          _id: todayScan.quote._id,
           quote: todayScan.quote.text,
           category: todayScan.quote.category,
           message: "You already unlocked a message today. Come back tomorrow for a new message!",
@@ -153,6 +155,7 @@ const unlockTag = async (tagCode, user, category) => {
   return {
     status: "SUCCESS",
     data: {
+      _id: selectedQuote._id,
       quote: selectedQuote.text,
       category: selectedQuote.category,
       remaining,
