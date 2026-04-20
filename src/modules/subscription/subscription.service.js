@@ -21,6 +21,10 @@ const mapStripeStatusToLocal = (status) => {
   return "inactive";
 };
 
+const getRules = (subscriptionType = "free") => {
+  return subscriptionRules[subscriptionType] || subscriptionRules.free;
+};
+
 const getPlans = async () => {
   return Object.entries(subscriptionRules).map(([name, rule]) => ({
     name,
@@ -355,6 +359,7 @@ const syncAllSubscriptionsWithStripe = async () => {
 };
 
 export default {
+  getRules,
   getPlans,
   getMySubscriptions,
   createCheckoutSession,
