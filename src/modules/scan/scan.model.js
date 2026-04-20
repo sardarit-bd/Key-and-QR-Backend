@@ -12,7 +12,8 @@ const scanHistorySchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false,
+      default: null,
       index: true,
     },
 
@@ -36,7 +37,6 @@ const scanHistorySchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// compound indexes for better query performance
 scanHistorySchema.index({ tag: 1, scanDateKey: 1 });
 scanHistorySchema.index({ user: 1, createdAt: -1 });
 scanHistorySchema.index({ user: 1, scanDateKey: 1 });

@@ -20,23 +20,19 @@ const unlockTag = async (tagCode, user, category) => {
     throw new AppError(httpStatus.BAD_REQUEST, "Tag is disabled");
   }
 
-  if (!tag.isActivated) {
-    return {
-      status: "NEEDS_ACTIVATION",
-    };
-  }
-
   const todayKey = getTodayKey();
 
-  // ==================== PERSONAL MESSAGE CHECK ====================
+  // Personal message first
   if (tag.personalMessage && tag.personalMessage.trim() !== "") {
-    await scanRepository.createScan({
-      tag: tag._id,
-      user: user.userId,
-      quote: null,
-      category: "personal",
-      scanDateKey: todayKey,
-    });
+    if (user?.userId) {
+      await scanRepository.createScan({
+        tag: tag._id,
+        user: user.userId,
+        quote: null,
+        category: "personal",
+        scanDateKey: todayKey,
+      });
+    }
 
     return {
       status: "SUCCESS",
@@ -49,30 +45,43 @@ const unlockTag = async (tagCode, user, category) => {
     };
   }
 
-  // ==================== LAST QUOTE CHECK (Today) ====================
-  const todayScan = await scanRepository.getTodayScan(tag._id, todayKey);
-  
-  if (todayScan && todayScan.quote) {
-    return {
-      status: "ALREADY_SCANNED_TODAY",
-      data: {
-        quote: todayScan.quote.text,
-        category: todayScan.quote.category,
-        message: "You already unlocked a message today. Come back tomorrow for a new message!",
-      },
-    };
-  }
-
-  // ==================== SUBSCRIPTION RULES ====================
   const rules = subscriptionService.getRules(tag.subscriptionType);
 
-  let scanCount = 0;
-  if (rules.dailyLimit) {
-    scanCount = await scanRepository.countTodayScans(tag._id, todayKey);
+  let selectedCategory = null;
+  if (user?.userId && rules.canChooseCategory && category) {
+    selectedCategory = category;
   }
 
-  // limit check
-  if (rules.dailyLimit && scanCount >= rules.dailyLimit) {
+  // Logged-in user হলে only once/day logic থাকবে
+  if (user?.userId) {
+    const todayScan = await scanRepository.getTodayScanByUser(
+      tag._id,
+      user.userId,
+      todayKey
+    );
+
+    if (todayScan && todayScan.quote) {
+      return {
+        status: "ALREADY_SCANNED_TODAY",
+        data: {
+          quote: todayScan.quote.text,
+          category: todayScan.quote.category,
+          message: "You already unlocked a message today. Come back tomorrow for a new message!",
+        },
+      };
+    }
+  }
+
+  let scanCount = 0;
+  if (user?.userId && rules.dailyLimit) {
+    scanCount = await scanRepository.countTodayScansByUser(
+      tag._id,
+      user.userId,
+      todayKey
+    );
+  }
+
+  if (user?.userId && rules.dailyLimit && scanCount >= rules.dailyLimit) {
     return {
       status: "LIMIT_REACHED",
       message: "You've used all your unlocks for today. Come back tomorrow!",
@@ -83,19 +92,22 @@ const unlockTag = async (tagCode, user, category) => {
     };
   }
 
-  let selectedCategory = null;
-  if (rules.canChooseCategory && category) {
-    selectedCategory = category;
-  }
-
   const query = { isActive: true };
 
   if (selectedCategory) {
     query.category = selectedCategory;
   }
 
-  const usedQuoteIds = await scanRepository.getUsedQuoteIds(tag._id, todayKey);
-  const validQuoteIds = usedQuoteIds.filter(id => id !== null && id !== undefined);
+  let usedQuoteIds = [];
+  if (user?.userId) {
+    usedQuoteIds = await scanRepository.getUsedQuoteIdsByUser(
+      tag._id,
+      user.userId,
+      todayKey
+    );
+  }
+
+  const validQuoteIds = usedQuoteIds.filter((id) => id !== null && id !== undefined);
 
   if (validQuoteIds.length > 0) {
     query._id = { $nin: validQuoteIds };
@@ -113,8 +125,6 @@ const unlockTag = async (tagCode, user, category) => {
       fallbackQuery.category = selectedCategory;
     }
 
-    delete fallbackQuery._id;
-
     quote = await Quote.aggregate([
       { $match: fallbackQuery },
       { $sample: { size: 1 } },
@@ -127,25 +137,27 @@ const unlockTag = async (tagCode, user, category) => {
 
   const selectedQuote = quote[0];
 
-  // save scan history
-  await scanRepository.createScan({
-    tag: tag._id,
-    user: user.userId,
-    quote: selectedQuote._id,
-    category: selectedQuote.category,
-    scanDateKey: todayKey,
-  });
+  if (user?.userId) {
+    await scanRepository.createScan({
+      tag: tag._id,
+      user: user.userId,
+      quote: selectedQuote._id,
+      category: selectedQuote.category,
+      scanDateKey: todayKey,
+    });
+  }
 
-  const remaining = rules.dailyLimit ? rules.dailyLimit - (scanCount + 1) : null;
+  const remaining =
+    user?.userId && rules.dailyLimit ? rules.dailyLimit - (scanCount + 1) : null;
 
   return {
     status: "SUCCESS",
     data: {
       quote: selectedQuote.text,
       category: selectedQuote.category,
-      remaining: remaining,
-      dailyLimit: rules.dailyLimit,
-      canChooseCategory: rules.canChooseCategory,
+      remaining,
+      dailyLimit: user?.userId ? rules.dailyLimit : null,
+      canChooseCategory: !!(user?.userId && rules.canChooseCategory),
     },
   };
 };
