@@ -70,10 +70,27 @@ const deletePendingQuote = catchAsync(async (req, res) => {
   });
 });
 
+const getMyQuotes = catchAsync(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
+  
+  const result = await pendingQuoteService.getMyQuotes(req.user.userId, page, limit);
+  
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Your quotes fetched successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+
 export default {
   submitQuote,
   getPendingQuotes,
   approveQuote,
   rejectQuote,
   deletePendingQuote,
+  getMyQuotes,
 };

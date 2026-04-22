@@ -15,7 +15,7 @@ const submitQuoteValidation = Joi.object({
 });
 
 const approveRejectValidation = Joi.object({
-  adminNote: Joi.string().max(500).optional(),
+  adminNote: Joi.string().trim().max(500).allow("").optional(),
 });
 
 // User route - submit quote
@@ -32,6 +32,12 @@ router.get(
   auth(),
   roleMiddleware(roles.ADMIN),
   pendingQuoteController.getPendingQuotes
+);
+
+router.get(
+  "/my-quotes",
+  auth(),
+  pendingQuoteController.getMyQuotes
 );
 
 router.patch(
