@@ -129,7 +129,7 @@ const deleteQuote = async (id) => {
 };
 
 /**
- * Toggle active
+ Toggle active
  */
 const toggleQuoteActive = async (id) => {
   const quote = await quoteRepository.findById(id);
@@ -142,7 +142,7 @@ const toggleQuoteActive = async (id) => {
 };
 
 /**
- * Get random quote
+ Get random quote
  */
 const getRandomQuote = async (category = null) => {
   return quoteRepository.getRandomQuoteByCategory(category);

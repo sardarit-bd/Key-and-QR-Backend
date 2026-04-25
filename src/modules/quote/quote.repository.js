@@ -77,14 +77,14 @@ const updateQuote = (id, payload) => {
 };
 
 /**
- * Delete Quote
+ Delete Quote
  */
 const deleteQuote = (id) => {
   return Quote.findByIdAndDelete(id);
 };
 
 /**
- * Toggle Active
+ Toggle Active
  */
 const toggleActive = async (id) => {
   const quote = await Quote.findById(id);
@@ -97,9 +97,7 @@ const toggleActive = async (id) => {
   );
 };
 
-/**
- * Get random quote (with optional category + excludeIds)
- */
+/**Get random quote (with optional category + excludeIds)*/
 const getRandomQuoteByCategory = async (category = null, excludeIds = []) => {
   const filter = { isActive: true };
 

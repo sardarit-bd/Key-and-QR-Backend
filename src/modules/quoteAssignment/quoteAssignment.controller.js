@@ -18,7 +18,7 @@ const createAssignment = catchAsync(async (req, res) => {
 });
 
 /**
- * Get all assignments
+ Get all assignments
  */
 const getAllAssignments = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
