@@ -31,7 +31,9 @@ router.post(
 
         if (session.mode === "payment") {
           const orderId = session.metadata.orderId;
-          await orderService.confirmPaymentAndAssignTag(orderId);
+          const paymentIntentId = session.payment_intent;
+
+          await orderService.confirmPaymentAndAssignTag(orderId, paymentIntentId);
         } else if (session.mode === "subscription") {
           await handleSubscriptionWebhook(event);
         }

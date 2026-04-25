@@ -38,6 +38,20 @@ const orderSchema = new mongoose.Schema(
       default: null,
     },
 
+    giftMessageStatus: {
+      type: String,
+      enum: ["none", "pending", "approved", "rejected"],
+      default: "none",
+    },
+    giftMessageReviewedAt: {
+      type: Date,
+      default: null,
+    },
+    giftMessageAdminNote: {
+      type: String,
+      default: null,
+    },
+
     // NEW: Shipping Information Fields
     shippingAddress: {
       fullName: { type: String, required: false, default: null },
@@ -81,7 +95,7 @@ const orderSchema = new mongoose.Schema(
 
     refundStatus: {
       type: String,
-      enum: ["none", "requested", "approved", "completed", "rejected"],
+      enum: ["none", "requested", "approved", "processing", "completed", "rejected"],
       default: "none",
     },
 
@@ -159,6 +173,11 @@ const orderSchema = new mongoose.Schema(
 
     returnTrackingNumber: {
       type: String,
+      default: null,
+    },
+
+    deliveredAt: {
+      type: Date,
       default: null,
     },
 

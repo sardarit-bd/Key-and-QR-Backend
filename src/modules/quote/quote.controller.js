@@ -4,7 +4,12 @@ import httpStatus from "../../constants/httpStatus.js";
 import quoteService from "./quote.service.js";
 
 const createQuote = catchAsync(async (req, res) => {
-  const result = await quoteService.createQuote(req.body);
+  const image = req.file || null;
+  
+  console.log("Request body:", req.body);
+  console.log("Image file:", req.file);
+
+  const result = await quoteService.createQuote(req.body, image);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
@@ -19,8 +24,19 @@ const getAllQuotes = catchAsync(async (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
   const search = req.query.search || "";
   const category = req.query.category || "all";
+  const isActive =
+    req.query.isActive !== undefined ? req.query.isActive === "true" : undefined;
+  const allowReuse =
+    req.query.allowReuse !== undefined ? req.query.allowReuse === "true" : undefined;
 
-  const result = await quoteService.getAllQuotes(page, limit, search, category);
+  const result = await quoteService.getAllQuotes({
+    page,
+    limit,
+    search,
+    category,
+    isActive,
+    allowReuse,
+  });
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -43,7 +59,9 @@ const getQuoteById = catchAsync(async (req, res) => {
 });
 
 const updateQuote = catchAsync(async (req, res) => {
-  const result = await quoteService.updateQuote(req.params.id, req.body);
+  const image = req.file || null;
+
+  const result = await quoteService.updateQuote(req.params.id, req.body, image);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -78,23 +96,21 @@ const toggleQuoteActive = catchAsync(async (req, res) => {
 // Get random quote by category
 const getRandomQuote = catchAsync(async (req, res) => {
   const category = req.query.category || "random";
-  
-  // Convert category for query
+
   let queryCategory = category;
   if (category === "random") {
     queryCategory = null;
   } else if (category === "gratitude") {
-    // Map gratitude to hope or other existing category
     queryCategory = "hope";
   } else if (category === "healing") {
     queryCategory = "hope";
   }
-  
+
   const result = await quoteService.getRandomQuote(queryCategory);
-  
+
   if (!result) {
-    // Fallback: get any active quote
     const fallbackResult = await quoteService.getRandomQuote(null);
+
     if (!fallbackResult) {
       return sendResponse(res, {
         statusCode: httpStatus.NOT_FOUND,
@@ -103,7 +119,7 @@ const getRandomQuote = catchAsync(async (req, res) => {
         data: null,
       });
     }
-    
+
     return sendResponse(res, {
       statusCode: httpStatus.OK,
       success: true,
@@ -111,11 +127,18 @@ const getRandomQuote = catchAsync(async (req, res) => {
         _id: fallbackResult._id,
         text: fallbackResult.text,
         category: fallbackResult.category,
-        author: "InspireTag",
+        author: fallbackResult.author || "InspireTag",
+        description: fallbackResult.description || null,
+        image: fallbackResult.image || null,
+        theme: fallbackResult.theme || null,
+        allowReuse:
+          typeof fallbackResult.allowReuse === "boolean"
+            ? fallbackResult.allowReuse
+            : true,
       },
     });
   }
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -123,7 +146,12 @@ const getRandomQuote = catchAsync(async (req, res) => {
       _id: result._id,
       text: result.text,
       category: result.category,
-      author: "InspireTag",
+      author: result.author || "InspireTag",
+      description: result.description || null,
+      image: result.image || null,
+      theme: result.theme || null,
+      allowReuse:
+        typeof result.allowReuse === "boolean" ? result.allowReuse : true,
     },
   });
 });

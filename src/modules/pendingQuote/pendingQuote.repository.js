@@ -7,9 +7,9 @@ const createPendingQuote = (payload) => {
 
 const getPendingQuotes = async (page = 1, limit = 10, search = "") => {
   const skip = (page - 1) * limit;
-  
+
   const filter = { status: "pending" };
-  
+
   if (search) {
     filter.$or = [
       { text: { $regex: search, $options: "i" } },
@@ -17,7 +17,7 @@ const getPendingQuotes = async (page = 1, limit = 10, search = "") => {
       { "user.email": { $regex: search, $options: "i" } },
     ];
   }
-  
+
   const [data, total] = await Promise.all([
     PendingQuote.find(filter)
       .populate("user", "name email")
@@ -26,7 +26,7 @@ const getPendingQuotes = async (page = 1, limit = 10, search = "") => {
       .limit(limit),
     PendingQuote.countDocuments(filter)
   ]);
-  
+
   return {
     meta: {
       page: parseInt(page),
@@ -72,6 +72,31 @@ const deletePendingQuote = (id) => {
   return PendingQuote.findByIdAndDelete(id);
 };
 
+const getMyQuotes = async (userId, page = 1, limit = 50) => {
+  const skip = (page - 1) * limit;
+
+  const filter = { user: userId };
+
+  const [data, total] = await Promise.all([
+    PendingQuote.find(filter)
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit),
+    PendingQuote.countDocuments(filter)
+  ]);
+
+  return {
+    meta: {
+      page: parseInt(page),
+      limit: parseInt(limit),
+      total,
+      totalPage: Math.ceil(total / limit)
+    },
+    data
+  };
+};
+
+
 export default {
   createPendingQuote,
   getPendingQuotes,
@@ -79,4 +104,5 @@ export default {
   approveQuote,
   rejectQuote,
   deletePendingQuote,
+  getMyQuotes,
 };

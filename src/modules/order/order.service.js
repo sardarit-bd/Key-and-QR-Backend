@@ -7,6 +7,8 @@ import stripe from "../../config/stripe.js";
 import env from "../../config/env.js";
 import Order from "./order.model.js";
 import mongoose from "mongoose";
+import pendingQuoteRepository from "../pendingQuote/pendingQuote.repository.js";
+import tagService from "../tag/tag.service.js";
 
 
 const createOrder = async (userId, payload) => {
@@ -22,7 +24,6 @@ const createOrder = async (userId, payload) => {
 
     const purchaseType = payload.purchaseType || "self";
 
-    // Shipping address from payload
     const shippingAddress = {
         fullName: payload.fullName || null,
         email: payload.email || null,
@@ -33,15 +34,28 @@ const createOrder = async (userId, payload) => {
         country: payload.country || null,
     };
 
-    return orderRepository.createOrder({
+    const order = await orderRepository.createOrder({
         user: userId,
         product: payload.productId,
         quantity: Number(payload.quantity) || 1,
         purchaseType,
         giftMessage: purchaseType === "gift" ? payload.giftMessage || null : null,
+        giftMessageStatus: purchaseType === "gift" ? "pending" : "none",
         giftStatus: purchaseType === "gift" ? "pending_claim" : "none",
         shippingAddress,
     });
+
+    if (purchaseType === "gift" && payload.giftMessage) {
+        await pendingQuoteRepository.createPendingQuote({
+            text: payload.giftMessage,
+            user: userId,
+            order: order._id,
+            status: "pending",
+            category: "other",
+        });
+    }
+
+    return order;
 };
 
 
@@ -120,72 +134,34 @@ const createCheckoutSession = async (orderId) => {
 };
 
 
-const confirmPaymentAndAssignTag = async (orderId, paymentIntentId = null) => {
+const confirmPaymentAndAssignTag = async (orderId, paymentIntentId) => {
     const order = await orderRepository.findById(orderId);
 
     if (!order) {
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
-    if (order.paymentStatus === "paid") {
-        return order;
-    }
-
-    // Get truly unused tag
-    const tag = await tagRepository.findUnusedTag();
-
-    if (!tag) {
-        throw new AppError(httpStatus.BAD_REQUEST, "No available tags. Please contact support.");
-    }
-
-    // Double check - ensure tag is not already assigned elsewhere
-    const isAlreadyAssigned = await tagRepository.isTagAssignedToActiveOrder(tag._id);
-    if (isAlreadyAssigned) {
-        throw new AppError(httpStatus.BAD_REQUEST, "Tag already assigned to another order");
-    }
-
-    const quantity = order.quantity || 1;
-
-    const updatedProduct = await productRepository.decreaseStock(
-        order.product._id,
-        quantity
-    );
-
-    if (!updatedProduct) {
-        throw new AppError(httpStatus.BAD_REQUEST, "Insufficient stock");
-    }
-
-    // ===== SELF PURCHASE =====
-    if (order.purchaseType === "self") {
-        await tagRepository.updateTag(tag._id, {
-            owner: order.user,
-            isActivated: true,
-            activatedAt: new Date(),
-        });
-
-        return orderRepository.updateOrder(orderId, {
-            paymentStatus: "paid",
-            fulfillmentStatus: "assigned",
-            assignedTag: tag._id,
-            stripePaymentIntentId: paymentIntentId,
-            giftStatus: "none",
-        });
-    }
-
-    // ===== GIFT PURCHASE =====
-    await tagRepository.updateTag(tag._id, {
-        owner: null,
-        isActivated: false,
-        activatedAt: null,
-    });
-
-    return orderRepository.updateOrder(orderId, {
+    const updateData = {
         paymentStatus: "paid",
-        fulfillmentStatus: "assigned",
-        assignedTag: tag._id,
         stripePaymentIntentId: paymentIntentId,
-        giftStatus: "pending_claim",
-    });
+    };
+
+    let availableTag = null;
+
+    try {
+        availableTag = await tagService.getUnusedTag();
+    } catch (err) {
+        console.warn("⚠️ No tag available for order:", orderId);
+    }
+
+    if (availableTag) {
+        updateData.assignedTag = availableTag._id;
+        updateData.fulfillmentStatus = "assigned";
+    } else {
+        updateData.fulfillmentStatus = "pending";
+    }
+
+    return orderRepository.updateOrder(orderId, updateData);
 };
 
 const claimGiftOrder = async (orderId, userId) => {
@@ -475,8 +451,8 @@ const updateOrder = async (id, payload) => {
     const allowedTransitions = {
         pending: ["assigned", "cancelled"],
         assigned: ["shipped", "cancelled"],
-        shipped: ["delivered", "returned"],
-        delivered: ["returned"],
+        shipped: ["delivered"],
+        delivered: [],
         cancelled: [],
         returned: [],
     };
@@ -495,6 +471,10 @@ const updateOrder = async (id, payload) => {
         throw new AppError(400, "Order must be paid before shipping");
     }
 
+    if (payload.fulfillmentStatus === "delivered") {
+        payload.deliveredAt = new Date();
+    }
+
     if (payload.fulfillmentStatus === "cancelled") {
         payload.cancelledAt = new Date();
     }
@@ -510,19 +490,19 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
         throw new AppError(404, "Order not found");
     }
 
-    // Check if order can be cancelled
     const cancellableStatuses = ["pending", "assigned"];
     if (!cancellableStatuses.includes(order.fulfillmentStatus)) {
         throw new AppError(400, `Order cannot be cancelled in ${order.fulfillmentStatus} status`);
     }
 
-    // Check if user owns the order (for user cancellation)
     if (cancelledBy === "user" && order.user.toString() !== userId) {
         throw new AppError(403, "You are not authorized to cancel this order");
     }
 
-    // If paid, need to process refund
     let refundProcessed = false;
+    let refundTransactionId = null;
+    const refundAmount = (order.product.price || 0) * (order.quantity || 1);
+
     if (order.paymentStatus === "paid" && order.stripePaymentIntentId) {
         try {
             const refund = await stripe.refunds.create({
@@ -530,6 +510,7 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
                 reason: "requested_by_customer",
             });
             refundProcessed = true;
+            refundTransactionId = refund.id;
         } catch (error) {
             console.error("Refund failed:", error);
             throw new AppError(500, "Refund failed. Please contact support.");
@@ -540,8 +521,14 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
         fulfillmentStatus: "cancelled",
         cancellationReason: reason,
         cancelledAt: new Date(),
-        cancelledBy: cancelledBy,
-        ...(refundProcessed && { paymentStatus: "refunded" }),
+        cancelledBy,
+        ...(refundProcessed && {
+            paymentStatus: "refunded",
+            refundStatus: "completed",
+            refundProcessedAt: new Date(),
+            refundTransactionId,
+            refundAmount,
+        }),
     });
 
     if (order.paymentStatus === "paid" && order.fulfillmentStatus !== "cancelled") {
@@ -566,12 +553,10 @@ const requestRefund = async (orderId, userId, reason) => {
         throw new AppError(404, "Order not found");
     }
 
-    // Check if user owns the order
     if (order.user.toString() !== userId) {
         throw new AppError(403, "You are not authorized to request refund for this order");
     }
 
-    // Check if refund is possible
     if (order.paymentStatus !== "paid") {
         throw new AppError(400, "Only paid orders can be refunded");
     }
@@ -580,13 +565,19 @@ const requestRefund = async (orderId, userId, reason) => {
         throw new AppError(400, "Refund already requested or processed");
     }
 
-    const updatedOrder = await orderRepository.updateOrder(orderId, {
+    if (["shipped", "delivered"].includes(order.fulfillmentStatus)) {
+        throw new AppError(400, "For shipped or delivered orders, please request a return first");
+    }
+
+    if (order.fulfillmentStatus === "returned") {
+        throw new AppError(400, "This order is already returned");
+    }
+
+    return orderRepository.updateOrder(orderId, {
         refundStatus: "requested",
         refundReason: reason,
         refundRequestedAt: new Date(),
     });
-
-    return updatedOrder;
 };
 
 // Process refund (admin)
@@ -602,42 +593,50 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
     }
 
     if (!approve) {
-        // Reject refund
         return orderRepository.updateOrder(orderId, {
             refundStatus: "rejected",
             refundReason: rejectReason || "Refund request rejected",
         });
     }
 
-    // Process refund via Stripe
     if (!order.stripePaymentIntentId) {
         throw new AppError(400, "No payment intent found for this order");
     }
 
     try {
+        const refundAmount = (order.product.price || 0) * (order.quantity || 1);
+
         const refund = await stripe.refunds.create({
             payment_intent: order.stripePaymentIntentId,
-            amount: order.product.price * (order.quantity || 1) * 100,
+            amount: refundAmount * 100,
             reason: "requested_by_customer",
         });
 
-        const updatedOrder = await orderRepository.updateOrder(orderId, {
+        const updatePayload = {
             refundStatus: "completed",
             paymentStatus: "refunded",
             refundProcessedAt: new Date(),
             refundTransactionId: refund.id,
-            fulfillmentStatus: "cancelled",
-            cancelledAt: new Date(),
-            cancelledBy: "admin",
-            cancellationReason: "Refund processed",
-        });
+            refundAmount,
+        };
 
-        await productRepository.increaseStock(
-            order.product._id,
-            order.quantity || 1
-        );
+        if (["pending", "assigned", "cancelled"].includes(order.fulfillmentStatus)) {
+            updatePayload.fulfillmentStatus = "cancelled";
+            updatePayload.cancelledAt = new Date();
+            updatePayload.cancelledBy = "admin";
+            updatePayload.cancellationReason = "Refund processed";
+        }
 
-        if (order.assignedTag) {
+        const updatedOrder = await orderRepository.updateOrder(orderId, updatePayload);
+
+        if (["pending", "assigned"].includes(order.fulfillmentStatus)) {
+            await productRepository.increaseStock(
+                order.product._id,
+                order.quantity || 1
+            );
+        }
+
+        if (order.assignedTag && ["assigned"].includes(order.fulfillmentStatus)) {
             await tagRepository.resetTag(order.assignedTag._id);
         }
 
@@ -656,28 +655,42 @@ const requestReturn = async (orderId, userId, reason) => {
         throw new AppError(404, "Order not found");
     }
 
-    // Check if user owns the order
     if (order.user.toString() !== userId) {
         throw new AppError(403, "You are not authorized to request return for this order");
     }
 
-    // Check if return is possible (only shipped or delivered orders)
-    const returnableStatuses = ["shipped", "delivered"];
+    if (order.paymentStatus !== "paid") {
+        throw new AppError(400, "Only paid orders can be returned");
+    }
+
+    const returnableStatuses = ["delivered"];
     if (!returnableStatuses.includes(order.fulfillmentStatus)) {
         throw new AppError(400, `Order cannot be returned in ${order.fulfillmentStatus} status`);
+    }
+
+    if (!order.deliveredAt) {
+        throw new AppError(400, "Delivery date not found");
+    }
+
+    const returnWindowDays = 3;
+    const now = new Date();
+    const deliveredAt = new Date(order.deliveredAt);
+    const diffTime = now - deliveredAt;
+    const diffDays = diffTime / (1000 * 60 * 60 * 24);
+
+    if (diffDays > returnWindowDays) {
+        throw new AppError(400, `Return request is allowed only within ${returnWindowDays} days of delivery`);
     }
 
     if (order.returnStatus !== "none") {
         throw new AppError(400, "Return already requested or processed");
     }
 
-    const updatedOrder = await orderRepository.updateOrder(orderId, {
+    return orderRepository.updateOrder(orderId, {
         returnStatus: "requested",
         returnReason: reason,
         returnRequestedAt: new Date(),
     });
-
-    return updatedOrder;
 };
 
 // Process return (admin)
@@ -693,15 +706,13 @@ const processReturn = async (orderId, approve = true, trackingNumber = null, rej
     }
 
     if (!approve) {
-        // Reject return
         return orderRepository.updateOrder(orderId, {
             returnStatus: "rejected",
             returnReason: rejectReason || "Return request rejected",
         });
     }
 
-    // Approve return
-    let updateData = {
+    const updateData = {
         returnStatus: "approved",
         returnApprovedAt: new Date(),
     };
@@ -723,22 +734,33 @@ const completeReturn = async (orderId) => {
         throw new AppError(404, "Order not found");
     }
 
-    if (order.returnStatus !== "shipped") {
-        throw new AppError(400, "Return not in shipped status");
+    if (!["approved", "shipped", "received"].includes(order.returnStatus)) {
+        throw new AppError(400, "Return is not ready to complete");
     }
 
-    // Process refund if payment was paid
-    let refundProcessed = false;
-    if (order.paymentStatus === "paid" && order.stripePaymentIntentId) {
+    const refundAmount = (order.product.price || 0) * (order.quantity || 1);
+    let refundTransactionId = null;
+
+    // Paid order hole refund MUST succeed before marking return completed
+    if (order.paymentStatus === "paid") {
+        if (!order.stripePaymentIntentId) {
+            throw new AppError(
+                400,
+                "No payment intent found for this order. Cannot complete return without refund."
+            );
+        }
+
         try {
-            await stripe.refunds.create({
+            const refund = await stripe.refunds.create({
                 payment_intent: order.stripePaymentIntentId,
-                amount: order.product.price * (order.quantity || 1) * 100,
-                reason: "returned_item",
+                amount: refundAmount * 100,
+                reason: "requested_by_customer",
             });
-            refundProcessed = true;
+
+            refundTransactionId = refund.id;
         } catch (error) {
             console.error("Refund failed:", error);
+            throw new AppError(500, "Refund failed while completing return");
         }
     }
 
@@ -746,7 +768,13 @@ const completeReturn = async (orderId) => {
         returnStatus: "completed",
         returnReceivedAt: new Date(),
         fulfillmentStatus: "returned",
-        ...(refundProcessed && { paymentStatus: "refunded" }),
+        ...(order.paymentStatus === "paid" && {
+            paymentStatus: "refunded",
+            refundStatus: "completed",
+            refundProcessedAt: new Date(),
+            refundTransactionId,
+            refundAmount,
+        }),
     });
 
     await productRepository.increaseStock(
@@ -794,6 +822,60 @@ const updateShippingAddress = async (orderId, userId, shippingAddress) => {
     return updatedOrder;
 };
 
+// Approve gift message
+const approveGiftMessage = async (orderId, adminNote = null) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(404, "Order not found");
+    }
+
+    if (!order.giftMessage) {
+        throw new AppError(400, "No gift message found");
+    }
+
+    if (order.giftMessageStatus === "approved") {
+        throw new AppError(400, "Gift message already approved");
+    }
+
+    if (order.giftMessageStatus === "rejected") {
+        throw new AppError(400, "Gift message already rejected");
+    }
+
+    return orderRepository.updateOrder(orderId, {
+        giftMessageStatus: "approved",
+        giftMessageReviewedAt: new Date(),
+        giftMessageAdminNote: adminNote,
+    });
+};
+
+// Reject gift message
+const rejectGiftMessage = async (orderId, adminNote = null) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(404, "Order not found");
+    }
+
+    if (!order.giftMessage) {
+        throw new AppError(400, "No gift message found");
+    }
+
+    if (order.giftMessageStatus === "rejected") {
+        throw new AppError(400, "Gift message already rejected");
+    }
+
+    if (order.giftMessageStatus === "approved") {
+        throw new AppError(400, "Gift message already approved");
+    }
+
+    return orderRepository.updateOrder(orderId, {
+        giftMessageStatus: "rejected",
+        giftMessageReviewedAt: new Date(),
+        giftMessageAdminNote: adminNote,
+    });
+};
+
 export default {
     createOrder,
     createCheckout,
@@ -813,4 +895,6 @@ export default {
     processReturn,
     completeReturn,
     updateShippingAddress,
+    approveGiftMessage,
+    rejectGiftMessage,
 };

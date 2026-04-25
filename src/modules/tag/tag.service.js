@@ -59,10 +59,10 @@ const activateTag = async (tagCode, userId) => {
 };
 
 const getUnusedTag = async () => {
-  const tag = await tagRepository.findUnusedTag();
+  const tag = await tagRepository.findUnusedTagStrict();
 
   if (!tag) {
-    throw new AppError(httpStatus.BAD_REQUEST, "No available tags");
+    return null;
   }
 
   return tag;

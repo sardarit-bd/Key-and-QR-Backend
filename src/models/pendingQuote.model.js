@@ -7,6 +7,11 @@ const pendingQuoteSchema = new mongoose.Schema(
       ref: "User",
       required: true,
     },
+    order: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      required: false,
+    },
     text: {
       type: String,
       required: true,

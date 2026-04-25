@@ -208,7 +208,27 @@ const updateShippingAddress = catchAsync(async (req, res) => {
     });
 });
 
+const approveGiftMessage = catchAsync(async (req, res) => {
+    const result = await orderService.approveGiftMessage(req.params.id);
 
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Gift message approved",
+        data: result,
+    });
+});
+
+const rejectGiftMessage = catchAsync(async (req, res) => {
+    const result = await orderService.rejectGiftMessage(req.params.id);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Gift message rejected",
+        data: result,
+    });
+});
 
 export default {
     createCheckout,
@@ -225,4 +245,6 @@ export default {
     processReturn,
     completeReturn,
     claimGiftOrder,
+    approveGiftMessage,
+    rejectGiftMessage,
 };
