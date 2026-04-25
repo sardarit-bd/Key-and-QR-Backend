@@ -1,5 +1,19 @@
 import mongoose from "mongoose";
 
+const mediaSchema = new mongoose.Schema(
+  {
+    public_id: {
+      type: String,
+      default: null,
+    },
+    url: {
+      type: String,
+      default: null,
+    },
+  },
+  { _id: false }
+);
+
 const quoteSchema = new mongoose.Schema(
   {
     text: {
@@ -20,6 +34,30 @@ const quoteSchema = new mongoose.Schema(
       trim: true,
     },
 
+    description: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: 1000,
+    },
+
+    image: {
+      type: mediaSchema,
+      default: null,
+    },
+
+    theme: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: 100,
+    },
+
+    allowReuse: {
+      type: Boolean,
+      default: true,
+    },
+
     isActive: {
       type: Boolean,
       default: true,
@@ -31,6 +69,9 @@ const quoteSchema = new mongoose.Schema(
 
 // Create index for faster random queries
 quoteSchema.index({ category: 1, isActive: 1 });
+
+// Helpful for admin filtering later
+quoteSchema.index({ isActive: 1, allowReuse: 1, createdAt: -1 });
 
 const Quote = mongoose.model("Quote", quoteSchema);
 export default Quote;

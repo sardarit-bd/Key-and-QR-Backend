@@ -8,10 +8,10 @@ import {
   createQuoteValidation,
   updateQuoteValidation,
 } from "./quote.validation.js";
+import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 
 const router = express.Router();
 
-// PUBLIC ROUTE - Get random quote (no auth required)
 router.get("/random", quoteController.getRandomQuote);
 
 // Admin only routes
@@ -19,6 +19,7 @@ router.post(
   "/",
   auth(),
   roleMiddleware(roles.ADMIN),
+  uploadSingleImage,
   validateRequest(createQuoteValidation),
   quoteController.createQuote
 );
@@ -41,6 +42,7 @@ router.patch(
   "/:id",
   auth(),
   roleMiddleware(roles.ADMIN),
+  uploadSingleImage,
   validateRequest(updateQuoteValidation),
   quoteController.updateQuote
 );

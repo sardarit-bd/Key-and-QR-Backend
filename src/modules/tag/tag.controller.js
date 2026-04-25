@@ -2,6 +2,8 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import httpStatus from "../../constants/httpStatus.js";
 import tagService from "./tag.service.js";
+import quoteService from "../quote/quote.service.js";
+import quoteAssignmentService from "../quoteAssignment/quoteAssignment.service.js";
 
 const createTag = catchAsync(async (req, res) => {
   const result = await tagService.createTag(req.body);
@@ -78,6 +80,33 @@ const resolveTag = catchAsync(async (req, res) => {
 
   const isLoggedIn = req.user && req.user.userId ? true : false;
 
+  let quote = null;
+  let quoteSource = "random";
+
+  // 1. First check quote assigned directly to this tag
+  const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
+
+  if (tagAssignment?.quote) {
+    quote = tagAssignment.quote;
+    quoteSource = "tag_assignment";
+  }
+
+  // 2. If no tag assignment, check quote assigned to tag owner/user
+  if (!quote && tag.owner) {
+    const userAssignment = await quoteAssignmentService.getTopAssignmentByUser(tag.owner);
+
+    if (userAssignment?.quote) {
+      quote = userAssignment.quote;
+      quoteSource = "user_assignment";
+    }
+  }
+
+  // 3. If no assignment found, fallback to random quote
+  if (!quote) {
+    quote = await quoteService.getRandomQuote(null);
+    quoteSource = "random";
+  }
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -85,12 +114,27 @@ const resolveTag = catchAsync(async (req, res) => {
     data: {
       status,
       tagCode: tag.tagCode,
+      tagId: tag._id,
       isActivated: tag.isActivated,
       isActive: tag.isActive,
       isLoggedIn,
       needsAuth,
       subscriptionType: tag.subscriptionType,
       hasPersonalMessage: !!tag.personalMessage,
+      quoteSource,
+      quote: quote
+        ? {
+          _id: quote._id,
+          text: quote.text,
+          category: quote.category,
+          author: quote.author || "InspireTag",
+          description: quote.description || null,
+          image: quote.image || null,
+          theme: quote.theme || null,
+          allowReuse:
+            typeof quote.allowReuse === "boolean" ? quote.allowReuse : true,
+        }
+        : null,
     },
   });
 });

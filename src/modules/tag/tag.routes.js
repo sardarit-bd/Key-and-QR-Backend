@@ -12,21 +12,22 @@ import {
 const router = express.Router();
 
 // ==================== PUBLIC ROUTES ====================
-// Tag resolution for QR scan (first API call when scanning)
+
+// Tag resolution for QR scan
 router.get("/resolve/:tagCode", tagController.resolveTag);
 
-router.get("/me", auth(), tagController.getMyTags);
-
-// Get tag info by code
-router.get("/:tagCode", tagController.getTagByCode);
-
-// Get personal message (public - anyone can see)
+// Get personal message
 router.get("/:tagCode/personal-message", tagController.getPersonalMessage);
 
 // ==================== AUTHENTICATED ROUTES ====================
-// Activate tag (requires login)
+
+// Get my tags
+router.get("/me", auth(), tagController.getMyTags);
+
+// Activate tag
 router.post("/activate/:tagCode", auth(), tagController.activateTag);
 
+// Set personal message
 router.put(
   "/:tagCode/personal-message",
   auth(),
@@ -34,6 +35,8 @@ router.put(
 );
 
 // ==================== ADMIN ONLY ROUTES ====================
+
+// Create tag
 router.post(
   "/",
   auth(roles.ADMIN),
@@ -42,6 +45,7 @@ router.post(
   tagController.createTag
 );
 
+// Get all tags
 router.get(
   "/",
   auth(roles.ADMIN),
@@ -49,6 +53,7 @@ router.get(
   tagController.getAllTags
 );
 
+// Update tag
 router.patch(
   "/:id",
   auth(roles.ADMIN),
@@ -56,5 +61,10 @@ router.patch(
   validateRequest(updateTagValidation),
   tagController.updateTag
 );
+
+// ==================== DYNAMIC ROUTES LAST ====================
+
+// Get tag info by code
+router.get("/:tagCode", tagController.getTagByCode);
 
 export default router;
