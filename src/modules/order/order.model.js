@@ -1,5 +1,25 @@
 import mongoose from "mongoose";
 
+const assignedTagSchema = new mongoose.Schema(
+  {
+    tag: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tag",
+      required: true,
+    },
+    assignedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    assignedBy: {
+      type: String,
+      enum: ["auto", "admin"],
+      default: "auto",
+    },
+  },
+  { _id: false }
+);
+
 const orderSchema = new mongoose.Schema(
   {
     user: {
@@ -21,10 +41,24 @@ const orderSchema = new mongoose.Schema(
       default: 1,
     },
 
+    // old field - keep for backward compatibility
     assignedTag: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Tag",
       default: null,
+    },
+
+    // new field - supports multiple tags per order
+    assignedTags: {
+      type: [assignedTagSchema],
+      default: [],
+    },
+
+    tagAssignmentStatus: {
+      type: String,
+      enum: ["none", "partial", "complete"],
+      default: "none",
+      index: true,
     },
 
     purchaseType: {
@@ -43,16 +77,17 @@ const orderSchema = new mongoose.Schema(
       enum: ["none", "pending", "approved", "rejected"],
       default: "none",
     },
+
     giftMessageReviewedAt: {
       type: Date,
       default: null,
     },
+
     giftMessageAdminNote: {
       type: String,
       default: null,
     },
 
-    // NEW: Shipping Information Fields
     shippingAddress: {
       fullName: { type: String, required: false, default: null },
       email: { type: String, required: false, default: null },
@@ -63,7 +98,6 @@ const orderSchema = new mongoose.Schema(
       country: { type: String, default: null },
     },
 
-    // ===== Gift specific fields =====
     giftStatus: {
       type: String,
       enum: ["none", "pending_claim", "claimed"],
@@ -89,13 +123,27 @@ const orderSchema = new mongoose.Schema(
 
     fulfillmentStatus: {
       type: String,
-      enum: ["pending", "assigned", "shipped", "delivered", "cancelled", "returned"],
+      enum: [
+        "pending",
+        "assigned",
+        "shipped",
+        "delivered",
+        "cancelled",
+        "returned",
+      ],
       default: "pending",
     },
 
     refundStatus: {
       type: String,
-      enum: ["none", "requested", "approved", "processing", "completed", "rejected"],
+      enum: [
+        "none",
+        "requested",
+        "approved",
+        "processing",
+        "completed",
+        "rejected",
+      ],
       default: "none",
     },
 
@@ -142,7 +190,15 @@ const orderSchema = new mongoose.Schema(
 
     returnStatus: {
       type: String,
-      enum: ["none", "requested", "approved", "shipped", "received", "completed", "rejected"],
+      enum: [
+        "none",
+        "requested",
+        "approved",
+        "shipped",
+        "received",
+        "completed",
+        "rejected",
+      ],
       default: "none",
     },
 
@@ -202,6 +258,8 @@ orderSchema.index({ refundStatus: 1 });
 orderSchema.index({ returnStatus: 1 });
 orderSchema.index({ purchaseType: 1, giftStatus: 1 });
 orderSchema.index({ "shippingAddress.address": 1 });
+orderSchema.index({ "assignedTags.tag": 1 });
 
 const Order = mongoose.model("Order", orderSchema);
+
 export default Order;

@@ -39,6 +39,34 @@ router.patch(
   orderController.updateOrder
 );
 
+// ===============================
+// Order Tags Management (Admin)
+// ===============================
+
+// Add tag to order
+router.post(
+  "/:id/tags/add",
+  auth(),
+  roleMiddleware(roles.ADMIN),
+  orderController.addTagToOrder
+);
+
+// Replace assigned tag
+router.patch(
+  "/:id/tags/replace",
+  auth(),
+  roleMiddleware(roles.ADMIN),
+  orderController.replaceOrderTag
+);
+
+// Remove assigned tag
+router.delete(
+  "/:id/tags/:tagId/remove",
+  auth(),
+  roleMiddleware(roles.ADMIN),
+  orderController.removeTagFromOrder
+);
+
 // Update shipping address
 router.patch("/:id/address", auth(), orderController.updateShippingAddress);
 

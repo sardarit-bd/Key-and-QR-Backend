@@ -13,21 +13,8 @@ const getTodayKey = () => {
 /**
  * Smart assignment (user > tag + rotation + allowReuse)
  */
-const getAssignedQuote = async (tagId, userId = null, usedQuoteIds = []) => {
-  //  User-specific (highest priority)
-  if (userId) {
-    const userAssignment =
-      await quoteAssignmentService.getTopAssignmentByUser(userId);
-
-    if (userAssignment && userAssignment.quote) {
-      return {
-        source: "user",
-        quote: userAssignment.quote,
-      };
-    }
-  }
-
-  // 2️⃣ Tag-based (rotation logic)
+const getAssignedQuote = async (tagId, usedQuoteIds = []) => {
+  //  Tag-based assignment only
   const assignments =
     await quoteAssignmentService.getAssignmentsByTag(tagId);
 
