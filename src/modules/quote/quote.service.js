@@ -84,31 +84,57 @@ const updateQuote = async (id, payload, imageFile) => {
 
   let image = existingQuote.image || null;
 
-  // If new image uploaded
+  const removeImage = payload.removeImage === "true" || payload.removeImage === true;
+
+  delete payload.removeImage;
+
   if (imageFile) {
-    // delete old image from cloudinary
+    // Case 1: New image uploaded - replace existing
     if (existingQuote.image?.public_id) {
       try {
         await cloudinary.uploader.destroy(existingQuote.image.public_id);
+        console.log("✅ Old image deleted from Cloudinary");
       } catch (err) {
         console.error("Failed to delete old image:", err.message);
       }
     }
-
     image = await uploadImageToCloudinary(imageFile);
+    console.log("✅ New image uploaded to Cloudinary");
+  }
+  else if (removeImage) {
+    // Case 2: User wants to remove image (no new image)
+    if (existingQuote.image?.public_id) {
+      try {
+        await cloudinary.uploader.destroy(existingQuote.image.public_id);
+        console.log("✅ Image removed from Cloudinary");
+      } catch (err) {
+        console.error("Failed to delete image:", err.message);
+      }
+    }
+    image = null;
+    console.log("✅ Image removed from quote");
+  }
+
+  // Clean up payload - remove empty strings and undefined
+  const cleanedPayload = {};
+  for (const [key, value] of Object.entries(payload)) {
+    if (value !== undefined && value !== null && value !== "") {
+      cleanedPayload[key] = value;
+    }
   }
 
   const updatedData = {
-    ...payload,
+    ...cleanedPayload,
     image,
   };
 
-  return quoteRepository.updateQuote(id, updatedData);
+  const result = await quoteRepository.updateQuote(id, updatedData);
+  console.log("✅ Quote updated successfully:", result._id);
+
+  return result;
 };
 
-/**
- * Delete Quote
- */
+/**  Delete Quote  */
 const deleteQuote = async (id) => {
   const quote = await quoteRepository.findById(id);
 

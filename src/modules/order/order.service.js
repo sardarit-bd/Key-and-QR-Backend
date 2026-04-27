@@ -11,6 +11,71 @@ import pendingQuoteRepository from "../pendingQuote/pendingQuote.repository.js";
 import tagService from "../tag/tag.service.js";
 
 
+const ensureOrderTagsEditable = (order) => {
+    if (["shipped", "delivered"].includes(order.fulfillmentStatus)) {
+        throw new AppError(
+            400,
+            "Tags cannot be changed after the order has been shipped or delivered"
+        );
+    }
+
+    if (["cancelled", "returned"].includes(order.fulfillmentStatus)) {
+        throw new AppError(
+            400,
+            "Tags cannot be manually changed for cancelled or returned orders"
+        );
+    }
+};
+
+const getTagId = (item) => {
+    const value = item?.tag || item;
+
+    if (!value) return null;
+
+    if (value._id) {
+        return value._id.toString();
+    }
+
+    return value.toString();
+};
+
+const buildTagAssignmentStatus = (assignedCount, requiredQty) => {
+    if (assignedCount === 0) return "none";
+    if (assignedCount < requiredQty) return "partial";
+    return "complete";
+};
+
+const ensureTagAvailableForOrder = async (tagId, orderId, orderUserId) => {
+    const tag = await tagRepository.findById(tagId);
+
+    if (!tag) {
+        throw new AppError(404, "Tag not found");
+    }
+
+    if (!tag.isActive) {
+        throw new AppError(400, "This tag is disabled");
+    }
+
+    if (tag.owner && tag.owner.toString() !== orderUserId.toString()) {
+        throw new AppError(400, "This tag is already assigned to another user/order");
+    }
+
+    const existingOrderWithTag = await Order.findOne({
+        _id: { $ne: orderId },
+        fulfillmentStatus: { $nin: ["cancelled", "returned"] },
+        $or: [
+            { assignedTag: tagId },
+            { "assignedTags.tag": tagId },
+        ],
+    });
+
+    if (existingOrderWithTag) {
+        throw new AppError(400, "This tag is already assigned to another active order");
+    }
+
+    return tag;
+};
+
 const createOrder = async (userId, payload) => {
     const product = await productRepository.getProductById(payload.productId);
 
@@ -141,24 +206,51 @@ const confirmPaymentAndAssignTag = async (orderId, paymentIntentId) => {
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
+    const requiredQty = order.quantity || 1;
+
     const updateData = {
         paymentStatus: "paid",
         stripePaymentIntentId: paymentIntentId,
     };
 
-    let availableTag = null;
+    let availableTags = [];
 
     try {
-        availableTag = await tagService.getUnusedTag();
+        availableTags = await tagRepository.findMultipleUnusedTags(requiredQty);
     } catch (err) {
-        console.warn("⚠️ No tag available for order:", orderId);
+        console.warn("⚠️ No tags available for order:", orderId);
     }
 
-    if (availableTag) {
-        updateData.assignedTag = availableTag._id;
-        updateData.fulfillmentStatus = "assigned";
-    } else {
+    const assignedTags = availableTags.map((tag) => ({
+        tag: tag._id,
+        assignedAt: new Date(),
+        assignedBy: "auto",
+    }));
+
+    for (const tag of availableTags) {
+        await tagRepository.updateTag(tag._id, {
+            owner: order.user,
+            isActivated: true,
+            activatedAt: new Date(),
+        });
+    }
+
+    updateData.assignedTags = assignedTags;
+
+    // Backward compatibility: keep first tag in old assignedTag field
+    if (assignedTags.length > 0) {
+        updateData.assignedTag = assignedTags[0].tag;
+    }
+
+    if (assignedTags.length === 0) {
+        updateData.tagAssignmentStatus = "none";
         updateData.fulfillmentStatus = "pending";
+    } else if (assignedTags.length < requiredQty) {
+        updateData.tagAssignmentStatus = "partial";
+        updateData.fulfillmentStatus = "pending";
+    } else {
+        updateData.tagAssignmentStatus = "complete";
+        updateData.fulfillmentStatus = "assigned";
     }
 
     return orderRepository.updateOrder(orderId, updateData);
@@ -225,13 +317,12 @@ const getOrderById = async (id) => {
 const getUserOrders = async (userId, page = 1, limit = 10) => {
     const skip = (page - 1) * limit;
 
-    // Get total count
     const total = await Order.countDocuments({ user: userId });
 
-    // Get paginated orders
     const orders = await Order.find({ user: userId })
         .populate("product", "name price image")
         .populate("assignedTag", "tagCode")
+        .populate("assignedTags.tag", "tagCode")
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limit);
@@ -241,11 +332,11 @@ const getUserOrders = async (userId, page = 1, limit = 10) => {
         pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
-            total: total,
+            total,
             totalPages: Math.ceil(total / limit),
             hasNextPage: page * limit < total,
-            hasPrevPage: page > 1
-        }
+            hasPrevPage: page > 1,
+        },
     };
 };
 
@@ -321,44 +412,48 @@ const getUserTotalSpent = async (userId) => {
 const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus = null) => {
     const skip = (page - 1) * limit;
 
-    // Build filter
     const filter = {};
 
     if (fulfillmentStatus && fulfillmentStatus !== "all") {
         filter.fulfillmentStatus = fulfillmentStatus;
     }
 
-    // Get all orders with populate
     let query = Order.find(filter)
         .populate("user", "name email")
         .populate("product", "name price image")
         .populate("assignedTag", "tagCode")
+        .populate("assignedTags.tag", "tagCode")
         .sort({ createdAt: -1 });
 
     let orders = await query.lean();
     let total = orders.length;
 
-    // Apply search filter in JavaScript (after populate)
     if (search && search.trim() !== "") {
         const searchLower = search.toLowerCase().trim();
-        orders = orders.filter(order => {
-            // Search by order ID
+
+        orders = orders.filter((order) => {
             if (order._id.toString().toLowerCase().includes(searchLower)) return true;
-            // Search by user name
             if (order.user?.name?.toLowerCase().includes(searchLower)) return true;
-            // Search by user email
             if (order.user?.email?.toLowerCase().includes(searchLower)) return true;
-            // Search by product name
             if (order.product?.name?.toLowerCase().includes(searchLower)) return true;
-            // ✅ Search by shipping address
             if (order.shippingAddress?.address?.toLowerCase().includes(searchLower)) return true;
             if (order.shippingAddress?.fullName?.toLowerCase().includes(searchLower)) return true;
+
+            // Search by assigned tag codes
+            if (order.assignedTag?.tagCode?.toLowerCase().includes(searchLower)) return true;
+
+            const matchedAssignedTags = order.assignedTags?.some((item) =>
+                item.tag?.tagCode?.toLowerCase().includes(searchLower)
+            );
+
+            if (matchedAssignedTags) return true;
+
             return false;
         });
+
         total = orders.length;
     }
 
-    // Apply pagination
     const paginatedOrders = orders.slice(skip, skip + limit);
 
     return {
@@ -366,9 +461,9 @@ const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus
             page: parseInt(page),
             limit: parseInt(limit),
             total,
-            totalPage: Math.ceil(total / limit)
+            totalPage: Math.ceil(total / limit),
         },
-        data: paginatedOrders
+        data: paginatedOrders,
     };
 };
 
@@ -399,53 +494,98 @@ const updateOrder = async (id, payload) => {
         throw new AppError(404, "Order not found");
     }
 
-    // Check if order is cancelled - can't update cancelled orders
     if (order.fulfillmentStatus === "cancelled") {
         throw new AppError(400, "Cannot update a cancelled order");
     }
 
-    // Check if order is returned - can't update returned orders
     if (order.fulfillmentStatus === "returned") {
         throw new AppError(400, "Cannot update a returned order");
     }
 
-    // Tag assign validation
+    // Backward compatibility: single assignedTag manual assign
     if (payload.assignedTag) {
-        // Check if tag exists
         const tag = await tagRepository.findById(payload.assignedTag);
 
         if (!tag) {
             throw new AppError(404, "Tag not found");
         }
 
-        // CRITICAL: Check if tag already has an owner
-        if (tag.owner) {
+        if (tag.owner && tag.owner.toString() !== order.user.toString()) {
             throw new AppError(400, "This tag is already assigned to another user/order");
         }
 
-        // CRITICAL: Check if tag is already assigned to any active order
         const existingOrderWithTag = await Order.findOne({
-            assignedTag: payload.assignedTag,
-            fulfillmentStatus: { $nin: ["cancelled", "returned"] }
+            $or: [
+                { assignedTag: payload.assignedTag },
+                { "assignedTags.tag": payload.assignedTag },
+            ],
+            fulfillmentStatus: { $nin: ["cancelled", "returned"] },
+            _id: { $ne: id },
         });
 
-        if (existingOrderWithTag && existingOrderWithTag._id.toString() !== id) {
+        if (existingOrderWithTag) {
             throw new AppError(400, "This tag is already assigned to another active order");
         }
 
-        // If tag is being assigned, set owner and activation
         await tagRepository.updateTag(tag._id, {
             owner: order.user,
             isActivated: true,
-            activatedAt: new Date()
+            activatedAt: new Date(),
         });
 
-        payload.fulfillmentStatus = "assigned";
+        const existingAssignedTags = order.assignedTags || [];
+        const alreadyExists = existingAssignedTags.some(
+            (item) => item.tag?._id?.toString() === tag._id.toString() || item.tag?.toString() === tag._id.toString()
+        );
+
+        if (!alreadyExists) {
+            payload.assignedTags = [
+                ...existingAssignedTags.map((item) => ({
+                    tag: item.tag?._id || item.tag,
+                    assignedAt: item.assignedAt || new Date(),
+                    assignedBy: item.assignedBy || "admin",
+                })),
+                {
+                    tag: tag._id,
+                    assignedAt: new Date(),
+                    assignedBy: "admin",
+                },
+            ];
+        }
+
+        payload.assignedTag = order.assignedTag || tag._id;
     }
 
-    // Check if trying to assign assigned status without tag
-    if (payload.fulfillmentStatus === "assigned" && !order.assignedTag && !payload.assignedTag) {
-        throw new AppError(400, "Assign tag first");
+    const finalAssignedCount =
+        payload.assignedTags?.length ||
+        order.assignedTags?.length ||
+        (payload.assignedTag || order.assignedTag ? 1 : 0);
+
+    const requiredQty = order.quantity || 1;
+
+    if (finalAssignedCount === 0) {
+        payload.tagAssignmentStatus = "none";
+    } else if (finalAssignedCount < requiredQty) {
+        payload.tagAssignmentStatus = "partial";
+    } else {
+        payload.tagAssignmentStatus = "complete";
+    }
+
+    if (
+        ["assigned", "shipped", "delivered"].includes(payload.fulfillmentStatus) &&
+        finalAssignedCount < requiredQty
+    ) {
+        throw new AppError(
+            400,
+            `Assign all required tags before changing fulfillment status. Required: ${requiredQty}, Assigned: ${finalAssignedCount}`
+        );
+    }
+
+    if (
+        payload.fulfillmentStatus === "assigned" &&
+        finalAssignedCount < requiredQty
+    ) {
+        throw new AppError(400, "Assign all required tags first");
     }
 
     const allowedTransitions = {
@@ -461,7 +601,10 @@ const updateOrder = async (id, payload) => {
         payload.fulfillmentStatus &&
         !allowedTransitions[order.fulfillmentStatus]?.includes(payload.fulfillmentStatus)
     ) {
-        throw new AppError(400, `Invalid status transition from ${order.fulfillmentStatus} to ${payload.fulfillmentStatus}`);
+        throw new AppError(
+            400,
+            `Invalid status transition from ${order.fulfillmentStatus} to ${payload.fulfillmentStatus}`
+        );
     }
 
     if (
@@ -876,6 +1019,203 @@ const rejectGiftMessage = async (orderId, adminNote = null) => {
     });
 };
 
+const addTagToOrder = async (orderId, tagId) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(404, "Order not found");
+    }
+
+    ensureOrderTagsEditable(order);
+
+    const requiredQty = order.quantity || 1;
+    const existingAssignedTags = order.assignedTags || [];
+
+    if (existingAssignedTags.length >= requiredQty) {
+        throw new AppError(400, "All required tags are already assigned");
+    }
+
+    const alreadyExists = existingAssignedTags.some(
+        (item) => getTagId(item) === tagId.toString()
+    );
+
+    if (alreadyExists) {
+        throw new AppError(400, "This tag is already assigned to this order");
+    }
+
+    const tag = await ensureTagAvailableForOrder(tagId, orderId, order.user);
+
+    await tagRepository.updateTag(tag._id, {
+        owner: order.user,
+        isActivated: true,
+        activatedAt: new Date(),
+    });
+
+    const updatedAssignedTags = [
+        ...existingAssignedTags.map((item) => ({
+            tag: item.tag?._id || item.tag,
+            assignedAt: item.assignedAt || new Date(),
+            assignedBy: item.assignedBy || "admin",
+        })),
+        {
+            tag: tag._id,
+            assignedAt: new Date(),
+            assignedBy: "admin",
+        },
+    ];
+
+    const tagAssignmentStatus = buildTagAssignmentStatus(
+        updatedAssignedTags.length,
+        requiredQty
+    );
+
+    return orderRepository.updateOrder(orderId, {
+        assignedTags: updatedAssignedTags,
+        assignedTag: order.assignedTag || tag._id,
+        tagAssignmentStatus,
+        fulfillmentStatus:
+            tagAssignmentStatus === "complete" ? "assigned" : "pending",
+    });
+};
+
+const removeTagFromOrder = async (orderId, tagId) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(404, "Order not found");
+    }
+
+    ensureOrderTagsEditable(order);
+
+    const targetTagId = tagId.toString();
+    const existingAssignedTags = order.assignedTags || [];
+
+    const existsInAssignedTags = existingAssignedTags.some(
+        (item) => getTagId(item) === targetTagId
+    );
+
+    const existsInAssignedTag = getTagId(order.assignedTag) === targetTagId;
+
+    if (!existsInAssignedTags && !existsInAssignedTag) {
+        throw new AppError(404, "Tag is not assigned to this order");
+    }
+
+    await tagRepository.resetTag(targetTagId);
+
+    const updatedAssignedTags = existingAssignedTags
+        .filter((item) => getTagId(item) !== targetTagId)
+        .map((item) => ({
+            tag: getTagId(item),
+            assignedAt: item.assignedAt || new Date(),
+            assignedBy: item.assignedBy || "admin",
+        }));
+
+    const requiredQty = order.quantity || 1;
+
+    const tagAssignmentStatus = buildTagAssignmentStatus(
+        updatedAssignedTags.length,
+        requiredQty
+    );
+
+    return orderRepository.updateOrder(orderId, {
+        assignedTags: updatedAssignedTags,
+        assignedTag: updatedAssignedTags[0]?.tag || null,
+        tagAssignmentStatus,
+        fulfillmentStatus:
+            tagAssignmentStatus === "complete" ? "assigned" : "pending",
+    });
+};
+
+const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
+    const order = await orderRepository.findById(orderId);
+
+    if (!order) {
+        throw new AppError(404, "Order not found");
+    }
+
+    ensureOrderTagsEditable(order);
+
+    const targetOldTagId = oldTagId.toString();
+    const targetNewTagId = newTagId.toString();
+
+    if (targetOldTagId === targetNewTagId) {
+        throw new AppError(400, "Old tag and new tag cannot be the same");
+    }
+
+    const existingAssignedTags = order.assignedTags || [];
+
+    const oldExistsInAssignedTags = existingAssignedTags.some(
+        (item) => getTagId(item) === targetOldTagId
+    );
+
+    const oldExistsInAssignedTag =
+        getTagId(order.assignedTag) === targetOldTagId;
+
+    if (!oldExistsInAssignedTags && !oldExistsInAssignedTag) {
+        throw new AppError(404, "Old tag is not assigned to this order");
+    }
+
+    const newTag = await ensureTagAvailableForOrder(
+        targetNewTagId,
+        orderId,
+        order.user
+    );
+
+    await tagRepository.resetTag(targetOldTagId);
+
+    await tagRepository.updateTag(newTag._id, {
+        owner: order.user,
+        isActivated: true,
+        activatedAt: new Date(),
+    });
+
+    let updatedAssignedTags = existingAssignedTags.map((item) => {
+        if (getTagId(item) === targetOldTagId) {
+            return {
+                tag: newTag._id,
+                assignedAt: new Date(),
+                assignedBy: "admin",
+            };
+        }
+
+        return {
+            tag: getTagId(item),
+            assignedAt: item.assignedAt || new Date(),
+            assignedBy: item.assignedBy || "admin",
+        };
+    });
+
+    if (!oldExistsInAssignedTags && oldExistsInAssignedTag) {
+        updatedAssignedTags = [
+            {
+                tag: newTag._id,
+                assignedAt: new Date(),
+                assignedBy: "admin",
+            },
+            ...updatedAssignedTags,
+        ];
+    }
+
+    const requiredQty = order.quantity || 1;
+
+    const tagAssignmentStatus = buildTagAssignmentStatus(
+        updatedAssignedTags.length,
+        requiredQty
+    );
+
+    return orderRepository.updateOrder(orderId, {
+        assignedTags: updatedAssignedTags,
+        assignedTag:
+            oldExistsInAssignedTag
+                ? newTag._id
+                : order.assignedTag || updatedAssignedTags[0]?.tag,
+        tagAssignmentStatus,
+        fulfillmentStatus:
+            tagAssignmentStatus === "complete" ? "assigned" : "pending",
+    });
+};
+
+
 export default {
     createOrder,
     createCheckout,
@@ -897,4 +1237,7 @@ export default {
     updateShippingAddress,
     approveGiftMessage,
     rejectGiftMessage,
+    addTagToOrder,
+    replaceOrderTag,
+    removeTagFromOrder
 };

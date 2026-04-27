@@ -230,6 +230,48 @@ const rejectGiftMessage = catchAsync(async (req, res) => {
     });
 });
 
+const addTagToOrder = catchAsync(async (req, res) => {
+    const result = await orderService.addTagToOrder(req.params.id, req.body.tagId);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Tag added successfully",
+        data: result,
+    });
+});
+
+const replaceOrderTag = catchAsync(async (req, res) => {
+    const { oldTagId, newTagId } = req.body;
+
+    const result = await orderService.replaceOrderTag(
+        req.params.id,
+        oldTagId,
+        newTagId
+    );
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Tag replaced successfully",
+        data: result,
+    });
+});
+
+const removeTagFromOrder = catchAsync(async (req, res) => {
+    const result = await orderService.removeTagFromOrder(
+        req.params.id,
+        req.params.tagId
+    );
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Tag removed successfully",
+        data: result,
+    });
+});
+
 export default {
     createCheckout,
     getOrderById,
@@ -247,4 +289,7 @@ export default {
     claimGiftOrder,
     approveGiftMessage,
     rejectGiftMessage,
+    addTagToOrder,
+    replaceOrderTag,
+    removeTagFromOrder
 };
