@@ -28,7 +28,15 @@ const ensureOrderTagsEditable = (order) => {
 };
 
 const getTagId = (item) => {
-    return item?.tag?._id?.toString() || item?.tag?.toString();
+    const value = item?.tag || item;
+
+    if (!value) return null;
+
+    if (value._id) {
+        return value._id.toString();
+    }
+
+    return value.toString();
 };
 
 const buildTagAssignmentStatus = (assignedCount, requiredQty) => {
@@ -1079,27 +1087,31 @@ const removeTagFromOrder = async (orderId, tagId) => {
 
     ensureOrderTagsEditable(order);
 
+    const targetTagId = tagId.toString();
     const existingAssignedTags = order.assignedTags || [];
 
-    const exists = existingAssignedTags.some(
-        (item) => getTagId(item) === tagId.toString()
+    const existsInAssignedTags = existingAssignedTags.some(
+        (item) => getTagId(item) === targetTagId
     );
 
-    if (!exists && order.assignedTag?.toString() !== tagId.toString()) {
+    const existsInAssignedTag = getTagId(order.assignedTag) === targetTagId;
+
+    if (!existsInAssignedTags && !existsInAssignedTag) {
         throw new AppError(404, "Tag is not assigned to this order");
     }
 
-    await tagRepository.resetTag(tagId);
+    await tagRepository.resetTag(targetTagId);
 
     const updatedAssignedTags = existingAssignedTags
-        .filter((item) => getTagId(item) !== tagId.toString())
+        .filter((item) => getTagId(item) !== targetTagId)
         .map((item) => ({
-            tag: item.tag?._id || item.tag,
+            tag: getTagId(item),
             assignedAt: item.assignedAt || new Date(),
             assignedBy: item.assignedBy || "admin",
         }));
 
     const requiredQty = order.quantity || 1;
+
     const tagAssignmentStatus = buildTagAssignmentStatus(
         updatedAssignedTags.length,
         requiredQty
@@ -1109,7 +1121,8 @@ const removeTagFromOrder = async (orderId, tagId) => {
         assignedTags: updatedAssignedTags,
         assignedTag: updatedAssignedTags[0]?.tag || null,
         tagAssignmentStatus,
-        fulfillmentStatus: "pending",
+        fulfillmentStatus:
+            tagAssignmentStatus === "complete" ? "assigned" : "pending",
     });
 };
 
@@ -1122,23 +1135,33 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
 
     ensureOrderTagsEditable(order);
 
-    if (oldTagId.toString() === newTagId.toString()) {
+    const targetOldTagId = oldTagId.toString();
+    const targetNewTagId = newTagId.toString();
+
+    if (targetOldTagId === targetNewTagId) {
         throw new AppError(400, "Old tag and new tag cannot be the same");
     }
 
     const existingAssignedTags = order.assignedTags || [];
 
-    const oldExists = existingAssignedTags.some(
-        (item) => getTagId(item) === oldTagId.toString()
+    const oldExistsInAssignedTags = existingAssignedTags.some(
+        (item) => getTagId(item) === targetOldTagId
     );
 
-    if (!oldExists && order.assignedTag?.toString() !== oldTagId.toString()) {
+    const oldExistsInAssignedTag =
+        getTagId(order.assignedTag) === targetOldTagId;
+
+    if (!oldExistsInAssignedTags && !oldExistsInAssignedTag) {
         throw new AppError(404, "Old tag is not assigned to this order");
     }
 
-    const newTag = await ensureTagAvailableForOrder(newTagId, orderId, order.user);
+    const newTag = await ensureTagAvailableForOrder(
+        targetNewTagId,
+        orderId,
+        order.user
+    );
 
-    await tagRepository.resetTag(oldTagId);
+    await tagRepository.resetTag(targetOldTagId);
 
     await tagRepository.updateTag(newTag._id, {
         owner: order.user,
@@ -1147,7 +1170,7 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     });
 
     let updatedAssignedTags = existingAssignedTags.map((item) => {
-        if (getTagId(item) === oldTagId.toString()) {
+        if (getTagId(item) === targetOldTagId) {
             return {
                 tag: newTag._id,
                 assignedAt: new Date(),
@@ -1156,13 +1179,13 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
         }
 
         return {
-            tag: item.tag?._id || item.tag,
+            tag: getTagId(item),
             assignedAt: item.assignedAt || new Date(),
             assignedBy: item.assignedBy || "admin",
         };
     });
 
-    if (!oldExists) {
+    if (!oldExistsInAssignedTags && oldExistsInAssignedTag) {
         updatedAssignedTags = [
             {
                 tag: newTag._id,
@@ -1174,6 +1197,7 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     }
 
     const requiredQty = order.quantity || 1;
+
     const tagAssignmentStatus = buildTagAssignmentStatus(
         updatedAssignedTags.length,
         requiredQty
@@ -1182,7 +1206,7 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     return orderRepository.updateOrder(orderId, {
         assignedTags: updatedAssignedTags,
         assignedTag:
-            order.assignedTag?.toString() === oldTagId.toString()
+            oldExistsInAssignedTag
                 ? newTag._id
                 : order.assignedTag || updatedAssignedTags[0]?.tag,
         tagAssignmentStatus,
