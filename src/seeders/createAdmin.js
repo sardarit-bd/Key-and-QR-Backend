@@ -7,7 +7,8 @@ import logger from "../utils/logger.js";
 const createAdmin = async () => {
   try {
     const existingAdmin = await User.findOne({
-      email: env.adminEmail,
+      role: "admin",
+      isDeleted: false,
     });
 
     if (existingAdmin) {

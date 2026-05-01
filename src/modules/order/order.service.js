@@ -208,6 +208,15 @@ const confirmPaymentAndAssignTag = async (orderId, paymentIntentId) => {
 
     const requiredQty = order.quantity || 1;
 
+    const updatedProduct = await productRepository.decreaseStock(
+        order.product._id || order.product,
+        requiredQty
+    );
+
+    if (!updatedProduct) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Not enough stock available");
+    }
+
     const updateData = {
         paymentStatus: "paid",
         stripePaymentIntentId: paymentIntentId,
