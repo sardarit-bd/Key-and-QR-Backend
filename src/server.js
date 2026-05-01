@@ -15,7 +15,10 @@ const startServer = async () => {
     startMediaCleanupJob();
 
     // create admin automatically
-    await createAdmin();
+
+    if (process.env.SEED_ADMIN === "true") {
+      await createAdmin();
+    }
 
     app.listen(env.port, () => {
       logger.info(`Server is running on port ${env.port}`);
