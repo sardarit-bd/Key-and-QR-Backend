@@ -71,7 +71,7 @@ const createCheckoutSession = async (userId, tagCode, preferredCategory = null) 
     );
   }
 
-  // ✅ Using authRepository instead of userRepository
+  // Using authRepository instead of userRepository
   const user = await authRepository.findUserById(userId);
   let customerId = user?.stripeCustomerId;
 
@@ -85,7 +85,7 @@ const createCheckoutSession = async (userId, tagCode, preferredCategory = null) 
     });
     customerId = customer.id;
 
-    // ✅ Using authRepository.updateUser
+    // Using authRepository.updateUser
     await authRepository.updateUser(userId, { stripeCustomerId: customerId });
   }
 
@@ -173,7 +173,7 @@ const cancelMySubscription = async (userId, tagCode) => {
 };
 
 const createCustomerPortalSession = async (userId) => {
-  // ✅ Using authRepository instead of userRepository
+  // Using authRepository instead of userRepository
   const user = await authRepository.findUserById(userId);
 
   if (!user || !user.stripeCustomerId) {
@@ -231,7 +231,7 @@ const activateFromCheckoutSession = async (session) => {
   );
 
   if (customerId) {
-    // ✅ Using authRepository.updateUser
+    // Using authRepository.updateUser
     await authRepository.updateUser(userId, { stripeCustomerId: customerId });
   }
 
