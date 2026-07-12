@@ -12,6 +12,7 @@ import subscriptionRoutes from "../modules/subscription/subscription.routes.js";
 import heroRoutes from "../modules/hero/hero.route.js";
 import quoteAssignmentRoutes from "../modules/quoteAssignment/quoteAssignment.routes.js";
 import uploadRoutes from "../modules/upload/upload.route.js";
+import dashboardRoutes from "../modules/dashboard/dashboard.routes.js";
 
 const router = express.Router();
 
@@ -28,5 +29,6 @@ router.use("/subscriptions", subscriptionRoutes);
 router.use("/hero", heroRoutes);
 router.use("/quote-assignments", quoteAssignmentRoutes);
 router.use("/upload", uploadRoutes);
+router.use("/dashboard", dashboardRoutes);
 
 export default router;

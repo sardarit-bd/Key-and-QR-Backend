@@ -7,9 +7,9 @@ import passport from "passport";
 import env from "../config/env.js";
 import globalErrorHandler from "../middlewares/error.middleware.js";
 import notFoundHandler from "../middlewares/notFound.middleware.js";
-import apiLimiter from "../middlewares/rateLimiter.js";
 import router from "../routes/index.js";
 import stripeWebhook from "../routes/stripe.webhook.js";
+import { apiLimiter } from "../middlewares/rateLimiter.js";
 
 const app = express();
 

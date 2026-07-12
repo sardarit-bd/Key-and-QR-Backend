@@ -6,73 +6,111 @@ import scanService from "./tag-unlock.service.js";
 import tagRepository from "../tag/tag.repository.js";
 import scanRepository from "./scan.repository.js";
 
+// ===============================
+// PUBLIC SCAN - No Auth Required
+// ===============================
+
+/**
+ * Public QR Scan
+ * GET /api/v1/scan/public/:tagCode
+ * 
+ * Returns ONLY public quote data
+ * No authentication required
+ * Rate limited
+ */
+const publicScan = catchAsync(async (req, res) => {
+    const { tagCode } = req.params;
+    
+    // Use public service method
+    const result = await scanService.publicUnlock(tagCode);
+
+    // Send sanitized public response
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "QR code scanned successfully",
+        data: result,
+    });
+});
+
+// ===============================
+// EXISTING CONTROLLER FUNCTIONS
+// ===============================
+
+// Unlock tag (existing - kept for backward compatibility)
 const unlockTag = catchAsync(async (req, res) => {
-  const { tagCode } = req.params;
-  const { category } = req.body || {};
+    const { tagCode } = req.params;
+    const { category } = req.body || {};
 
-  const result = await scanService.unlockTag(tagCode, req.user, category);
+    const result = await scanService.unlockTag(tagCode, req.user, category);
 
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    message: "Unlock processed",
-    data: result,
-  });
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Unlock processed",
+        data: result,
+    });
 });
 
+// Get last unlock (existing)
 const getLastUnlock = catchAsync(async (req, res) => {
-  const { tagCode } = req.params;
+    const { tagCode } = req.params;
 
-  const tag = await tagRepository.findByTagCode(tagCode);
-  if (!tag) {
-    throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
-  }
+    const tag = await tagRepository.findByTagCode(tagCode);
+    if (!tag) {
+        throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
+    }
 
-  const lastScan = await scanRepository.getLastScan(tag._id);
+    const lastScan = await scanRepository.getLastScan(tag._id);
 
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    data: lastScan ? {
-      quote: lastScan.quote?.text,
-      category: lastScan.category,
-      scannedAt: lastScan.createdAt,
-      scanDateKey: lastScan.scanDateKey,
-    } : null,
-  });
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        data: lastScan ? {
+            quote: lastScan.quote?.text,
+            category: lastScan.category,
+            scannedAt: lastScan.createdAt,
+            scanDateKey: lastScan.scanDateKey,
+        } : null,
+    });
 });
 
-// Get user scan history
+// Get user scan history (existing)
 const getUserScanHistory = catchAsync(async (req, res) => {
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 10;
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 10;
 
-  const result = await scanRepository.getUserScanHistory(req.user.userId, page, limit);
+    const result = await scanRepository.getUserScanHistory(req.user.userId, page, limit);
 
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    message: "Scan history fetched successfully",
-    meta: result.meta,
-    data: result.data,
-  });
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Scan history fetched successfully",
+        meta: result.meta,
+        data: result.data,
+    });
 });
 
-// Get user scan stats
+// Get user scan stats (existing)
 const getUserScanStats = catchAsync(async (req, res) => {
-  const result = await scanRepository.getUserScanStats(req.user.userId);
+    const result = await scanRepository.getUserScanStats(req.user.userId);
 
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    message: "Scan stats fetched successfully",
-    data: result,
-  });
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Scan stats fetched successfully",
+        data: result,
+    });
 });
+
+// ===============================
+// EXPORTS
+// ===============================
 
 export default {
-  unlockTag,
-  getLastUnlock,
-  getUserScanHistory,
-  getUserScanStats,
+    publicScan,
+    unlockTag,
+    getLastUnlock,
+    getUserScanHistory,
+    getUserScanStats,
 };

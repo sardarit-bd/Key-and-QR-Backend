@@ -1,133 +1,150 @@
 import express from "express";
 import orderController from "./order.controller.js";
 import auth from "../../middlewares/auth.middleware.js";
+import optionalAuth from "../../middlewares/optionalAuth.middleware.js";
 import roleMiddleware from "../../middlewares/role.middleware.js";
 import roles from "../../constants/roles.js";
+import { validateCheckout } from "../../middlewares/checkoutValidation.middleware.js";
+import { guestCheckoutLimiter } from "../../middlewares/rateLimiter.js";
 
 const router = express.Router();
 
-// Checkout (User)
-router.post("/checkout", auth(), orderController.createCheckout);
-
-// Admin - ALL orders
-router.get(
-  "/admin/all",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.getAllOrders
-);
-
-// Admin - Order stats
-router.get(
-  "/admin/stats",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.getOrderStats
-);
-
-// User - own orders
-router.get("/", auth(roles.USER, roles.ADMIN), orderController.getUserOrders);
-
-// Single order
-router.get("/:id", auth(), orderController.getOrderById);
-
-// Update order (admin)
-router.patch(
-  "/:id",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.updateOrder
-);
-
 // ===============================
-// Order Tags Management (Admin)
+//  GUEST CHECKOUT ROUTE
 // ===============================
 
-// Add tag to order
+
 router.post(
-  "/:id/tags/add",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.addTagToOrder
+    "/checkout",
+    optionalAuth(),
+    guestCheckoutLimiter,
+    validateCheckout,
+    orderController.createCheckout
 );
 
-// Replace assigned tag
+// ===============================
+// ADMIN ROUTES
+// ===============================
+
+router.get(
+    "/admin/all",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.getAllOrders
+);
+
+router.get(
+    "/admin/stats",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.getOrderStats
+);
+
+// ===============================
+// USER ROUTES (Auth Required)
+// ===============================
+
+router.get("/", auth(roles.USER, roles.ADMIN), orderController.getUserOrders);
+router.get("/:id", optionalAuth(), orderController.getOrderById);
+
+// ===============================
+// ADMIN UPDATE ROUTES
+// ===============================
+
 router.patch(
-  "/:id/tags/replace",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.replaceOrderTag
+    "/:id",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.updateOrder
 );
 
-// Remove assigned tag
+// ===============================
+// ORDER TAGS MANAGEMENT (Admin)
+// ===============================
+
+router.post(
+    "/:id/tags/add",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.addTagToOrder
+);
+
+router.patch(
+    "/:id/tags/replace",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.replaceOrderTag
+);
+
 router.delete(
-  "/:id/tags/:tagId/remove",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.removeTagFromOrder
+    "/:id/tags/:tagId/remove",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.removeTagFromOrder
 );
 
-// Update shipping address
+// ===============================
+// SHIPPING (Auth Required)
+// ===============================
+
 router.patch("/:id/address", auth(), orderController.updateShippingAddress);
 
-// Cancel order (user or admin)
-router.post("/:id/cancel", auth(), orderController.cancelOrder);
+// ===============================
+// CANCEL, REFUND, RETURN (Auth Required)
+// ===============================
 
-// Request refund (user)
+router.post("/:id/cancel", auth(), orderController.cancelOrder);
 router.post("/:id/refund/request", auth(), orderController.requestRefund);
 
-// Process refund (admin)
 router.post(
-  "/:id/refund/process",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.processRefund
+    "/:id/refund/process",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.processRefund
 );
 
-// Request return (user)
 router.post("/:id/return/request", auth(), orderController.requestReturn);
 
-// Process return (admin)
 router.post(
-  "/:id/return/process",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.processReturn
+    "/:id/return/process",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.processReturn
 );
 
-// Complete return (admin)
 router.post(
-  "/:id/return/complete",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.completeReturn
-);
-
-// Claim gift
-router.post(
-  "/:id/claim-gift",
-  auth(roles.USER, roles.ADMIN),
-  orderController.claimGiftOrder
+    "/:id/return/complete",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.completeReturn
 );
 
 // ===============================
-// Gift Message Moderation (Admin)
+// GIFT (Auth Required for Claim)
 // ===============================
 
-// Approve gift message
 router.post(
-  "/:id/gift-message/approve",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.approveGiftMessage
+    "/:id/claim-gift",
+    auth(roles.USER, roles.ADMIN),
+    orderController.claimGiftOrder
 );
 
-// Reject gift message
+// ===============================
+// GIFT MESSAGE MODERATION (Admin)
+// ===============================
+
 router.post(
-  "/:id/gift-message/reject",
-  auth(),
-  roleMiddleware(roles.ADMIN),
-  orderController.rejectGiftMessage
+    "/:id/gift-message/approve",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.approveGiftMessage
+);
+
+router.post(
+    "/:id/gift-message/reject",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.rejectGiftMessage
 );
 
 export default router;

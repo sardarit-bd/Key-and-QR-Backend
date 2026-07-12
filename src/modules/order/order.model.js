@@ -20,12 +20,43 @@ const assignedTagSchema = new mongoose.Schema(
   { _id: false }
 );
 
+// Guest customer schema
+const guestCustomerSchema = new mongoose.Schema(
+  {
+    fullName: {
+      type: String,
+      required: false,
+      trim: true,
+    },
+    email: {
+      type: String,
+      required: false,
+      lowercase: true,
+      trim: true,
+    },
+    phone: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+  },
+  { _id: false }
+);
+
 const orderSchema = new mongoose.Schema(
   {
+    // CHANGED: Made user optional for guest checkout
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: false, // ✅ Changed from true to false
+      index: true,
+    },
+
+    // NEW: Guest customer information
+    guestCustomer: {
+      type: guestCustomerSchema,
+      default: null,
     },
 
     product: {
@@ -246,6 +277,13 @@ const orderSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+
+    // NEW: Track if order is from guest
+    isGuestOrder: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
   },
   { timestamps: true }
 );
@@ -259,6 +297,13 @@ orderSchema.index({ returnStatus: 1 });
 orderSchema.index({ purchaseType: 1, giftStatus: 1 });
 orderSchema.index({ "shippingAddress.address": 1 });
 orderSchema.index({ "assignedTags.tag": 1 });
+orderSchema.index({ isGuestOrder: 1 }); // New index
+
+// NEW: Virtual to check if order has customer info
+orderSchema.virtual('hasCustomerInfo').get(function() {
+  if (this.user) return true;
+  return this.guestCustomer && this.guestCustomer.email;
+});
 
 const Order = mongoose.model("Order", orderSchema);
 

@@ -110,6 +110,14 @@ const getUserScanStats = async (userId) => {
   };
 };
 
+/**
+ * Get scan count for a user
+ * Used for dashboard counts
+ */
+const getUserScanCount = async (userId) => {
+  return ScanHistory.countDocuments({ user: userId });
+};
+
 export default {
   createScan,
   countTodayScans,
@@ -122,4 +130,5 @@ export default {
   getScanByTagAndDate,
   getUserScanHistory,
   getUserScanStats,
+  getUserScanCount,
 };
