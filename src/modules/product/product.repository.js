@@ -75,6 +75,49 @@ const permanentDeleteProduct = async (id) => {
   return Product.findByIdAndDelete(id);
 };
 
+const getCategories = async () => {
+  return Product.distinct("category", { isActive: true });
+};
+
+const searchProducts = async ({ q, page = 1, limit = 10 }) => {
+  const skip = (page - 1) * limit;
+
+  const filter = {
+    isActive: true,
+    $or: [
+      { name: { $regex: q, $options: "i" } },
+      { category: { $regex: q, $options: "i" } },
+      { brand: { $regex: q, $options: "i" } },
+    ],
+  };
+
+  const [data, total] = await Promise.all([
+    Product.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit),
+    Product.countDocuments(filter),
+  ]);
+
+  return {
+    meta: {
+      page,
+      limit,
+      total,
+      totalPage: Math.ceil(total / limit),
+    },
+    data,
+  };
+};
+
+const getRelatedProducts = async (productId, limit = 4) => {
+  const product = await Product.findById(productId);
+  if (!product) return [];
+
+  return Product.find({
+    _id: { $ne: productId },
+    category: product.category,
+    isActive: true,
+  }).limit(limit);
+};
+
 const decreaseStock = async (id, quantity) => {
   return Product.findOneAndUpdate(
     { _id: id, stock: { $gte: quantity } },
@@ -95,6 +138,9 @@ export default {
   createProduct,
   getProductById,
   getAllProducts,
+  getCategories,
+  searchProducts,
+  getRelatedProducts,
   updateProduct,
   softDeleteProduct,
   restoreProduct,

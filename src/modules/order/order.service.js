@@ -4,10 +4,149 @@ import orderRepository from "./order.repository.js";
 import tagRepository from "../tag/tag.repository.js";
 import productRepository from "../product/product.repository.js";
 import stripe from "../../config/stripe.js";
+import PAYMENT_CONFIG from "../../config/payment.config.js";
 import env from "../../config/env.js";
 import Order from "./order.model.js";
 import mongoose from "mongoose";
 import pendingQuoteRepository from "../pendingQuote/pendingQuote.repository.js";
+
+
+
+// ============================================================
+// HELPER: Build order items from cart
+// ============================================================
+
+const buildOrderItems = async (items, isGuest = false) => {
+    if (!items || items.length === 0) {
+        throw new AppError(httpStatus.BAD_REQUEST, "At least one item is required");
+    }
+
+    // Validate unique products
+    const productIds = items.map(item => item.productId);
+    const uniqueIds = new Set(productIds);
+    if (uniqueIds.size !== productIds.length) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Duplicate products in cart");
+    }
+
+    const orderItems = [];
+    let subtotal = 0;
+
+    for (const item of items) {
+        // Validate product exists
+        const product = await productRepository.getProductById(item.productId);
+        if (!product) {
+            throw new AppError(httpStatus.NOT_FOUND, `Product ${item.productId} not found`);
+        }
+
+        // Validate stock
+        if (product.stock < (item.quantity || 1)) {
+            throw new AppError(
+                httpStatus.BAD_REQUEST,
+                `Not enough stock for ${product.name}. Available: ${product.stock}`
+            );
+        }
+
+        const unitPrice = product.price;
+        const quantity = item.quantity || 1;
+        const itemSubtotal = unitPrice * quantity;
+        subtotal += itemSubtotal;
+
+        orderItems.push({
+            product: product._id,
+            quantity: quantity,
+            unitPrice: unitPrice,
+            subtotal: itemSubtotal,
+            purchaseType: item.purchaseType || "self",
+            giftMessage: item.purchaseType === "gift" ? item.giftMessage || null : null,
+            assignedTags: [],
+        });
+    }
+
+    return { items: orderItems, subtotal };
+};
+
+// ============================================================
+// HELPER: Calculate order totals
+// ============================================================
+
+const calculateTotals = (subtotal, shippingCost = 0, discount = 0) => {
+    const grandTotal = subtotal + shippingCost - discount;
+    return {
+        subtotal,
+        shippingCost,
+        discount,
+        grandTotal: Math.max(grandTotal, 0),
+    };
+};
+
+
+// ============================================================
+// HELPER: Create Stripe line items
+// ============================================================
+
+const createStripeLineItems = (order) => {
+    const lineItems = [];
+
+    // Multi-product: use items
+    if (order.items && order.items.length > 0) {
+        for (const item of order.items) {
+            const product = item.product || {};
+            lineItems.push({
+                price_data: {
+                    currency: PAYMENT_CONFIG.getCurrency(),
+                    product_data: {
+                        name: product.name || "Product",
+                        images: product.image?.url ? [product.image.url] : [],
+                    },
+                    unit_amount: Math.round(item.unitPrice * 100),
+                },
+                quantity: item.quantity,
+            });
+        }
+    } else if (order.product) {
+        // Legacy: single product
+        const product = order.product || {};
+        lineItems.push({
+            price_data: {
+                currency: PAYMENT_CONFIG.getCurrency(),
+                product_data: {
+                    name: product.name || "Product",
+                    images: product.image?.url ? [product.image.url] : [],
+                },
+                unit_amount: Math.round((order.product.price || 0) * 100),
+            },
+            quantity: order.quantity || 1,
+        });
+    }
+
+    return lineItems;
+};
+
+// ============================================================
+// HELPER: Get product stock with caching (for backend)
+// ============================================================
+
+const _stockCache = new Map();
+const _STOCK_CACHE_TTL = 5000;
+
+const getCachedStock = async (productId) => {
+    const cacheKey = `stock_${productId}`;
+    const cached = _stockCache.get(cacheKey);
+
+    if (cached && (Date.now() - cached.timestamp) < _STOCK_CACHE_TTL) {
+        return cached.stock;
+    }
+
+    const product = await productRepository.getProductById(productId);
+    const stock = product?.stock || 0;
+
+    _stockCache.set(cacheKey, {
+        stock,
+        timestamp: Date.now(),
+    });
+
+    return stock;
+};
 
 // ============================================================
 // PRIVATE HELPER FUNCTIONS
@@ -200,42 +339,142 @@ const handleExistingOrder = async (userId, payload, isGuest) => {
 /**
  * Create Order (Supports both Guest & Authenticated)
  */
+
 const createOrder = async (userId, payload, isGuest = false) => {
-    const product = await productRepository.getProductById(payload.productId);
+    let items = [];
+    let subtotal = 0;
 
-    if (!product) {
-        throw new AppError(httpStatus.NOT_FOUND, "Product not found");
+    // ************* Multi-product checkout *************
+    if (payload.items && payload.items.length > 0) {
+        // Validate unique products
+        const productIds = payload.items.map(item => item.productId || item.product);
+        const uniqueIds = new Set(productIds);
+        if (uniqueIds.size !== productIds.length) {
+            throw new AppError(httpStatus.BAD_REQUEST, "Duplicate products in cart");
+        }
+
+        // Parallel product validation and price calculation
+        const productChecks = payload.items.map(async (item) => {
+            // Support both productId and product field names
+            const productId = item.productId || item.product;
+
+            const product = await productRepository.getProductById(productId);
+            if (!product) {
+                throw new AppError(httpStatus.NOT_FOUND, `Product ${productId} not found`);
+            }
+
+            // Check stock
+            const stock = await getCachedStock(productId);
+            if (stock < (item.quantity || 1)) {
+                throw new AppError(
+                    httpStatus.BAD_REQUEST,
+                    `Not enough stock for ${product.name}. Available: ${stock}`
+                );
+            }
+
+            const quantity = item.quantity || 1;
+            const unitPrice = product.price;
+            const itemSubtotal = unitPrice * quantity;
+
+            return {
+                product: product._id,
+                quantity: quantity,
+                unitPrice: unitPrice,
+                subtotal: itemSubtotal,
+                purchaseType: item.purchaseType || "self",
+                giftMessage: item.purchaseType === "gift" ? item.giftMessage || null : null,
+                assignedTags: [],
+            };
+        });
+
+        const results = await Promise.all(productChecks);
+        items = results;
+
+        // Calculate subtotal
+        subtotal = items.reduce((sum, item) => sum + item.subtotal, 0);
+
+    }
+    // ************* Legacy: single product checkout *************
+    else if (payload.productId) {
+        const product = await productRepository.getProductById(payload.productId);
+        if (!product) {
+            throw new AppError(httpStatus.NOT_FOUND, "Product not found");
+        }
+
+        const stock = await getCachedStock(payload.productId);
+        if (stock < (payload.quantity || 1)) {
+            throw new AppError(httpStatus.BAD_REQUEST, "Not enough stock available");
+        }
+
+        const quantity = payload.quantity || 1;
+        const unitPrice = product.price;
+        subtotal = unitPrice * quantity;
+
+        items = [{
+            product: product._id,
+            quantity: quantity,
+            unitPrice: unitPrice,
+            subtotal: subtotal,
+            purchaseType: payload.purchaseType || "self",
+            giftMessage: payload.purchaseType === "gift" ? payload.giftMessage || null : null,
+            assignedTags: [],
+        }];
+    }
+    else {
+        throw new AppError(httpStatus.BAD_REQUEST, "No products specified");
     }
 
-    if (product.stock < (Number(payload.quantity) || 1)) {
-        throw new AppError(httpStatus.BAD_REQUEST, "Not enough stock available");
+    // ************* Calculate order totals *************
+    const totals = calculateTotals(subtotal, 0, 0);
+
+    // ************* Build shipping address *************
+    const shippingAddress = {
+        fullName: payload.fullName || payload.shippingAddress?.fullName || null,
+        email: payload.email || payload.shippingAddress?.email || null,
+        phone: payload.phone || payload.shippingAddress?.phone || null,
+        address: payload.address || payload.shippingAddress?.address || null,
+        city: payload.city || payload.shippingAddress?.city || null,
+        postalCode: payload.postalCode || payload.shippingAddress?.postalCode || null,
+        country: payload.country || payload.shippingAddress?.country || null,
+    };
+
+    // ************* Build guest customer data *************
+    let guestCustomer = null;
+    if (isGuest) {
+        guestCustomer = {
+            fullName: payload.guestCustomer?.fullName || payload.fullName || null,
+            email: payload.guestCustomer?.email || payload.email || null,
+            phone: payload.guestCustomer?.phone || payload.phone || null,
+        };
     }
 
-    const purchaseType = payload.purchaseType || "self";
-
-    // Build shipping address
-    const shippingAddress = buildShippingAddress(payload);
-
-    // Build guest customer data (null for authenticated users)
-    const guestCustomer = isGuest ? buildGuestCustomer(payload) : null;
-
+    // ************* Build order data *************
     const orderData = {
         user: userId || null,
         guestCustomer,
-        product: payload.productId,
-        quantity: Number(payload.quantity) || 1,
-        purchaseType,
-        giftMessage: purchaseType === "gift" ? payload.giftMessage || null : null,
-        giftMessageStatus: purchaseType === "gift" ? "pending" : "none",
-        giftStatus: purchaseType === "gift" ? "pending_claim" : "none",
+        items,
+        subtotal: totals.subtotal,
+        shippingCost: totals.shippingCost,
+        discount: totals.discount,
+        grandTotal: totals.grandTotal,
+        purchaseType: payload.purchaseType || "self",
+        giftMessage: payload.purchaseType === "gift" ? payload.giftMessage || null : null,
+        giftMessageStatus: payload.purchaseType === "gift" ? "pending" : "none",
+        giftStatus: payload.purchaseType === "gift" ? "pending_claim" : "none",
         shippingAddress,
         isGuestOrder: isGuest,
+        // Legacy fields for backward compatibility
+        product: items[0]?.product || null,
+        quantity: items[0]?.quantity || 1,
+        assignedTag: null,
+        assignedTags: [],
     };
 
+    // ************* Create order *************
     const order = await orderRepository.createOrder(orderData);
 
-    // Handle gift message if applicable
-    if (purchaseType === "gift" && payload.giftMessage) {
+    // ************* Handle gift messages *************
+    if (payload.purchaseType === "gift" && payload.giftMessage) {
         await pendingQuoteRepository.createPendingQuote({
             text: payload.giftMessage,
             user: userId,
@@ -248,6 +487,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
     return order;
 };
 
+
 /**
  * Create Checkout (Supports both Guest & Authenticated)
  */
@@ -255,49 +495,90 @@ const createCheckout = async (userId, payload, isGuest = false) => {
     let order;
 
     if (payload.orderId) {
-        // Handle existing order (for retry or update)
-        order = await handleExistingOrder(userId, payload, isGuest);
+        order = await orderRepository.findById(payload.orderId);
+        if (!order) {
+            throw new AppError(httpStatus.NOT_FOUND, "Order not found");
+        }
+
+        // Authorization check
+        if (!isGuest) {
+            if (order.user?.toString() !== userId?.toString()) {
+                throw new AppError(httpStatus.FORBIDDEN, "Unauthorized");
+            }
+        } else {
+            if (order.guestCustomer?.email !== payload.guestCustomer?.email) {
+                throw new AppError(httpStatus.FORBIDDEN, "Invalid guest access");
+            }
+        }
+
+        if (order.paymentStatus === "paid") {
+            throw new AppError(httpStatus.BAD_REQUEST, "Order already paid");
+        }
+
+        // Update shipping address if provided
+        if (payload.address || payload.fullName) {
+            const shippingAddress = {
+                fullName: payload.fullName || order.shippingAddress?.fullName,
+                email: payload.email || order.shippingAddress?.email,
+                phone: payload.phone || order.shippingAddress?.phone,
+                address: payload.address || order.shippingAddress?.address,
+                city: payload.city || order.shippingAddress?.city,
+                postalCode: payload.postalCode || order.shippingAddress?.postalCode,
+                country: payload.country || order.shippingAddress?.country,
+            };
+            await orderRepository.updateOrder(payload.orderId, { shippingAddress });
+        }
     } else {
-        // Create new order
         order = await createOrder(userId, payload, isGuest);
     }
 
-    // Create Stripe checkout session
     return createCheckoutSession(order._id);
 };
+
 
 /**
  * Create Stripe Checkout Session
  */
 const createCheckoutSession = async (orderId) => {
     const order = await orderRepository.findById(orderId);
-
     if (!order) {
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
-    // Build metadata
-    const metadata = buildCheckoutMetadata(order);
-    const customerEmail = getCustomerEmail(order);
+    // ✅ Build line items
+    const lineItems = createStripeLineItems(order);
 
+    // Build metadata
+    const metadata = {
+        orderId: orderId.toString(),
+    };
+
+    if (order.user) {
+        metadata.userId = order.user.toString();
+    }
+
+    if (order.isGuestOrder && order.guestCustomer) {
+        metadata.guestEmail = order.guestCustomer.email;
+        metadata.guestName = order.guestCustomer.fullName;
+        metadata.isGuestOrder = "true";
+    }
+
+    const customerEmail = order.isGuestOrder
+        ? order.guestCustomer?.email
+        : order.user?.email;
+
+    // ✅ Use centralized config for URLs
+    const successUrl = PAYMENT_CONFIG.getSuccessUrl(orderId);
+    const cancelUrl = PAYMENT_CONFIG.getCancelUrl();
+
+    // ✅ Create Stripe session with config values
     const session = await stripe.checkout.sessions.create({
-        payment_method_types: ["card"],
-        mode: "payment",
+        payment_method_types: PAYMENT_CONFIG.getPaymentMethodTypes(),
+        mode: PAYMENT_CONFIG.stripe.mode,
         customer_email: customerEmail,
-        line_items: [
-            {
-                price_data: {
-                    currency: "usd",
-                    product_data: {
-                        name: order.product.name,
-                    },
-                    unit_amount: order.product.price * 100,
-                },
-                quantity: order.quantity || 1,
-            },
-        ],
-        success_url: `${env.clientUrl}/success?orderId=${orderId}`,
-        cancel_url: `${env.clientUrl}/cancel`,
+        line_items: lineItems,
+        success_url: successUrl,
+        cancel_url: cancelUrl,
         metadata: metadata,
     });
 
@@ -306,84 +587,146 @@ const createCheckoutSession = async (orderId) => {
     return session;
 };
 
+
 /**
  * Confirm Payment & Assign Tags
  */
 const confirmPaymentAndAssignTag = async (orderId, paymentIntentId) => {
     const order = await orderRepository.findById(orderId);
-
     if (!order) {
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
-    const requiredQty = order.quantity || 1;
-
-    // Decrease stock
-    const updatedProduct = await productRepository.decreaseStock(
-        order.product._id || order.product,
-        requiredQty,
-    );
-
-    if (!updatedProduct) {
-        throw new AppError(httpStatus.BAD_REQUEST, "Not enough stock available");
-    }
-
+    // Update payment status
     const updateData = {
         paymentStatus: "paid",
         stripePaymentIntentId: paymentIntentId,
+        fulfillmentStatus: "pending",
     };
 
-    // Assign tags
-    let availableTags = [];
+    // Assign tags based on order type
+    if (order.items && order.items.length > 0) {
+        // Multi-product: parallel tag assignment
+        let totalAssigned = 0;
+        let totalRequired = 0;
+        const tagUpdates = [];
 
-    try {
-        availableTags = await tagRepository.findMultipleUnusedTags(requiredQty);
-    } catch (err) {
-        console.warn("⚠️ No tags available for order:", orderId);
-    }
+        for (const item of order.items) {
+            const requiredQty = item.quantity || 1;
+            totalRequired += requiredQty;
 
-    const assignedTags = availableTags.map((tag) => ({
-        tag: tag._id,
-        assignedAt: new Date(),
-        assignedBy: "auto",
-    }));
+            // Find tags in parallel
+            const availableTags = await tagRepository.findMultipleUnusedTags(requiredQty);
+            const tagIds = availableTags.map(tag => tag._id);
 
-    for (const tag of availableTags) {
-        await tagRepository.updateTag(tag._id, {
-            owner: order.user,
-            isActivated: true,
-            activatedAt: new Date(),
-        });
-    }
+            // Prepare tag updates for parallel execution
+            for (const tag of availableTags) {
+                tagUpdates.push(
+                    tagRepository.updateTag(tag._id, {
+                        owner: order.user,
+                        isActivated: true,
+                        activatedAt: new Date(),
+                    })
+                );
+            }
 
-    updateData.assignedTags = assignedTags;
+            // Update item with assigned tags
+            await Order.updateOne(
+                { _id: orderId, "items._id": item._id },
+                { $set: { "items.$.assignedTags": tagIds } }
+            );
 
-    // Backward compatibility: keep first tag in old assignedTag field
-    if (assignedTags.length > 0) {
-        updateData.assignedTag = assignedTags[0].tag;
-    }
+            totalAssigned += tagIds.length;
 
-    // Update tag assignment status
-    if (assignedTags.length === 0) {
-        updateData.tagAssignmentStatus = "none";
-        updateData.fulfillmentStatus = "pending";
-    } else if (assignedTags.length < requiredQty) {
-        updateData.tagAssignmentStatus = "partial";
-        updateData.fulfillmentStatus = "pending";
+            // Legacy: keep first tag in assignedTag
+            if (tagIds.length > 0 && !updateData.assignedTag) {
+                updateData.assignedTag = tagIds[0];
+            }
+        }
+
+        // Execute all tag updates in parallel
+        if (tagUpdates.length > 0) {
+            await Promise.all(tagUpdates);
+        }
+
+        // Update tag assignment status
+        if (totalAssigned === 0) {
+            updateData.tagAssignmentStatus = "none";
+        } else if (totalAssigned < totalRequired) {
+            updateData.tagAssignmentStatus = "partial";
+        } else {
+            updateData.tagAssignmentStatus = "complete";
+            updateData.fulfillmentStatus = "assigned";
+        }
+
+        // Legacy: update assignedTags array
+        const allTags = [];
+        const seenIds = new Set();
+
+        for (const item of order.items) {
+            if (item.assignedTags && item.assignedTags.length > 0) {
+                for (const tagId of item.assignedTags) {
+                    if (!seenIds.has(tagId.toString())) {
+                        seenIds.add(tagId.toString());
+                        allTags.push(tagId);
+                    }
+                }
+            }
+        }
+
+        updateData.assignedTags = allTags.map(tagId => ({
+            tag: tagId,
+            assignedAt: new Date(),
+            assignedBy: "auto",
+        }));
     } else {
-        updateData.tagAssignmentStatus = "complete";
-        updateData.fulfillmentStatus = "assigned";
+        // Legacy: single product tag assignment (optimized)
+        const requiredQty = order.quantity || 1;
+        const availableTags = await tagRepository.findMultipleUnusedTags(requiredQty);
+
+        const assignedTags = availableTags.map((tag) => ({
+            tag: tag._id,
+            assignedAt: new Date(),
+            assignedBy: "auto",
+        }));
+
+        // Update tags in parallel
+        if (availableTags.length > 0) {
+            const tagUpdates = availableTags.map((tag) =>
+                tagRepository.updateTag(tag._id, {
+                    owner: order.user,
+                    isActivated: true,
+                    activatedAt: new Date(),
+                })
+            );
+            await Promise.all(tagUpdates);
+        }
+
+        updateData.assignedTags = assignedTags;
+
+        if (assignedTags.length > 0) {
+            updateData.assignedTag = assignedTags[0].tag;
+        }
+
+        if (assignedTags.length === 0) {
+            updateData.tagAssignmentStatus = "none";
+        } else if (assignedTags.length < requiredQty) {
+            updateData.tagAssignmentStatus = "partial";
+        } else {
+            updateData.tagAssignmentStatus = "complete";
+            updateData.fulfillmentStatus = "assigned";
+        }
     }
 
     return orderRepository.updateOrder(orderId, updateData);
 };
+
 
 /**
  * Claim Gift Order
  */
 const claimGiftOrder = async (orderId, userId) => {
     const order = await orderRepository.findById(orderId);
-
     if (!order) {
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
@@ -396,29 +739,31 @@ const claimGiftOrder = async (orderId, userId) => {
         throw new AppError(httpStatus.BAD_REQUEST, "Gift order is not paid yet");
     }
 
-    if (!order.assignedTag) {
-        throw new AppError(httpStatus.BAD_REQUEST, "No tag assigned to this gift order");
+    // ✅ Get all tags from order
+    const allTags = await order.getAllTags();
+    if (!allTags || allTags.length === 0) {
+        throw new AppError(httpStatus.BAD_REQUEST, "No tags assigned to this gift order");
     }
 
     if (order.giftStatus === "claimed") {
         throw new AppError(httpStatus.BAD_REQUEST, "This gift has already been claimed");
     }
 
-    const tag = await tagRepository.findById(order.assignedTag);
-
-    if (!tag) {
-        throw new AppError(httpStatus.NOT_FOUND, "Assigned tag not found");
+    // ✅ Claim all tags
+    for (const tagId of allTags) {
+        const tag = await tagRepository.findById(tagId);
+        if (!tag) {
+            throw new AppError(httpStatus.NOT_FOUND, `Tag ${tagId} not found`);
+        }
+        if (tag.owner) {
+            throw new AppError(httpStatus.BAD_REQUEST, `Tag ${tag.tagCode} is already owned by someone`);
+        }
+        await tagRepository.updateTag(tag._id, {
+            owner: userId,
+            isActivated: true,
+            activatedAt: new Date(),
+        });
     }
-
-    if (tag.owner) {
-        throw new AppError(httpStatus.BAD_REQUEST, "This gift tag is already owned by someone");
-    }
-
-    await tagRepository.updateTag(tag._id, {
-        owner: userId,
-        isActivated: true,
-        activatedAt: new Date(),
-    });
 
     return orderRepository.updateOrder(orderId, {
         giftStatus: "claimed",
@@ -432,13 +777,13 @@ const claimGiftOrder = async (orderId, userId) => {
  */
 const getOrderById = async (id) => {
     const order = await orderRepository.findById(id);
-
     if (!order) {
         throw new AppError(httpStatus.NOT_FOUND, "Order not found");
     }
 
-    return order;
+    return orderRepository.normalizeOrder(order);
 };
+
 
 /**
  * Get Authenticated User's Orders with Pagination
@@ -447,17 +792,21 @@ const getUserOrders = async (userId, page = 1, limit = 10) => {
     const skip = (page - 1) * limit;
 
     const total = await Order.countDocuments({ user: userId });
-
     const orders = await Order.find({ user: userId })
         .populate("product", "name price image")
+        .populate("items.product", "name price image")
         .populate("assignedTag", "tagCode")
         .populate("assignedTags.tag", "tagCode")
         .sort({ createdAt: -1 })
         .skip(skip)
-        .limit(limit);
+        .limit(limit)
+        .lean();
+
+    // ✅ Normalize each order
+    const normalizedOrders = orders.map(order => orderRepository.normalizeOrder(order));
 
     return {
-        data: orders,
+        data: normalizedOrders,
         pagination: {
             page: parseInt(page),
             limit: parseInt(limit),
@@ -468,6 +817,7 @@ const getUserOrders = async (userId, page = 1, limit = 10) => {
         },
     };
 };
+
 
 /**
  * Get User's Total Spent
@@ -544,64 +894,54 @@ const getUserTotalSpent = async (userId) => {
 /**
  * Get All Orders (Admin) with Search & Filter
  */
-const getAllOrders = async (
-    page = 1,
-    limit = 10,
-    search = "",
-    fulfillmentStatus = null,
-) => {
+const getAllOrders = async (page = 1, limit = 10, search = "", fulfillmentStatus = null) => {
     const skip = (page - 1) * limit;
 
     const filter = {};
-
     if (fulfillmentStatus && fulfillmentStatus !== "all") {
         filter.fulfillmentStatus = fulfillmentStatus;
     }
 
-    let query = Order.find(filter)
+    let orders = await Order.find(filter)
         .populate("user", "name email")
         .populate("product", "name price image")
+        .populate("items.product", "name price image")
         .populate("assignedTag", "tagCode")
         .populate("assignedTags.tag", "tagCode")
-        .sort({ createdAt: -1 });
+        .sort({ createdAt: -1 })
+        .lean();
 
-    let orders = await query.lean();
     let total = orders.length;
 
+    // Search filter
     if (search && search.trim() !== "") {
         const searchLower = search.toLowerCase().trim();
-
         orders = orders.filter((order) => {
             if (order._id.toString().toLowerCase().includes(searchLower)) return true;
             if (order.user?.name?.toLowerCase().includes(searchLower)) return true;
             if (order.user?.email?.toLowerCase().includes(searchLower)) return true;
             if (order.product?.name?.toLowerCase().includes(searchLower)) return true;
-            if (order.shippingAddress?.address?.toLowerCase().includes(searchLower))
-                return true;
-            if (order.shippingAddress?.fullName?.toLowerCase().includes(searchLower))
-                return true;
+            if (order.shippingAddress?.address?.toLowerCase().includes(searchLower)) return true;
+            if (order.shippingAddress?.fullName?.toLowerCase().includes(searchLower)) return true;
+            if (order.assignedTag?.tagCode?.toLowerCase().includes(searchLower)) return true;
+            if (order.isGuestOrder && order.guestCustomer?.email?.toLowerCase().includes(searchLower)) return true;
 
-            // Search by assigned tag codes
-            if (order.assignedTag?.tagCode?.toLowerCase().includes(searchLower))
-                return true;
-
-            const matchedAssignedTags = order.assignedTags?.some((item) =>
-                item.tag?.tagCode?.toLowerCase().includes(searchLower),
-            );
-
-            if (matchedAssignedTags) return true;
-
-            // Search guest orders by guest email
-            if (order.isGuestOrder && order.guestCustomer?.email?.toLowerCase().includes(searchLower))
-                return true;
+            // ✅ Search items
+            if (order.items && order.items.length > 0) {
+                for (const item of order.items) {
+                    if (item.product?.name?.toLowerCase().includes(searchLower)) return true;
+                }
+            }
 
             return false;
         });
-
         total = orders.length;
     }
 
     const paginatedOrders = orders.slice(skip, skip + limit);
+
+    // ✅ Normalize each order
+    const normalizedOrders = paginatedOrders.map(order => orderRepository.normalizeOrder(order));
 
     return {
         meta: {
@@ -610,7 +950,7 @@ const getAllOrders = async (
             total,
             totalPage: Math.ceil(total / limit),
         },
-        data: paginatedOrders,
+        data: normalizedOrders,
     };
 };
 
@@ -1504,4 +1844,5 @@ export default {
     addTagToOrder,
     replaceOrderTag,
     removeTagFromOrder,
+    claimGiftOrder,
 };

@@ -1,309 +1,467 @@
 import mongoose from "mongoose";
 
-const assignedTagSchema = new mongoose.Schema(
-  {
-    tag: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Tag",
-      required: true,
+const orderItemSchema = new mongoose.Schema(
+    {
+        product: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Product",
+            required: true,
+        },
+        quantity: {
+            type: Number,
+            required: true,
+            min: 1,
+        },
+        unitPrice: {
+            type: Number,
+            required: true,
+            min: 0,
+        },
+        subtotal: {
+            type: Number,
+            required: true,
+            min: 0,
+        },
+        purchaseType: {
+            type: String,
+            enum: ["self", "gift"],
+            default: "self",
+        },
+        giftMessage: {
+            type: String,
+            default: null,
+        },
+        assignedTags: {
+            type: [mongoose.Schema.Types.ObjectId],
+            ref: "Tag",
+            default: [],
+        },
     },
-    assignedAt: {
-      type: Date,
-      default: Date.now,
-    },
-    assignedBy: {
-      type: String,
-      enum: ["auto", "admin"],
-      default: "auto",
-    },
-  },
-  { _id: false }
+    { _id: true }
 );
 
-// Guest customer schema
 const guestCustomerSchema = new mongoose.Schema(
-  {
-    fullName: {
-      type: String,
-      required: false,
-      trim: true,
+    {
+        fullName: {
+            type: String,
+            required: false,
+            trim: true,
+        },
+        email: {
+            type: String,
+            required: false,
+            lowercase: true,
+            trim: true,
+        },
+        phone: {
+            type: String,
+            default: null,
+            trim: true,
+        },
     },
-    email: {
-      type: String,
-      required: false,
-      lowercase: true,
-      trim: true,
+    { _id: false }
+);
+
+// ✅ LEGACY: Assigned tag schema (kept for backward compatibility)
+const assignedTagSchema = new mongoose.Schema(
+    {
+        tag: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Tag",
+            required: true,
+        },
+        assignedAt: {
+            type: Date,
+            default: Date.now,
+        },
+        assignedBy: {
+            type: String,
+            enum: ["auto", "admin"],
+            default: "auto",
+        },
     },
-    phone: {
-      type: String,
-      default: null,
-      trim: true,
-    },
-  },
-  { _id: false }
+    { _id: false }
 );
 
 const orderSchema = new mongoose.Schema(
-  {
-    // CHANGED: Made user optional for guest checkout
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      required: false, // ✅ Changed from true to false
-      index: true,
-    },
+    {
+        // ============================================================
+        // USER
+        // ============================================================
+        
+        user: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            required: false,
+            index: true,
+        },
 
-    // NEW: Guest customer information
-    guestCustomer: {
-      type: guestCustomerSchema,
-      default: null,
-    },
+        guestCustomer: {
+            type: guestCustomerSchema,
+            default: null,
+        },
 
-    product: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Product",
-      required: true,
-    },
+        isGuestOrder: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
 
-    quantity: {
-      type: Number,
-      required: true,
-      min: 1,
-      default: 1,
-    },
+        // ============================================================
+        // 🆕 ITEMS - NEW MULTI-PRODUCT SUPPORT
+        // ============================================================
+        
+        items: {
+            type: [orderItemSchema],
+            default: [],
+            validate: {
+                validator: function(items) {
+                    return items && items.length > 0;
+                },
+                message: "Order must have at least one item",
+            },
+        },
 
-    // old field - keep for backward compatibility
-    assignedTag: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "Tag",
-      default: null,
-    },
+        // ============================================================
+        // LEGACY FIELDS - Kept for backward compatibility
+        // ============================================================
+        
+        // ⚠️ DEPRECATED: Use items[].product instead
+        product: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Product",
+            default: null,
+        },
 
-    // new field - supports multiple tags per order
-    assignedTags: {
-      type: [assignedTagSchema],
-      default: [],
-    },
+        // ⚠️ DEPRECATED: Use items[].quantity instead
+        quantity: {
+            type: Number,
+            default: 1,
+            min: 1,
+        },
 
-    tagAssignmentStatus: {
-      type: String,
-      enum: ["none", "partial", "complete"],
-      default: "none",
-      index: true,
-    },
+        // ⚠️ DEPRECATED: Use items[].assignedTags instead
+        assignedTag: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Tag",
+            default: null,
+        },
 
-    purchaseType: {
-      type: String,
-      enum: ["self", "gift"],
-      default: "self",
-    },
+        assignedTags: {
+            type: [assignedTagSchema],
+            default: [],
+        },
 
-    giftMessage: {
-      type: String,
-      default: null,
-    },
+        tagAssignmentStatus: {
+            type: String,
+            enum: ["none", "partial", "complete"],
+            default: "none",
+            index: true,
+        },
 
-    giftMessageStatus: {
-      type: String,
-      enum: ["none", "pending", "approved", "rejected"],
-      default: "none",
-    },
+        // ============================================================
+        // ORDER DETAILS
+        // ============================================================
+        
+        purchaseType: {
+            type: String,
+            enum: ["self", "gift"],
+            default: "self",
+        },
 
-    giftMessageReviewedAt: {
-      type: Date,
-      default: null,
-    },
+        // Legacy gift message (kept for backward compatibility)
+        giftMessage: {
+            type: String,
+            default: null,
+        },
 
-    giftMessageAdminNote: {
-      type: String,
-      default: null,
-    },
+        giftMessageStatus: {
+            type: String,
+            enum: ["none", "pending", "approved", "rejected"],
+            default: "none",
+        },
 
-    shippingAddress: {
-      fullName: { type: String, required: false, default: null },
-      email: { type: String, required: false, default: null },
-      phone: { type: String, default: null },
-      address: { type: String, default: null },
-      city: { type: String, default: null },
-      postalCode: { type: String, default: null },
-      country: { type: String, default: null },
-    },
+        giftMessageReviewedAt: {
+            type: Date,
+            default: null,
+        },
 
-    giftStatus: {
-      type: String,
-      enum: ["none", "pending_claim", "claimed"],
-      default: "none",
-    },
+        giftMessageAdminNote: {
+            type: String,
+            default: null,
+        },
 
-    giftClaimedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
+        shippingAddress: {
+            fullName: { type: String, required: false, default: null },
+            email: { type: String, required: false, default: null },
+            phone: { type: String, default: null },
+            address: { type: String, default: null },
+            city: { type: String, default: null },
+            postalCode: { type: String, default: null },
+            country: { type: String, default: null },
+        },
 
-    giftClaimedAt: {
-      type: Date,
-      default: null,
-    },
+        giftStatus: {
+            type: String,
+            enum: ["none", "pending_claim", "claimed"],
+            default: "none",
+        },
 
-    paymentStatus: {
-      type: String,
-      enum: ["pending", "paid", "refunded", "failed"],
-      default: "pending",
-    },
+        giftClaimedBy: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "User",
+            default: null,
+        },
 
-    fulfillmentStatus: {
-      type: String,
-      enum: [
-        "pending",
-        "assigned",
-        "shipped",
-        "delivered",
-        "cancelled",
-        "returned",
-      ],
-      default: "pending",
-    },
+        giftClaimedAt: {
+            type: Date,
+            default: null,
+        },
 
-    refundStatus: {
-      type: String,
-      enum: [
-        "none",
-        "requested",
-        "approved",
-        "processing",
-        "completed",
-        "rejected",
-      ],
-      default: "none",
-    },
+        // ============================================================
+        // FINANCIAL
+        // ============================================================
+        
+        subtotal: {
+            type: Number,
+            required: true,
+            min: 0,
+        },
 
-    refundAmount: {
-      type: Number,
-      default: 0,
-    },
+        shippingCost: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
-    refundReason: {
-      type: String,
-      default: null,
-    },
+        discount: {
+            type: Number,
+            default: 0,
+            min: 0,
+        },
 
-    refundRequestedAt: {
-      type: Date,
-      default: null,
-    },
+        grandTotal: {
+            type: Number,
+            required: true,
+            min: 0,
+        },
 
-    refundProcessedAt: {
-      type: Date,
-      default: null,
-    },
+        // ============================================================
+        // PAYMENT
+        // ============================================================
+        
+        paymentStatus: {
+            type: String,
+            enum: ["pending", "paid", "refunded", "failed"],
+            default: "pending",
+        },
 
-    refundTransactionId: {
-      type: String,
-      default: null,
-    },
+        fulfillmentStatus: {
+            type: String,
+            enum: [
+                "pending",
+                "assigned",
+                "shipped",
+                "delivered",
+                "cancelled",
+                "returned",
+            ],
+            default: "pending",
+        },
 
-    cancellationReason: {
-      type: String,
-      default: null,
-    },
+        stripePaymentIntentId: {
+            type: String,
+            default: null,
+        },
 
-    cancelledAt: {
-      type: Date,
-      default: null,
-    },
+        stripeSessionId: {
+            type: String,
+            default: null,
+        },
 
-    cancelledBy: {
-      type: String,
-      enum: ["user", "admin"],
-      default: null,
-    },
+        // ============================================================
+        // REFUND & RETURN
+        // ============================================================
+        
+        refundStatus: {
+            type: String,
+            enum: [
+                "none",
+                "requested",
+                "approved",
+                "processing",
+                "completed",
+                "rejected",
+            ],
+            default: "none",
+        },
 
-    returnStatus: {
-      type: String,
-      enum: [
-        "none",
-        "requested",
-        "approved",
-        "shipped",
-        "received",
-        "completed",
-        "rejected",
-      ],
-      default: "none",
-    },
+        refundAmount: {
+            type: Number,
+            default: 0,
+        },
 
-    returnReason: {
-      type: String,
-      default: null,
-    },
+        refundReason: {
+            type: String,
+            default: null,
+        },
 
-    returnRequestedAt: {
-      type: Date,
-      default: null,
-    },
+        refundRequestedAt: {
+            type: Date,
+            default: null,
+        },
 
-    returnApprovedAt: {
-      type: Date,
-      default: null,
-    },
+        refundProcessedAt: {
+            type: Date,
+            default: null,
+        },
 
-    returnShippedAt: {
-      type: Date,
-      default: null,
-    },
+        refundTransactionId: {
+            type: String,
+            default: null,
+        },
 
-    returnReceivedAt: {
-      type: Date,
-      default: null,
-    },
+        cancellationReason: {
+            type: String,
+            default: null,
+        },
 
-    returnTrackingNumber: {
-      type: String,
-      default: null,
-    },
+        cancelledAt: {
+            type: Date,
+            default: null,
+        },
 
-    deliveredAt: {
-      type: Date,
-      default: null,
-    },
+        cancelledBy: {
+            type: String,
+            enum: ["user", "admin"],
+            default: null,
+        },
 
-    stripePaymentIntentId: {
-      type: String,
-      default: null,
-    },
+        returnStatus: {
+            type: String,
+            enum: [
+                "none",
+                "requested",
+                "approved",
+                "shipped",
+                "received",
+                "completed",
+                "rejected",
+            ],
+            default: "none",
+        },
 
-    stripeSessionId: {
-      type: String,
-      default: null,
-    },
+        returnReason: {
+            type: String,
+            default: null,
+        },
 
-    // NEW: Track if order is from guest
-    isGuestOrder: {
-      type: Boolean,
-      default: false,
-      index: true,
+        returnRequestedAt: {
+            type: Date,
+            default: null,
+        },
+
+        returnApprovedAt: {
+            type: Date,
+            default: null,
+        },
+
+        returnShippedAt: {
+            type: Date,
+            default: null,
+        },
+
+        returnReceivedAt: {
+            type: Date,
+            default: null,
+        },
+
+        returnTrackingNumber: {
+            type: String,
+            default: null,
+        },
+
+        deliveredAt: {
+            type: Date,
+            default: null,
+        },
     },
-  },
-  { timestamps: true }
+    { timestamps: true }
 );
 
-// Indexes
+// ============================================================
+// INDEXES
+// ============================================================
+
+// Legacy indexes
 orderSchema.index({ user: 1, createdAt: -1 });
 orderSchema.index({ fulfillmentStatus: 1 });
 orderSchema.index({ paymentStatus: 1 });
-orderSchema.index({ refundStatus: 1 });
-orderSchema.index({ returnStatus: 1 });
-orderSchema.index({ purchaseType: 1, giftStatus: 1 });
-orderSchema.index({ "shippingAddress.address": 1 });
-orderSchema.index({ "assignedTags.tag": 1 });
-orderSchema.index({ isGuestOrder: 1 }); // New index
 
-// NEW: Virtual to check if order has customer info
-orderSchema.virtual('hasCustomerInfo').get(function() {
-  if (this.user) return true;
-  return this.guestCustomer && this.guestCustomer.email;
+// NEW: Items indexes
+orderSchema.index({ "items.product": 1 });
+orderSchema.index({ "items.assignedTags": 1 });
+
+// Guest indexes
+orderSchema.index({ isGuestOrder: 1 });
+orderSchema.index({ "guestCustomer.email": 1 });
+
+// NEW: Virtuals
+orderSchema.virtual('hasMultipleItems').get(function() {
+    return this.items && this.items.length > 1;
 });
+
+orderSchema.virtual('isLegacyOrder').get(function() {
+    return !this.items || this.items.length === 0;
+});
+
+orderSchema.virtual('totalQuantity').get(function() {
+    if (this.items && this.items.length > 0) {
+        return this.items.reduce((sum, item) => sum + item.quantity, 0);
+    }
+    return this.quantity || 1;
+});
+
+orderSchema.virtual('itemCount').get(function() {
+    if (this.items && this.items.length > 0) {
+        return this.items.length;
+    }
+    return 1;
+});
+
+// NEW: Method to get all tags from order
+orderSchema.methods.getAllTags = function() {
+    const tags = [];
+    const seenIds = new Set();
+
+    // Get from items
+    if (this.items && this.items.length > 0) {
+        for (const item of this.items) {
+            if (item.assignedTags && item.assignedTags.length > 0) {
+                for (const tagId of item.assignedTags) {
+                    if (!seenIds.has(tagId.toString())) {
+                        seenIds.add(tagId.toString());
+                        tags.push(tagId);
+                    }
+                }
+            }
+        }
+    }
+
+    // Legacy: assignedTag
+    if (this.assignedTag && !seenIds.has(this.assignedTag.toString())) {
+        tags.push(this.assignedTag);
+    }
+
+    return tags;
+};
+
+// NEW: Method to check if all tags are assigned
+orderSchema.methods.hasAllRequiredTags = function() {
+    const totalTags = this.getAllTags().length;
+    const totalItems = this.items?.length || 1;
+    return totalTags >= totalItems;
+};
 
 const Order = mongoose.model("Order", orderSchema);
 

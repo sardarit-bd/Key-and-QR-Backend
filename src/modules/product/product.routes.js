@@ -8,6 +8,11 @@ const router = express.Router();
 
 /* Public */
 router.get("/", productController.getAllProducts);
+
+router.get("/categories", productController.getCategories);
+router.get("/search", productController.searchProducts);
+router.get("/:id/related", productController.getRelatedProducts);
+
 router.get("/:id", productController.getProductById);
 
 /* Admin */
