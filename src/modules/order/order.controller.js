@@ -4,49 +4,6 @@ import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import orderService from "./order.service.js";
 
-/**
- * Create Checkout Session (Supports both Guest & Authenticated)
- * POST /api/v1/orders/checkout
- * 
- * Guest Request Body:
- * {
- *   productId: string,
- *   quantity: number (optional),
- *   purchaseType: "self" | "gift" (optional),
- *   giftMessage: string (optional),
- *   guestCustomer: {
- *     fullName: string,
- *     email: string,
- *     phone: string (optional)
- *   },
- *   shippingAddress: {
- *     fullName: string,
- *     email: string,
- *     phone: string (optional),
- *     address: string,
- *     city: string,
- *     postalCode: string,
- *     country: string
- *   }
- * }
- * 
- * Authenticated Request Body:
- * {
- *   productId: string,
- *   quantity: number (optional),
- *   purchaseType: "self" | "gift" (optional),
- *   giftMessage: string (optional),
- *   shippingAddress: {
- *     fullName: string (optional),
- *     email: string (optional),
- *     phone: string (optional),
- *     address: string (optional),
- *     city: string (optional),
- *     postalCode: string (optional),
- *     country: string (optional)
- *   }
- * }
- */
 const createCheckout = catchAsync(async (req, res) => {
     // Get userId from optional auth middleware (null for guests)
     const userId = req.user?.userId || null;
@@ -54,11 +11,14 @@ const createCheckout = catchAsync(async (req, res) => {
 
     // All validation moved to middleware
     // Service handles both guest and authenticated flows
-    const session = await orderService.createCheckout(
+    const order = await orderService.createCheckout(
         userId,
         req.body,
         isGuest
     );
+
+    //  Create the actual Stripe Checkout Session for this order
+    const session = await orderService.createCheckoutSession(order._id);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -70,11 +30,6 @@ const createCheckout = catchAsync(async (req, res) => {
 
 /**
  * Get Order By ID (Supports both Guest & Authenticated)
- * GET /api/v1/orders/:id
- * 
- * - Authenticated users: Can view their own orders
- * - Guest users: Can view guest orders (with email verification)
- * - Admin: Can view any order
  */
 const getOrderById = catchAsync(async (req, res) => {
     const order = await orderService.getOrderById(req.params.id);
@@ -119,10 +74,6 @@ const getOrderById = catchAsync(async (req, res) => {
 
 /**
  * Get Authenticated User's Orders
- * GET /api/v1/orders/
- * 
- * Requires authentication
- * Returns paginated list of user's orders with total spent
  */
 const getUserOrders = catchAsync(async (req, res) => {
     // Authentication required
@@ -150,10 +101,6 @@ const getUserOrders = catchAsync(async (req, res) => {
 
 /**
  * Admin: Get All Orders
- * GET /api/v1/orders/admin/all
- * 
- * Requires ADMIN role
- * Supports search and filtering
  */
 const getAllOrders = catchAsync(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
@@ -179,9 +126,6 @@ const getAllOrders = catchAsync(async (req, res) => {
 
 /**
  * Admin: Get Order Stats
- * GET /api/v1/orders/admin/stats
- * 
- * Returns statistics about orders (total, by status, by payment status)
  */
 const getOrderStats = catchAsync(async (req, res) => {
     const stats = await orderService.getOrderStats();
@@ -196,10 +140,6 @@ const getOrderStats = catchAsync(async (req, res) => {
 
 /**
  * Admin: Update Order
- * PATCH /api/v1/orders/:id
- * 
- * Update order status, tags, etc.
- * Requires ADMIN role
  */
 const updateOrder = catchAsync(async (req, res) => {
     const result = await orderService.updateOrder(req.params.id, req.body);
@@ -214,10 +154,6 @@ const updateOrder = catchAsync(async (req, res) => {
 
 /**
  * Cancel Order (User or Admin)
- * POST /api/v1/orders/:id/cancel
- * 
- * - User: Cancel their own order
- * - Admin: Cancel any order
  */
 const cancelOrder = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -241,9 +177,6 @@ const cancelOrder = catchAsync(async (req, res) => {
 
 /**
  * Request Refund (User)
- * POST /api/v1/orders/:id/refund/request
- * 
- * User requests refund for their paid order
  */
 const requestRefund = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -261,9 +194,6 @@ const requestRefund = catchAsync(async (req, res) => {
 
 /**
  * Process Refund (Admin)
- * POST /api/v1/orders/:id/refund/process
- * 
- * Admin approves or rejects refund request
  */
 const processRefund = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -283,9 +213,6 @@ const processRefund = catchAsync(async (req, res) => {
 
 /**
  * Request Return (User)
- * POST /api/v1/orders/:id/return/request
- * 
- * User requests return for delivered order
  */
 const requestReturn = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -303,9 +230,6 @@ const requestReturn = catchAsync(async (req, res) => {
 
 /**
  * Process Return (Admin)
- * POST /api/v1/orders/:id/return/process
- * 
- * Admin approves or rejects return request
  */
 const processReturn = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -328,9 +252,6 @@ const processReturn = catchAsync(async (req, res) => {
 
 /**
  * Complete Return (Admin)
- * POST /api/v1/orders/:id/return/complete
- * 
- * Admin marks return as completed and processes refund
  */
 const completeReturn = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -347,10 +268,6 @@ const completeReturn = catchAsync(async (req, res) => {
 
 /**
  * Claim Gift Order (User)
- * POST /api/v1/orders/:id/claim-gift
- * 
- * User claims a gift order assigned to them
- * Requires authentication
  */
 const claimGiftOrder = catchAsync(async (req, res) => {
     const result = await orderService.claimGiftOrder(
@@ -368,9 +285,6 @@ const claimGiftOrder = catchAsync(async (req, res) => {
 
 /**
  * Update Shipping Address (User)
- * PATCH /api/v1/orders/:id/address
- * 
- * User updates shipping address for their order
  */
 const updateShippingAddress = catchAsync(async (req, res) => {
     const { id } = req.params;
@@ -392,7 +306,6 @@ const updateShippingAddress = catchAsync(async (req, res) => {
 
 /**
  * Approve Gift Message (Admin)
- * POST /api/v1/orders/:id/gift-message/approve
  */
 const approveGiftMessage = catchAsync(async (req, res) => {
     const result = await orderService.approveGiftMessage(req.params.id);
@@ -407,7 +320,6 @@ const approveGiftMessage = catchAsync(async (req, res) => {
 
 /**
  * Reject Gift Message (Admin)
- * POST /api/v1/orders/:id/gift-message/reject
  */
 const rejectGiftMessage = catchAsync(async (req, res) => {
     const result = await orderService.rejectGiftMessage(req.params.id);
@@ -422,7 +334,6 @@ const rejectGiftMessage = catchAsync(async (req, res) => {
 
 /**
  * Add Tag to Order (Admin)
- * POST /api/v1/orders/:id/tags/add
  */
 const addTagToOrder = catchAsync(async (req, res) => {
     const result = await orderService.addTagToOrder(
@@ -440,7 +351,6 @@ const addTagToOrder = catchAsync(async (req, res) => {
 
 /**
  * Replace Order Tag (Admin)
- * PATCH /api/v1/orders/:id/tags/replace
  */
 const replaceOrderTag = catchAsync(async (req, res) => {
     const { oldTagId, newTagId } = req.body;
@@ -461,7 +371,6 @@ const replaceOrderTag = catchAsync(async (req, res) => {
 
 /**
  * Remove Tag from Order (Admin)
- * DELETE /api/v1/orders/:id/tags/:tagId/remove
  */
 const removeTagFromOrder = catchAsync(async (req, res) => {
     const result = await orderService.removeTagFromOrder(
