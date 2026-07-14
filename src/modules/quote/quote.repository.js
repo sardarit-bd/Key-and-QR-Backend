@@ -22,22 +22,22 @@ const getAllQuotes = async ({
 
   const filter = {};
 
-  // 🔍 Search (text)
+  // Search (text)
   if (search) {
     filter.text = { $regex: search, $options: "i" };
   }
 
-  // 🎯 Category filter
+  // Category filter
   if (category && category !== "all") {
     filter.category = category;
   }
 
-  // ✅ Active filter
+  // Active filter
   if (isActive !== undefined) {
     filter.isActive = isActive;
   }
 
-  // 🔁 Reuse filter
+  // Reuse filter
   if (allowReuse !== undefined) {
     filter.allowReuse = allowReuse;
   }

@@ -48,7 +48,7 @@ const findUserSubscriptions = async (userId) => {
     .sort({ createdAt: -1 });
 };
 
-// 🆕 Find active subscription by user and tag
+// Find active subscription by user and tag
 const findActiveSubscriptionByUserAndTag = async (userId, tagId) => {
   return Subscription.findOne({
     user: userId,
@@ -60,7 +60,7 @@ const findActiveSubscriptionByUserAndTag = async (userId, tagId) => {
     .populate("user", "name email stripeCustomerId");
 };
 
-// 🆕 Find all active subscriptions for a user
+// Find all active subscriptions for a user
 const findActiveSubscriptionsByUser = async (userId) => {
   return Subscription.find({
     user: userId,
@@ -71,7 +71,7 @@ const findActiveSubscriptionsByUser = async (userId) => {
     .sort({ currentPeriodEnd: 1 });
 };
 
-// 🆕 Find subscriptions that need sync (for cron job)
+// Find subscriptions that need sync (for cron job)
 const findSubscriptionsNeedingSync = async () => {
   const threeDaysAgo = new Date();
   threeDaysAgo.setDate(threeDaysAgo.getDate() - 3);
@@ -88,7 +88,7 @@ const findSubscriptionsNeedingSync = async () => {
     .populate("user", "email");
 };
 
-// 🆕 Count active subscriptions (for admin dashboard)
+// Count active subscriptions (for admin dashboard)
 const countActiveSubscriptions = async () => {
   return Subscription.countDocuments({
     status: { $in: ["active", "trialing"] },
@@ -96,14 +96,14 @@ const countActiveSubscriptions = async () => {
   });
 };
 
-// 🆕 Get subscription by tag only (without user check)
+// Get subscription by tag only (without user check)
 const findByTag = async (tagId) => {
   return Subscription.findOne({ tag: tagId })
     .populate("tag", "tagCode subscriptionType owner isActivated isActive")
     .populate("user", "name email stripeCustomerId");
 };
 
-// 🆕 Bulk update for expired subscriptions (cron job)
+// Bulk update for expired subscriptions (cron job)
 const bulkUpdateExpiredSubscriptions = async () => {
   const now = new Date();
 
@@ -118,7 +118,7 @@ const bulkUpdateExpiredSubscriptions = async () => {
   );
 };
 
-// 🆕 Delete cancelled/expired subscriptions (cleanup)
+// Delete cancelled/expired subscriptions (cleanup)
 const deleteExpiredSubscriptions = async () => {
   const sixMonthsAgo = new Date();
   sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
@@ -129,14 +129,14 @@ const deleteExpiredSubscriptions = async () => {
   });
 };
 
-// 🆕 Find subscription by Stripe Customer ID
+// Find subscription by Stripe Customer ID
 const findByStripeCustomerId = async (stripeCustomerId) => {
   return Subscription.findOne({ stripeCustomerId })
     .populate("tag", "tagCode subscriptionType owner isActivated isActive")
     .populate("user", "name email");
 };
 
-// 🆕 Get subscription stats for a tag
+// Get subscription stats for a tag
 const getTagSubscriptionStats = async (tagId) => {
   return Subscription.aggregate([
     { $match: { tag: tagId } },
@@ -149,7 +149,7 @@ const getTagSubscriptionStats = async (tagId) => {
   ]);
 };
 
-// 🆕 Check if tag has active subscription
+// Check if tag has active subscription
 const hasActiveSubscription = async (tagId) => {
   const subscription = await Subscription.findOne({
     tag: tagId,
@@ -198,18 +198,18 @@ export default {
   findByCheckoutSessionId,
   updateById,
   findUserSubscriptions,
-  findActiveSubscriptionByUserAndTag, // 🆕
-  findActiveSubscriptionsByUser, // 🆕
-  findSubscriptionsNeedingSync, // 🆕
-  countActiveSubscriptions, // 🆕
-  findByTag, // 🆕
-  bulkUpdateExpiredSubscriptions, // 🆕
-  deleteExpiredSubscriptions, // 🆕
-  findByStripeCustomerId, // 🆕
-  getTagSubscriptionStats, // 🆕
-  hasActiveSubscription, // 🆕
-  findSubscriptionsWithFilters, // For admin
-  countSubscriptionsWithFilters, // For admin
-  findAllSubscriptions, // For stats
-  findSubscriptionsWithStripeId, // For sync
+  findActiveSubscriptionByUserAndTag,
+  findActiveSubscriptionsByUser,
+  findSubscriptionsNeedingSync,
+  countActiveSubscriptions,
+  findByTag,
+  bulkUpdateExpiredSubscriptions,
+  deleteExpiredSubscriptions,
+  findByStripeCustomerId,
+  getTagSubscriptionStats,
+  hasActiveSubscription,
+  findSubscriptionsWithFilters,
+  countSubscriptionsWithFilters,
+  findAllSubscriptions,
+  findSubscriptionsWithStripeId,
 };

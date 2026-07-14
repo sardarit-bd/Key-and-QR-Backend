@@ -40,6 +40,43 @@ const getProductById = catchAsync(async (req, res) => {
   });
 });
 
+const getCategories = catchAsync(async (req, res) => {
+  const result = await productService.getCategories();
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Categories fetched successfully",
+    data: result,
+  });
+});
+
+const searchProducts = catchAsync(async (req, res) => {
+  const result = await productService.searchProducts(req.query);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Products fetched successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+const getRelatedProducts = catchAsync(async (req, res) => {
+  const result = await productService.getRelatedProducts(
+    req.params.id,
+    req.query.limit
+  );
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Related products fetched successfully",
+    data: result,
+  });
+});
+
 const updateProduct = catchAsync(async (req, res) => {
   const image = req.files?.image?.[0];
   const gallery = req.files?.gallery || [];
@@ -96,6 +133,9 @@ export default {
   createProduct,
   getAllProducts,
   getProductById,
+  getCategories,
+  searchProducts,
+  getRelatedProducts,
   updateProduct,
   deleteProduct,
   restoreProduct,

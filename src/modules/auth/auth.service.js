@@ -13,8 +13,16 @@ import {
 import authRepository from "./auth.repository.js";
 import resetPasswordTemplate from "../../templates/resetPasswordTemplate.js";
 import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
+import guestClaimService from "./guestClaim.service.js";
+import logger from "../../utils/logger.js";
 
+// ===============================
+// PRIVATE HELPER FUNCTIONS
+// ===============================
 
+/**
+ * Build authentication response with tokens and user data
+ */
 const buildAuthResponse = (user) => {
   const jwtPayload = {
     userId: user._id.toString(),
@@ -43,15 +51,69 @@ const buildAuthResponse = (user) => {
   };
 };
 
+/**
+ * Attempt to claim guest resources for a user
+ * Non-blocking: failures are logged but don't affect authentication
+ */
+const claimGuestResourcesIfExists = async (userId, email) => {
+  try {
+    const claimResult = await guestClaimService.claimGuestResources(userId, email);
+    
+    if (claimResult.ordersClaimed > 0 || claimResult.tagsClaimed > 0) {
+      logger.info(`Guest resources claimed for user ${email}:`, {
+        userId,
+        orders: claimResult.ordersClaimed,
+        tags: claimResult.tagsClaimed,
+        timestamp: new Date().toISOString(),
+      });
+      
+      // Log any errors that occurred during claim
+      if (claimResult.errors && claimResult.errors.length > 0) {
+        logger.warn(`⚠️ Partial claim errors for user ${email}:`, {
+          userId,
+          errors: claimResult.errors,
+        });
+      }
+    }
+    
+    return claimResult;
+  } catch (error) {
+    // Non-blocking: Don't fail registration/login if claim fails
+    logger.error(`❌ Failed to claim guest resources for ${email}:`, {
+      userId,
+      error: error.message,
+      stack: error.stack,
+    });
+    return null;
+  }
+};
+
+// ===============================
+// PUBLIC SERVICE FUNCTIONS
+// ===============================
+
+/**
+ * Register User with Guest Claim Support
+ * 
+ * Flow:
+ * 1. Validate email not already registered
+ * 2. Hash password
+ * 3. Create user account
+ * 4. Attempt to claim guest resources
+ * 5. Return auth response
+ */
 const registerUser = async (payload) => {
+  // 1. Check for existing user
   const existingUser = await authRepository.findUserByEmail(payload.email);
 
   if (existingUser) {
     throw new AppError(httpStatus.CONFLICT, "User already exists with this email");
   }
 
+  // 2. Hash password
   const hashedPassword = await bcrypt.hash(payload.password, env.bcryptSaltRounds);
 
+  // 3. Create user
   const createdUser = await authRepository.createUser({
     ...payload,
     password: hashedPassword,
@@ -59,16 +121,31 @@ const registerUser = async (payload) => {
     isEmailVerified: false,
   });
 
+  // 4. Claim guest resources (non-blocking)
+  await claimGuestResourcesIfExists(createdUser._id, createdUser.email);
+
+  // 5. Return auth response
   return buildAuthResponse(createdUser);
 };
 
+/**
+ * Login User with Guest Claim Support
+ * 
+ * Flow:
+ * 1. Find user by email
+ * 2. Validate password
+ * 3. Attempt to claim guest resources
+ * 4. Return auth response
+ */
 const loginUser = async (payload) => {
+  // 1. Find user
   const user = await authRepository.findUserByEmail(payload.email, true);
 
   if (!user) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
+  // 2. Validate provider
   if (user.provider !== "local") {
     throw new AppError(
       httpStatus.UNAUTHORIZED,
@@ -76,28 +153,44 @@ const loginUser = async (payload) => {
     );
   }
 
+  // 3. Validate password
   const isPasswordMatched = await bcrypt.compare(payload.password, user.password);
 
   if (!isPasswordMatched) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
+  // 4. Claim guest resources (non-blocking)
+  await claimGuestResourcesIfExists(user._id, user.email);
+
+  // 5. Return auth response
   return buildAuthResponse(user);
 };
 
+/**
+ * Social Login with Guest Claim Support
+ * 
+ * Flow:
+ * 1. Find or create user from social profile
+ * 2. Attempt to claim guest resources
+ * 3. Return auth response
+ */
 const handleSocialLogin = async (profile, provider) => {
   let user = null;
 
+  // 1. Find existing social user
   if (provider === "google") {
     user = await authRepository.findUserByGoogleId(profile.id);
   } else if (provider === "apple") {
     user = await authRepository.findUserByAppleId(profile.id);
   }
 
+  // 2. If not found by social ID, check by email
   if (!user && profile.email) {
     user = await authRepository.findUserByEmail(profile.email);
 
     if (user) {
+      // Update existing user with social credentials
       const updateData = {
         provider: provider,
         isEmailVerified: true,
@@ -113,6 +206,7 @@ const handleSocialLogin = async (profile, provider) => {
     }
   }
 
+  // 3. Create new user if not found
   if (!user) {
     const userName = provider === "google"
       ? profile.displayName
@@ -135,10 +229,17 @@ const handleSocialLogin = async (profile, provider) => {
     user = await authRepository.createUser(userData);
   }
 
+  // 4. Claim guest resources (non-blocking)
+  await claimGuestResourcesIfExists(user._id, user.email);
+
+  // 5. Return auth response
   return buildAuthResponse(user);
 };
 
-// getMe returns full user data for server-side use
+/**
+ * Get Current User Profile
+ * Returns full user data for server-side use
+ */
 const getMe = async (userId) => {
   const user = await authRepository.findUserById(userId);
 
@@ -162,7 +263,10 @@ const getMe = async (userId) => {
   };
 };
 
-// Refresh access token - returns both tokens
+/**
+ * Refresh Access Token
+ * Returns both access and refresh tokens
+ */
 const refreshAccessToken = async (token) => {
   if (!token) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required");
@@ -192,6 +296,10 @@ const refreshAccessToken = async (token) => {
   }
 };
 
+/**
+ * Forgot Password
+ * Sends password reset email with token
+ */
 const forgotPassword = async (email) => {
   const user = await authRepository.findUserByEmail(email);
 
@@ -226,6 +334,10 @@ const forgotPassword = async (email) => {
   return null;
 };
 
+/**
+ * Reset Password
+ * Validates token and updates password
+ */
 const resetPassword = async ({ token, newPassword }) => {
   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
@@ -242,6 +354,10 @@ const resetPassword = async ({ token, newPassword }) => {
   return null;
 };
 
+/**
+ * Change Password
+ * Validates old password and updates to new password
+ */
 const changePassword = async (userId, oldPassword, newPassword) => {
   const user = await authRepository.findUserByIdWithPassword(userId);
 
@@ -278,6 +394,10 @@ const changePassword = async (userId, oldPassword, newPassword) => {
   return null;
 };
 
+/**
+ * Update Profile
+ * Updates user profile information
+ */
 const updateProfile = async (userId, updateData) => {
   const user = await authRepository.updateUser(userId, updateData);
   if (!user) {
@@ -299,6 +419,10 @@ const updateProfile = async (userId, updateData) => {
   };
 };
 
+/**
+ * Upload Avatar
+ * Uploads profile image to Cloudinary
+ */
 const uploadAvatar = async (userId, imageBuffer) => {
   const uploadResult = await uploadImageBuffer(imageBuffer, "key-and-qr/avatars");
 
@@ -314,6 +438,10 @@ const uploadAvatar = async (userId, imageBuffer) => {
     url: imageData.url,
   };
 };
+
+// ===============================
+// EXPORTS
+// ===============================
 
 export default {
   registerUser,

@@ -88,6 +88,30 @@ const getProductById = async (id) => {
   return product;
 };
 
+const getCategories = async () => {
+  const categories = await productRepository.getCategories();
+  // Frontend expects [{ id, name }], not raw strings.
+  return categories
+    .filter(Boolean)
+    .map((category) => ({ id: category, name: category }));
+};
+
+const searchProducts = async (query) => {
+  const q = query.q || query.search || "";
+  const page = Number(query.page) || 1;
+  const limit = Number(query.limit) || 10;
+
+  if (!q) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Search query is required");
+  }
+
+  return productRepository.searchProducts({ q, page, limit });
+};
+
+const getRelatedProducts = async (productId, limit = 4) => {
+  return productRepository.getRelatedProducts(productId, Number(limit) || 4);
+};
+
 const updateProduct = async (id, payload, image, gallery = []) => {
   const existingProduct = await productRepository.getProductById(id);
 
@@ -244,6 +268,9 @@ export default {
   createProduct,
   getAllProducts,
   getProductById,
+  getCategories,
+  searchProducts,
+  getRelatedProducts,
   updateProduct,
   softDeleteProduct,
   restoreProduct,
