@@ -511,11 +511,11 @@ const createCheckout = async (userId, payload, isGuest = false) => {
             }
         }
 
-        if (order.paymentStatus === "paid") {
+        if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
             throw new AppError(httpStatus.BAD_REQUEST, "Order already paid");
         }
 
-        // Update shipping address if provided
+        // Update shipping address
         if (payload.address || payload.fullName) {
             const shippingAddress = {
                 fullName: payload.fullName || order.shippingAddress?.fullName,
@@ -532,7 +532,9 @@ const createCheckout = async (userId, payload, isGuest = false) => {
         order = await createOrder(userId, payload, isGuest);
     }
 
-    return createCheckoutSession(order._id);
+    // ************* Return order, not session *************
+    // Session creation moved to Payment Service
+    return order;
 };
 
 

@@ -13,6 +13,7 @@ import heroRoutes from "../modules/hero/hero.route.js";
 import quoteAssignmentRoutes from "../modules/quoteAssignment/quoteAssignment.routes.js";
 import uploadRoutes from "../modules/upload/upload.route.js";
 import dashboardRoutes from "../modules/dashboard/dashboard.routes.js";
+import paymentRoutes from "../modules/payment/payment.routes.js";
 
 const router = express.Router();
 
@@ -30,5 +31,6 @@ router.use("/hero", heroRoutes);
 router.use("/quote-assignments", quoteAssignmentRoutes);
 router.use("/upload", uploadRoutes);
 router.use("/dashboard", dashboardRoutes);
+router.use("/payment", paymentRoutes);
 
 export default router;
