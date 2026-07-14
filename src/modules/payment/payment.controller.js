@@ -1,5 +1,5 @@
 import httpStatus from "../../constants/httpStatus.js";
-import PAYMENT_STATUS from "../../../../Key-and-QR/src/config/paymentStatus.js";
+import PAYMENT_STATUS from "../../config/paymentStatus.js";
 import AppError from "../../utils/AppError.js";
 import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";

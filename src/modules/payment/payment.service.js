@@ -1,6 +1,6 @@
 import stripe from "../../config/stripe.js";
 import PAYMENT_CONFIG from "../../config/payment.config.js";
-import PAYMENT_STATUS from "../../../../Key-and-QR/src/config/paymentStatus.js";
+import PAYMENT_STATUS from "../../config/paymentStatus.js";
 import AppError from "../../utils/AppError.js";
 import httpStatus from "../../constants/httpStatus.js";
 import orderService from "../order/order.service.js";
