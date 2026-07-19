@@ -1,11 +1,16 @@
 import mongoose from "mongoose";
 import Tag from "./tag.model.js";
+import logger from "../../utils/logger.js";
 
-const createTag = (payload) => {
+// ================================
+// EXISTING FUNCTIONS
+// ================================
+
+const createTag = async (payload) => {
   return Tag.create(payload);
 };
 
-const findByTagCode = (tagCode) => {
+const findByTagCode = async (tagCode) => {
   return Tag.findOne({ tagCode });
 };
 
@@ -28,8 +33,6 @@ const getAllTags = async (query = {}) => {
 
   if (unused === "true") {
     const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
-    console.log("Assigned tag IDs from active orders:", assignedTagIds.length, assignedTagIds);
-
     filter.owner = null;
     filter.isActive = true;
     filter._id = { $nin: assignedTagIds };
@@ -43,7 +46,7 @@ const getAllTags = async (query = {}) => {
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit)),
-    Tag.countDocuments(filter)
+    Tag.countDocuments(filter),
   ]);
 
   return {
@@ -51,18 +54,20 @@ const getAllTags = async (query = {}) => {
       page: parseInt(page),
       limit: parseInt(limit),
       total,
-      totalPage: Math.ceil(total / limit)
+      totalPage: Math.ceil(total / limit),
     },
-    data
+    data,
   };
 };
 
-const findById = (id) => {
+const findById = async (id) => {
   return Tag.findById(id);
 };
 
-const updateTag = (id, payload) => {
-  return Tag.findByIdAndUpdate(id, payload, { new: true });
+const updateTag = async (id, payload, session = null) => {
+  const options = { new: true };
+  if (session) options.session = session;
+  return Tag.findByIdAndUpdate(id, payload, options);
 };
 
 const findUnusedTag = async () => {
@@ -71,7 +76,7 @@ const findUnusedTag = async () => {
   return Tag.findOne({
     owner: null,
     isActive: true,
-    _id: { $nin: assignedTagIds }
+    _id: { $nin: assignedTagIds },
   }).sort({ createdAt: 1 });
 };
 
@@ -83,7 +88,10 @@ const findUnusedTagStrict = async () => {
   }).sort({ createdAt: 1 });
 };
 
-const resetTag = async (tagId) => {
+const resetTag = async (tagId, session = null) => {
+  const options = { new: true };
+  if (session) options.session = session;
+  
   return Tag.findByIdAndUpdate(
     tagId,
     {
@@ -91,11 +99,11 @@ const resetTag = async (tagId) => {
       isActivated: false,
       activatedAt: null,
       personalMessage: null,
+      assignedOrderId: null,
     },
-    { new: true }
+    options
   );
 };
-
 
 const removeOwner = async (tagId) => {
   return Tag.findByIdAndUpdate(
@@ -132,7 +140,6 @@ const isTagFree = async (tagId) => {
   return tag && tag.owner === null && tag.isActive === true;
 };
 
-// tag.repository.js
 const findMultipleUnusedTags = async (limit = 10) => {
   const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
 
@@ -140,7 +147,7 @@ const findMultipleUnusedTags = async (limit = 10) => {
     owner: null,
     isActive: true,
     isActivated: false,
-    _id: { $nin: assignedTagIds }
+    _id: { $nin: assignedTagIds },
   })
     .sort({ createdAt: 1 })
     .limit(limit);
@@ -150,22 +157,202 @@ const isTagAssignedToActiveOrder = async (tagId) => {
   const Order = mongoose.model("Order");
   const existingOrder = await Order.findOne({
     assignedTag: tagId,
-    fulfillmentStatus: { $nin: ["cancelled", "returned"] }
+    fulfillmentStatus: { $nin: ["cancelled", "returned"] },
   });
   return !!existingOrder;
 };
 
-const getAssignedTagIdsFromActiveOrders = async () => {
-  const Order = mongoose.model("Order");
-  const orders = await Order.find({
-    assignedTag: { $ne: null },
-    fulfillmentStatus: { $nin: ["cancelled", "returned"] }
-  }).select("assignedTag");
+// ================================
+// NEW FUNCTIONS FROM IMPROVEMENTS
+// ================================
 
-  return orders.map(o => o.assignedTag.toString());
+/**
+ * ATOMIC TAG ASSIGNMENT - Race Condition Fix
+ * Find and assign multiple tags atomically using findOneAndUpdate
+ */
+const findAndAssignMultipleTags = async (limit = 10, userId, orderId, session = null) => {
+  if (limit <= 0) return [];
+
+  const assignedTagIds = await getAssignedTagIdsFromActiveOrders(session);
+  const assignedTags = [];
+
+  for (let i = 0; i < limit; i++) {
+    try {
+      const options = { 
+        new: true, 
+        sort: { createdAt: 1 } // FIFO - oldest tags first
+      };
+      if (session) options.session = session;
+
+      const tag = await Tag.findOneAndUpdate(
+        {
+          owner: null,
+          isActive: true,
+          isActivated: false,
+          _id: { $nin: assignedTagIds.concat(assignedTags) },
+        },
+        {
+          owner: userId,
+          isActivated: true,
+          activatedAt: new Date(),
+          assignedOrderId: orderId,
+        },
+        options
+      );
+
+      if (tag) {
+        assignedTags.push(tag._id);
+        logger.info(`✅ Tag ${tag.tagCode} assigned atomically to order ${orderId}`);
+      } else {
+        logger.warn(`⚠️ No more tags available for order ${orderId}. Needed: ${limit - i}, Found: ${assignedTags.length}`);
+        break;
+      }
+    } catch (error) {
+      if (error.code === 11000) {
+        logger.warn(`⚠️ Tag assignment conflict, retrying...`);
+        continue;
+      }
+      throw error;
+    }
+  }
+
+  return assignedTags;
 };
 
+/**
+ * GET ASSIGNED TAG IDS FROM ACTIVE ORDERS
+ * Optimized version with session support
+ */
+const getAssignedTagIdsFromActiveOrders = async (session = null) => {
+  const Order = mongoose.model("Order");
+  
+  const result = await Order.aggregate([
+    {
+      $match: {
+        fulfillmentStatus: { $nin: ["cancelled", "returned"] },
+        $or: [
+          { assignedTag: { $ne: null } },
+          { "assignedTags.tag": { $ne: null } },
+        ],
+      },
+    },
+    {
+      $project: {
+        tags: {
+          $concatArrays: [
+            { $cond: [{ $ne: ["$assignedTag", null] }, ["$assignedTag"], []] },
+            { $ifNull: ["$assignedTags.tag", []] },
+          ],
+        },
+      },
+    },
+    { $unwind: "$tags" },
+    { $group: { _id: null, tags: { $addToSet: "$tags" } } },
+  ]);
+
+  const tagIds = result.length > 0 ? result[0].tags : [];
+  return tagIds.map(id => id.toString());
+};
+
+/**
+ * COUNT UNASSIGNED TAGS
+ * For inventory management
+ */
+const countUnassignedTags = async () => {
+  const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
+  
+  return Tag.countDocuments({
+    owner: null,
+    isActive: true,
+    isActivated: false,
+    _id: { $nin: assignedTagIds },
+  });
+};
+
+/**
+ * GET TAG AVAILABILITY STATUS
+ * Returns detailed inventory info
+ */
+const getTagAvailabilityStatus = async () => {
+  const totalTags = await Tag.countDocuments({ isActive: true });
+  const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
+  
+  const unassignedTags = await Tag.find({
+    owner: null,
+    isActive: true,
+    isActivated: false,
+    _id: { $nin: assignedTagIds },
+  });
+
+  return {
+    total: totalTags,
+    unassigned: unassignedTags.length,
+    assigned: totalTags - unassignedTags.length,
+    lowInventory: unassignedTags.length < 100,
+    criticalInventory: unassignedTags.length < 50,
+    tags: unassignedTags.map(tag => ({
+      id: tag._id,
+      tagCode: tag.tagCode,
+      createdAt: tag.createdAt,
+    })),
+  };
+};
+
+/**
+ * BULK CREATE TAGS
+ * For admin inventory management
+ */
+const bulkCreateTags = async (tagCodes, batchSize = 100) => {
+  const results = {
+    success: [],
+    failed: [],
+    total: 0,
+  };
+
+  for (let i = 0; i < tagCodes.length; i += batchSize) {
+    const batch = tagCodes.slice(i, i + batchSize);
+    const tags = batch.map(code => ({
+      tagCode: code,
+      isActive: true,
+      isActivated: false,
+    }));
+
+    try {
+      const inserted = await Tag.insertMany(tags, { ordered: false });
+      results.success.push(...inserted);
+      results.total += inserted.length;
+      logger.info(`✅ Created ${inserted.length} tags in batch ${i / batchSize + 1}`);
+    } catch (error) {
+      if (error.writeErrors) {
+        for (const writeError of error.writeErrors) {
+          if (writeError.code === 11000) {
+            results.failed.push({
+              code: writeError.op.tagCode,
+              error: "Duplicate tag code",
+            });
+          } else {
+            results.failed.push({
+              code: writeError.op.tagCode,
+              error: writeError.errmsg,
+            });
+          }
+        }
+        results.total += error.insertedDocs?.length || 0;
+      } else {
+        throw error;
+      }
+    }
+  }
+
+  return results;
+};
+
+// ================================
+// EXPORTS
+// ================================
+
 export default {
+  // Existing functions
   createTag,
   findByTagCode,
   getAllTags,
@@ -182,4 +369,10 @@ export default {
   findMultipleUnusedTags,
   isTagAssignedToActiveOrder,
   getAssignedTagIdsFromActiveOrders,
+  
+  // NEW FUNCTIONS
+  findAndAssignMultipleTags,
+  countUnassignedTags,
+  getTagAvailabilityStatus,
+  bulkCreateTags,
 };
