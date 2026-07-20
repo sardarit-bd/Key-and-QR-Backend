@@ -3,6 +3,7 @@ import AppError from "../../utils/AppError.js";
 import favoriteRepository from "./favorite.repository.js";
 import productRepository from "../product/product.repository.js";
 import quoteRepository from "../quote/quote.repository.js";
+import activityService from "../activity/activity.service.js";
 
 /**
  * Add a favorite (Product or Quote)
