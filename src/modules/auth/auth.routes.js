@@ -10,6 +10,7 @@ import {
     loginValidationSchema,
     registerValidationSchema,
     resetPasswordValidationSchema,
+    updateProfileValidationSchema,
 } from "./auth.validation.js";
 import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 
@@ -101,6 +102,7 @@ router.get("/social/success", authController.socialLoginSuccess);
 router.patch(
     "/update-profile",
     auth(roles.USER, roles.ADMIN),
+    validateRequest(updateProfileValidationSchema),
     authController.updateProfile
 );
 

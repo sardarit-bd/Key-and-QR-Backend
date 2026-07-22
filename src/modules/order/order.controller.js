@@ -164,7 +164,7 @@ const getOrderStats = catchAsync(async (req, res) => {
  * Admin: Update Order
  */
 const updateOrder = catchAsync(async (req, res) => {
-    const result = await orderService.updateOrder(req.params.id, req.body);
+    const result = await orderService.updateOrder(req.params.id, req.body, null, req.user);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

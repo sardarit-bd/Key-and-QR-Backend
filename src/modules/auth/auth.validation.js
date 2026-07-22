@@ -67,3 +67,10 @@ export const changePasswordValidationSchema = Joi.object({
     "any.required": "New password is required",
   }),
 });
+
+export const updateProfileValidationSchema = Joi.object({
+  name: Joi.string().trim().min(2).max(50).optional().messages({
+    "string.min": "Name must be at least 2 characters",
+    "string.max": "Name cannot exceed 50 characters",
+  }),
+}).options({ stripUnknown: true });

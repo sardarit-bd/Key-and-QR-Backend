@@ -1145,7 +1145,7 @@ const getGuestOrdersByEmail = async (email, page = 1, limit = 10) => {
 /**
  * Update Order (Admin)
  */
-const updateOrder = async (id, payload, session = null) => {
+const updateOrder = async (id, payload, session = null, user = null) => {
   // Get order with session support if provided
   let order;
   if (session) {
@@ -1394,7 +1394,7 @@ const updateOrder = async (id, payload, session = null) => {
     order.fulfillmentStatus !== "cancelled"
   ) {
     payload.cancelledAt = new Date();
-    payload.cancelledBy = payload.cancelledBy || "admin";
+    payload.cancelledBy = user?.userId || user?._id?.toString() || "admin";
 
     // Log cancellation reason
     if (!payload.cancellationReason) {
@@ -1479,7 +1479,7 @@ const updateOrder = async (id, payload, session = null) => {
       from: order.fulfillmentStatus,
       to: payload.fulfillmentStatus,
       changedAt: new Date(),
-      changedBy: payload.changedBy || "system",
+      changedBy: user?.userId || user?._id?.toString() || "system",
       reason: payload.changeReason || null,
       metadata: {
         tagAssignmentStatus: payload.tagAssignmentStatus,

@@ -4,7 +4,7 @@ const subscriptionRules = {
     canChooseCategory: false,
   },
   subscriber: {
-    dailyLimit: 3,
+    dailyLimit: null, // Unlimited for Premium subscribers
     canChooseCategory: true,
   },
 };

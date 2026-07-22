@@ -20,7 +20,7 @@ const pendingQuoteSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ["faith", "love", "hope", "success", "motivation", "other"],
+      enum: ["love", "strength", "healing", "faith", "gratitude", "other"],
       default: "other",
     },
     status: {
