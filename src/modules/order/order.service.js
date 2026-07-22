@@ -10,6 +10,9 @@ import mongoose from "mongoose";
 import pendingQuoteRepository from "../pendingQuote/pendingQuote.repository.js";
 import PAYMENT_CONFIG from "../../config/payment.config.js";
 import PAYMENT_STATUS from "../../config/paymentStatus.js";
+import WebhookLog from "../../models/webhookLog.model.js";
+import logger from "../../utils/logger.js";
+import { generateGuestAccessToken } from "../../utils/jwt.js";
 
 // ============================================================
 // HELPER: Build order items from cart
@@ -576,8 +579,14 @@ const createCheckoutSession = async (orderId) => {
     ? order.guestCustomer?.email
     : order.user?.email;
 
+  // ✅ Generate guest access token for guest orders
+  let guestAccessToken = null;
+  if (order.isGuestOrder) {
+    guestAccessToken = generateGuestAccessToken(order._id);
+  }
+
   // ✅ Use centralized config for URLs
-  const successUrl = PAYMENT_CONFIG.getSuccessUrl(orderId);
+  const successUrl = PAYMENT_CONFIG.getSuccessUrl(orderId, guestAccessToken);
   const cancelUrl = PAYMENT_CONFIG.getCancelUrl();
 
   // ✅ Create Stripe session with config values
@@ -2177,22 +2186,23 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     fulfillmentStatus:
       tagAssignmentStatus === "complete" ? "assigned" : "pending",
   });
+};
 
-  /**
-   * CREATE ADMIN NOTIFICATION
-   */
-  const createAdminNotification = async (data) => {
-    try {
-      // You can implement this with email, Slack, or database
-      // For now, log it
-      logger.warn(`🔔 ADMIN NOTIFICATION: ${data.type}`, data);
+// ============================================================
+// HELPER: Admin Notification
+// ============================================================
 
-      // Example: Save to admin_notifications collection
-      // await AdminNotification.create(data);
-    } catch (error) {
-      logger.error("Failed to create admin notification:", error);
-    }
-  };
+const createAdminNotification = async (data) => {
+  try {
+    // You can implement this with email, Slack, or database
+    // For now, log it
+    logger.warn(`🔔 ADMIN NOTIFICATION: ${data.type}`, data);
+
+    // Example: Save to admin_notifications collection
+    // await AdminNotification.create(data);
+  } catch (error) {
+    logger.error("Failed to create admin notification:", error);
+  }
 };
 
 // ============================================================

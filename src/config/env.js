@@ -26,6 +26,8 @@ const env = {
   jwtAccessExpiresIn: getEnv("JWT_ACCESS_EXPIRES_IN", "15m"),
   jwtRefreshSecret: getEnv("JWT_REFRESH_SECRET"),
   jwtRefreshExpiresIn: getEnv("JWT_REFRESH_EXPIRES_IN", "7d"),
+  jwtGuestAccessSecret: getEnv("JWT_GUEST_ACCESS_SECRET"),
+  guestAccessTokenExpiresIn: getEnv("GUEST_ACCESS_TOKEN_EXPIRES", "24h"),
 
   // Bcrypt
   bcryptSaltRounds: Number(getEnv("BCRYPT_SALT_ROUNDS", "10")),

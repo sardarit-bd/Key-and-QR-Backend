@@ -5,6 +5,8 @@ import orderService from "../modules/order/order.service.js";
 import { handleSubscriptionWebhook } from "../modules/subscription/subscription.webhook.js";
 import WebhookLog from "../models/webhookLog.model.js";
 import logger from "../utils/logger.js";
+import auth from "../middlewares/auth.middleware.js";
+import roles from "../constants/roles.js";
 
 const router = express.Router();
 
@@ -145,7 +147,7 @@ router.post(
 );
 
 // ✅ Admin endpoint to view webhook logs
-router.get("/webhook-logs", async (req, res) => {
+router.get("/webhook-logs", auth(roles.ADMIN), async (req, res) => {
   try {
     const { limit = 50, status, eventType } = req.query;
     const filter = {};

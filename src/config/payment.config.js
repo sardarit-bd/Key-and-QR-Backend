@@ -15,8 +15,10 @@ const PAYMENT_CONFIG = {
 
   getPaymentMethodTypes: () => ["card"],
 
-  getSuccessUrl: (orderId) =>
-    `${env.clientUrl}/success?orderId=${orderId}`,
+  getSuccessUrl: (orderId, guestAccessToken = null) => {
+    const base = `${env.clientUrl}/success?orderId=${orderId}`;
+    return guestAccessToken ? `${base}&token=${guestAccessToken}` : base;
+  },
 
   getCancelUrl: () => `${env.clientUrl}/cancel`,
 };
