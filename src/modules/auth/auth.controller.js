@@ -9,7 +9,12 @@ import { setAuthResponse, clearAuthCookies } from "../../utils/token.util.js";
 
 // Register new user
 const register = catchAsync(async (req, res) => {
-  const result = await authService.registerUser(req.body);
+  const metadata = {
+    ipAddress: req.ip || req.connection?.remoteAddress,
+    userAgent: req.headers["user-agent"],
+  };
+
+  const result = await authService.registerUser(req.body, metadata);
 
   const tokens = setAuthResponse(res, result.accessToken, result.refreshToken, result.user.role);
 
@@ -27,7 +32,12 @@ const register = catchAsync(async (req, res) => {
 
 // Login user
 const login = catchAsync(async (req, res) => {
-  const result = await authService.loginUser(req.body);
+  const metadata = {
+    ipAddress: req.ip || req.connection?.remoteAddress,
+    userAgent: req.headers["user-agent"],
+  };
+
+  const result = await authService.loginUser(req.body, metadata);
 
   const tokens = setAuthResponse(res, result.accessToken, result.refreshToken, result.user.role);
 
@@ -56,14 +66,18 @@ const getMe = catchAsync(async (req, res) => {
 });
 
 const refreshToken = catchAsync(async (req, res) => {
-
   const token = req.headers['x-refresh-token'];
 
   if (!token) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required in x-refresh-token header");
   }
 
-  const result = await authService.refreshAccessToken(token);
+  const metadata = {
+    ipAddress: req.ip || req.connection?.remoteAddress,
+    userAgent: req.headers["user-agent"],
+  };
+
+  const result = await authService.refreshAccessToken(token, metadata);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -76,12 +90,30 @@ const refreshToken = catchAsync(async (req, res) => {
   });
 });
 
-// Logout user - just return success (client clears storage)
+// Logout user - revoke refresh token
 const logout = catchAsync(async (req, res) => {
+  // Get refresh token from header (client sends it for revocation)
+  const refreshToken = req.headers['x-refresh-token'];
+
+  // Revoke the refresh token (non-blocking if it fails)
+  await authService.logout(refreshToken);
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Logged out successfully",
+    data: null,
+  });
+});
+
+// Logout all devices - revoke all refresh tokens for user
+const logoutAll = catchAsync(async (req, res) => {
+  await authService.logoutAll(req.user.userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Logged out from all devices successfully",
     data: null,
   });
 });
@@ -138,7 +170,12 @@ const googleCallback = catchAsync(async (req, res, next) => {
     }
 
     try {
-      const result = await authService.handleSocialLogin(profile, "google");
+      const metadata = {
+        ipAddress: req.ip || req.connection?.remoteAddress,
+        userAgent: req.headers["user-agent"],
+      };
+
+      const result = await authService.handleSocialLogin(profile, "google", metadata);
 
       // Encode user data properly
       const encodedUser = encodeURIComponent(JSON.stringify(result.user));
@@ -199,6 +236,7 @@ export default {
   getMe,
   refreshToken,
   logout,
+  logoutAll,
   forgotPassword,
   resetPassword,
   changePassword,

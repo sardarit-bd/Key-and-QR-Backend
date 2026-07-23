@@ -66,6 +66,7 @@ router.post(
 
 router.post("/refresh-token", authController.refreshToken);
 router.post("/logout", authController.logout);
+router.post("/logout-all", auth(roles.USER, roles.ADMIN), authController.logoutAll);
 router.get("/me", auth(roles.USER, roles.ADMIN), authController.getMe);
 
 router.post(
