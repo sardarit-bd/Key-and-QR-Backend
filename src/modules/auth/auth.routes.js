@@ -13,6 +13,11 @@ import {
     updateProfileValidationSchema,
 } from "./auth.validation.js";
 import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
+import {
+    loginLimiter,
+    registerLimiter,
+    passwordResetLimiter,
+} from "../../middlewares/rateLimiter.js";
 
 const router = express.Router();
 
@@ -22,38 +27,28 @@ const router = express.Router();
 
 router.post(
     "/register",
+    registerLimiter,
     validateRequest(registerValidationSchema),
     authController.register
 );
 
 router.post(
     "/login",
+    loginLimiter,
     validateRequest(loginValidationSchema),
     authController.login
 );
 
 // ===============================
-// GUEST CLAIM ROUTES (NEW)
+// GUEST CLAIM ROUTES
 // ===============================
 
-/**
- * 🆕 Check guest resources
- * GET /api/v1/auth/guest-resources
- * Requires authentication
- * Returns summary of guest resources waiting to be claimed
- */
 router.get(
     "/guest-resources",
     auth(roles.USER, roles.ADMIN),
     guestClaimController.checkGuestResources
 );
 
-/**
- * 🆕 Manually claim guest resources
- * POST /api/v1/auth/claim-guest-resources
- * Requires authentication
- * Triggers guest claim process
- */
 router.post(
     "/claim-guest-resources",
     auth(roles.USER, roles.ADMIN),
@@ -61,7 +56,7 @@ router.post(
 );
 
 // ===============================
-// EXISTING AUTH ROUTES
+// TOKEN ROUTES
 // ===============================
 
 router.post("/refresh-token", authController.refreshToken);
@@ -69,8 +64,13 @@ router.post("/logout", authController.logout);
 router.post("/logout-all", auth(roles.USER, roles.ADMIN), authController.logoutAll);
 router.get("/me", auth(roles.USER, roles.ADMIN), authController.getMe);
 
+// ===============================
+// PASSWORD ROUTES
+// ===============================
+
 router.post(
     "/forgot-password",
+    passwordResetLimiter,
     validateRequest(forgotPasswordValidationSchema),
     authController.forgotPassword
 );

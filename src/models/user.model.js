@@ -94,6 +94,19 @@ const userSchema = new mongoose.Schema(
       default: null,
       select: false,
     },
+
+    // Account lockout fields
+    failedLoginAttempts: {
+      type: Number,
+      default: 0,
+      select: false,
+    },
+
+    lockedUntil: {
+      type: Date,
+      default: null,
+      select: false,
+    },
   },
   {
     timestamps: true,

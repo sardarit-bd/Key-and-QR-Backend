@@ -189,14 +189,23 @@ const registerUser = async (payload, metadata = {}) => {
  * 5. Return auth response
  */
 const loginUser = async (payload, metadata = {}) => {
-  // 1. Find user
+  // 1. Find user (include lockout fields)
   const user = await authRepository.findUserByEmail(payload.email, true);
 
   if (!user) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
-  // 2. Validate provider
+  // 2. Check account lockout
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.lockedUntil - new Date()) / 60000);
+    throw new AppError(
+      httpStatus.TOO_MANY_REQUESTS,
+      `Account is locked due to too many failed attempts. Try again in ${minutesLeft} minute${minutesLeft > 1 ? 's' : ''}.`
+    );
+  }
+
+  // 3. Validate provider
   if (user.provider !== "local") {
     throw new AppError(
       httpStatus.UNAUTHORIZED,
@@ -204,23 +213,28 @@ const loginUser = async (payload, metadata = {}) => {
     );
   }
 
-  // 3. Validate password
+  // 4. Validate password
   const isPasswordMatched = await bcrypt.compare(payload.password, user.password);
 
   if (!isPasswordMatched) {
+    // Increment failed attempts and potentially lock account
+    await authRepository.incrementFailedLoginAttempts(user._id);
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
-  // 4. Build auth response (generates tokens)
+  // 5. Successful login - reset failed attempts and lockout
+  await authRepository.resetFailedLoginAttempts(user._id);
+
+  // 6. Build auth response (generates tokens)
   const authResponse = buildAuthResponse(user);
 
-  // 5. Store refresh token
+  // 7. Store refresh token
   await storeRefreshToken(user._id, authResponse.refreshToken, metadata);
 
-  // 6. Claim guest resources (non-blocking)
+  // 8. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(user._id, user.email);
 
-  // 7. Return auth response
+  // 9. Return auth response
   return authResponse;
 };
 

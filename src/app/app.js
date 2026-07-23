@@ -20,7 +20,6 @@ const getAllowedOrigins = () => {
     "http://localhost:3000",
     "http://localhost:5000",
     "http://localhost:3001",
-    "https://localhost:3000",
     env.clientUrl,
     process.env.FRONTEND_URL,
   ].filter(Boolean);
@@ -29,14 +28,14 @@ const getAllowedOrigins = () => {
 
 const corsOptions = {
   origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
+    // Allow requests with no origin (mobile apps, curl, server-to-server)
+    // Only if the request has no origin header at all (not "null" string)
+    if (!origin) {
+      return callback(null, true);
+    }
 
     const allowedOrigins = getAllowedOrigins();
     const isAllowed = allowedOrigins.some((allowed) => allowed === origin);
-
-    if (!env.isProduction && origin.includes("localhost")) {
-      return callback(null, true);
-    }
 
     if (isAllowed) {
       return callback(null, true);
@@ -77,8 +76,8 @@ app.use(passport.initialize());
 
 app.use("/api/v1/stripe", stripeWebhook);
 
-app.use(express.json({ limit: "10mb" }));
-app.use(express.urlencoded({ extended: true, limit: "10mb" }));
+app.use(express.json({ limit: "1mb" }));
+app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 app.use(cookieParser());
 
 app.get("/", (req, res) => {
