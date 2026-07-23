@@ -66,6 +66,43 @@ const updateUser = async (userId, updateData) => {
   return User.findByIdAndUpdate(userId, updateData, { new: true });
 };
 
+// Account lockout methods
+const incrementFailedLoginAttempts = async (userId) => {
+  const MAX_ATTEMPTS = 5;
+  const LOCK_TIME_MS = 15 * 60 * 1000; // 15 minutes
+
+  // Step 1: Atomically increment the counter
+  const updatedUser = await User.findByIdAndUpdate(
+    userId,
+    { $inc: { failedLoginAttempts: 1 } },
+    { returnDocument: 'after', select: '+failedLoginAttempts +lockedUntil' }
+  );
+
+  if (!updatedUser) return null;
+
+  // Step 2: If threshold reached, lock the account
+  if (updatedUser.failedLoginAttempts >= MAX_ATTEMPTS) {
+    return User.findByIdAndUpdate(
+      userId,
+      { lockedUntil: new Date(Date.now() + LOCK_TIME_MS) },
+      { returnDocument: 'after' }
+    );
+  }
+
+  return updatedUser;
+};
+
+const resetFailedLoginAttempts = async (userId) => {
+  return User.findByIdAndUpdate(
+    userId,
+    {
+      failedLoginAttempts: 0,
+      lockedUntil: null,
+    },
+    { returnDocument: 'after' }
+  );
+};
+
 // Update specific fields (for stripeCustomerId)
 const updateStripeCustomerId = async (userId, stripeCustomerId) => {
   return User.findByIdAndUpdate(
@@ -111,4 +148,6 @@ export default {
   updateUser,
   updateStripeCustomerId,
   getUserWithSubscriptions,
+  incrementFailedLoginAttempts,
+  resetFailedLoginAttempts,
 };

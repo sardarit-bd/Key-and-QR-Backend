@@ -46,9 +46,22 @@ const getUserFavorites = async (
         isDeleted: false,
     };
 
-    // Filter by type
+    // Filter by type — handle three cases:
+    // 1. type field matches exactly
+    // 2. type field doesn't exist (created before type field was added)
+    // 3. type field is null/undefined (schema default not applied to old docs)
     if (type && ['product', 'quote'].includes(type)) {
-        filter.type = type;
+        if (type === 'quote') {
+            filter.$or = [
+                { type: 'quote' },
+                { type: { $exists: false }, quote: { $ne: null } },
+            ];
+        } else {
+            filter.$or = [
+                { type: 'product' },
+                { type: { $exists: false }, product: { $ne: null } },
+            ];
+        }
     }
 
     // Build sort

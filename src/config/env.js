@@ -26,6 +26,8 @@ const env = {
   jwtAccessExpiresIn: getEnv("JWT_ACCESS_EXPIRES_IN", "15m"),
   jwtRefreshSecret: getEnv("JWT_REFRESH_SECRET"),
   jwtRefreshExpiresIn: getEnv("JWT_REFRESH_EXPIRES_IN", "7d"),
+  jwtGuestAccessSecret: getEnv("JWT_GUEST_ACCESS_SECRET"),
+  guestAccessTokenExpiresIn: getEnv("GUEST_ACCESS_TOKEN_EXPIRES", "24h"),
 
   // Bcrypt
   bcryptSaltRounds: Number(getEnv("BCRYPT_SALT_ROUNDS", "10")),
@@ -81,6 +83,26 @@ if (missingVars.length > 0) {
   console.error(`❌ Missing env vars: ${missingVars.join(", ")}`);
   if (!env.isProduction) {
     console.warn("⚠️ Using fallback values for development");
+  }
+}
+
+// Validate JWT secret strength
+const MIN_JWT_SECRET_LENGTH = 64;
+
+const jwtSecrets = [
+  { name: "JWT_ACCESS_SECRET", value: env.jwtAccessSecret },
+  { name: "JWT_REFRESH_SECRET", value: env.jwtRefreshSecret },
+  { name: "JWT_GUEST_ACCESS_SECRET", value: env.jwtGuestAccessSecret },
+];
+
+for (const secret of jwtSecrets) {
+  if (secret.value && secret.value.length < MIN_JWT_SECRET_LENGTH) {
+    console.error(
+      `❌ ${secret.name} is too short (${secret.value.length} chars). Minimum: ${MIN_JWT_SECRET_LENGTH} chars.`
+    );
+    if (env.isProduction) {
+      process.exit(1);
+    }
   }
 }
 

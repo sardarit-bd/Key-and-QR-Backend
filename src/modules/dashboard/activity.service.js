@@ -1,4 +1,4 @@
-import Activity from "./activity.model.js";
+import Activity from "../activity/activity.model.js";
 
 /**
  * Activity Service

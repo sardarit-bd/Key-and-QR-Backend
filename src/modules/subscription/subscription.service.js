@@ -327,10 +327,10 @@ const getSubscriptionStatsForAdmin = async () => {
     incomplete: subscriptions.filter(s => s.status === "incomplete").length,
     totalRevenue: subscriptions
       .filter(s => s.status === "active" || s.status === "trialing")
-      .length * 2.99,
+      .length * 4.99,
     monthlyRecurringRevenue: subscriptions
       .filter(s => s.status === "active")
-      .length * 2.99,
+      .length * 4.99,
   };
 
   return stats;

@@ -3,6 +3,7 @@ import sendResponse from "../../utils/sendResponse.js";
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import orderService from "./order.service.js";
+import { verifyGuestAccessToken } from "../../utils/jwt.js";
 
 const createCheckout = catchAsync(async (req, res) => {
     // Get userId from optional auth middleware (null for guests)
@@ -56,16 +57,37 @@ const getOrderById = catchAsync(async (req, res) => {
         });
     }
 
-    // Guest order: Email verification (can be enhanced with token)
+    // Guest order: Require signed guest access token
     if (!userId && order.isGuestOrder) {
-        // For now, allow access to guest orders
-        // In production, implement email + order token verification
-        return sendResponse(res, {
-            statusCode: httpStatus.OK,
-            success: true,
-            message: "Order fetched successfully",
-            data: order,
-        });
+        const guestToken = req.query.token;
+
+        if (!guestToken) {
+            throw new AppError(
+                httpStatus.UNAUTHORIZED,
+                "Guest access token required"
+            );
+        }
+
+        try {
+            const decoded = verifyGuestAccessToken(guestToken);
+
+            // Verify token is for this order
+            if (decoded.orderId !== order._id.toString()) {
+                throw new Error("Token order mismatch");
+            }
+
+            return sendResponse(res, {
+                statusCode: httpStatus.OK,
+                success: true,
+                message: "Order fetched successfully",
+                data: order,
+            });
+        } catch (error) {
+            throw new AppError(
+                httpStatus.FORBIDDEN,
+                "Invalid or expired guest access token"
+            );
+        }
     }
 
     // ❌ Unauthorized access
@@ -142,7 +164,7 @@ const getOrderStats = catchAsync(async (req, res) => {
  * Admin: Update Order
  */
 const updateOrder = catchAsync(async (req, res) => {
-    const result = await orderService.updateOrder(req.params.id, req.body);
+    const result = await orderService.updateOrder(req.params.id, req.body, null, req.user);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

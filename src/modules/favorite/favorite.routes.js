@@ -7,31 +7,39 @@ const router = express.Router();
 // All routes require authentication
 router.use(auth());
 
-// Get user favorites with pagination & filtering
+// ================================
+// 🟢 SPECIFIC ROUTES FIRST (No path parameters)
+// ================================
+
+// 1. Get user favorites with pagination & filtering
 router.get("/", favoriteController.getUserFavorites);
 
-// Add to favorites
+// 2. Add to favorites
 router.post("/", favoriteController.addFavorite);
 
-// Get favorite by ID
-router.get("/:id", favoriteController.getFavoriteById);
-
-// Remove from favorites
-router.delete("/:id", favoriteController.removeFavorite);
-
-// Check if item is in favorites
+// 3. Check if item is in favorites
 router.get("/check", favoriteController.checkFavorite);
 
-// Remove favorite by reference (product or quote)
+// 4. Remove favorite by reference (product or quote)
 router.delete("/remove-by-reference", favoriteController.removeFavoriteByReference);
 
-// Batch add favorites
+// 5. Batch add favorites
 router.post("/batch", favoriteController.batchAddFavorites);
 
-// Check multiple favorites at once
+// 6. Check multiple favorites at once
 router.post("/check-batch", favoriteController.checkMultipleFavorites);
 
-// Get favorite statistics
+// 7. Get favorite statistics
 router.get("/stats", favoriteController.getFavoriteStats);
+
+// ================================
+// 🔴 DYNAMIC ROUTES LAST (With path parameters)
+// ================================
+
+// 8. Get favorite by ID
+router.get("/:id", favoriteController.getFavoriteById);
+
+// 9. Remove from favorites
+router.delete("/:id", favoriteController.removeFavorite);
 
 export default router;

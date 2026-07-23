@@ -20,8 +20,22 @@ const pendingQuoteSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ["faith", "love", "hope", "success", "motivation", "other"],
+      enum: ["love", "strength", "healing", "faith", "gratitude", "other"],
       default: "other",
+    },
+    // Discriminator: "community" for user submissions, "gift" for gift messages attached to orders
+    type: {
+      type: String,
+      enum: ["community", "gift"],
+      default: "community",
+      index: true,
+    },
+    // Optional author attribution ("Who said it?")
+    author: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: null,
     },
     status: {
       type: String,
@@ -44,9 +58,11 @@ const pendingQuoteSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// Index for faster queries
+// Indexes for faster queries
 pendingQuoteSchema.index({ status: 1, createdAt: -1 });
 pendingQuoteSchema.index({ user: 1, status: 1 });
+pendingQuoteSchema.index({ type: 1, status: 1 });
+pendingQuoteSchema.index({ order: 1 });
 
 const PendingQuote = mongoose.model("PendingQuote", pendingQuoteSchema);
 export default PendingQuote;

@@ -1,15 +1,33 @@
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import tagRepository from "./tag.repository.js";
+import logger from "../../utils/logger.js";
+import Tag from "./tag.model.js";
+
+// ================================
+// EXISTING FUNCTIONS
+// ================================
 
 const createTag = async (payload) => {
-  const existing = await tagRepository.findByTagCode(payload.tagCode);
+  // Validate tag code format
+  if (!payload.tagCode || payload.tagCode.length < 3) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Tag code must be at least 3 characters"
+    );
+  }
 
+  const existing = await tagRepository.findByTagCode(payload.tagCode);
   if (existing) {
     throw new AppError(httpStatus.CONFLICT, "Tag code already exists");
   }
 
-  return tagRepository.createTag(payload);
+  return tagRepository.createTag({
+    ...payload,
+    owner: null,
+    isActivated: false,
+    isActive: true,
+  });
 };
 
 const getAllTags = async (query) => {
@@ -68,7 +86,6 @@ const getUnusedTag = async () => {
   return tag;
 };
 
-// Set personal message
 const setPersonalMessage = async (tagCode, userId, message) => {
   const tag = await tagRepository.findByTagCode(tagCode);
 
@@ -96,7 +113,6 @@ const setPersonalMessage = async (tagCode, userId, message) => {
   };
 };
 
-// Get personal message
 const getPersonalMessage = async (tagCode) => {
   const tag = await tagRepository.findByTagCode(tagCode);
 
@@ -115,7 +131,157 @@ const getMyTags = async (userId) => {
   return tagRepository.findTagsByOwner(userId);
 };
 
+// ================================
+// NEW FUNCTIONS FROM IMPROVEMENTS
+// ================================
+
+/**
+ * GENERATE TAG CODES
+ * Helper for bulk tag generation
+ */
+const generateTagCodes = (prefix = "TAG", count = 1) => {
+  const codes = [];
+  const timestamp = Date.now().toString(36).toUpperCase();
+  
+  for (let i = 0; i < count; i++) {
+    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
+    const sequential = String(i + 1).padStart(4, '0');
+    codes.push(`${prefix}-${timestamp}-${sequential}`);
+  }
+  
+  return codes;
+};
+
+/**
+ * BULK CREATE TAGS - Admin Feature
+ */
+const bulkCreateTags = async (count, prefix = "TAG") => {
+  if (count < 1 || count > 10000) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Count must be between 1 and 10,000"
+    );
+  }
+
+  // Generate unique tag codes
+  const tagCodes = generateTagCodes(prefix, count);
+  
+  // Check for existing tags
+  const existingTags = await tagRepository.getAllTags({ 
+    search: prefix,
+    limit: 10000 
+  });
+  
+  const existingCodes = new Set(existingTags.data.map(t => t.tagCode));
+  const newCodes = tagCodes.filter(code => !existingCodes.has(code));
+
+  if (newCodes.length === 0) {
+    throw new AppError(
+      httpStatus.CONFLICT,
+      "All generated tag codes already exist. Try a different prefix."
+    );
+  }
+
+  // Create tags in batches
+  const result = await tagRepository.bulkCreateTags(newCodes);
+  
+  logger.info(`✅ Bulk created ${result.total} tags (${result.failed.length} failed)`);
+  
+  return {
+    total: result.total,
+    created: result.success.length,
+    failed: result.failed,
+    warning: result.failed.length > 0 ? "Some tags failed to create (duplicates)" : null,
+  };
+};
+
+/**
+ * GET TAG INVENTORY STATUS
+ * For admin dashboard
+ */
+const getTagInventoryStatus = async () => {
+  const status = await tagRepository.getTagAvailabilityStatus();
+  
+  return {
+    ...status,
+    alerts: {
+      lowInventory: status.lowInventory,
+      criticalInventory: status.criticalInventory,
+      recommendedAction: status.criticalInventory 
+        ? "⚠️ CRITICAL: Generate more tags immediately!"
+        : status.lowInventory 
+          ? "⚠️ Low inventory: Consider generating more tags"
+          : "✅ Inventory is healthy",
+    },
+  };
+};
+
+/**
+ * GET UNASSIGNED TAG COUNT
+ * Quick check for order processing
+ */
+const getUnassignedTagCount = async () => {
+  return tagRepository.countUnassignedTags();
+};
+
+/**
+ * CHECK TAG AVAILABILITY FOR ORDER
+ * Validate if enough tags exist for an order
+ */
+const checkTagAvailabilityForOrder = async (requiredQuantity) => {
+  const available = await tagRepository.countUnassignedTags();
+  return {
+    available,
+    required: requiredQuantity,
+    sufficient: available >= requiredQuantity,
+    shortage: Math.max(0, requiredQuantity - available),
+  };
+};
+
+/**
+ * GET TAG LIFECYCLE STATS
+ * Track tag usage patterns
+ */
+const getTagLifecycleStats = async () => {
+  const stats = await Tag.aggregate([
+    {
+      $group: {
+        _id: null,
+        total: { $sum: 1 },
+        activated: { $sum: { $cond: ["$isActivated", 1, 0] } },
+        withPersonalMessage: { 
+          $sum: { 
+            $cond: [
+              { $and: [
+                { $ne: ["$personalMessage", null] },
+                { $ne: ["$personalMessage", ""] }
+              ]},
+              1,
+              0
+            ]
+          }
+        },
+        active: { $sum: { $cond: ["$isActive", 1, 0] } },
+        withOwner: { $sum: { $cond: [{ $ne: ["$owner", null] }, 1, 0] } },
+      }
+    }
+  ]);
+
+  return stats[0] || {
+    total: 0,
+    activated: 0,
+    withPersonalMessage: 0,
+    active: 0,
+    withOwner: 0,
+  };
+};
+
+// ================================
+// EXPORTS
+// ================================
+
 export default {
+  // Existing functions
   createTag,
   getAllTags,
   getTagByCode,
@@ -125,4 +291,12 @@ export default {
   setPersonalMessage,
   getPersonalMessage,
   getMyTags,
+  
+  // NEW FUNCTIONS
+  bulkCreateTags,
+  getTagInventoryStatus,
+  getUnassignedTagCount,
+  checkTagAvailabilityForOrder,
+  getTagLifecycleStats,
+  generateTagCodes,
 };

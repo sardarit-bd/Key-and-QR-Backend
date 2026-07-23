@@ -3,9 +3,11 @@ import orderController from "./order.controller.js";
 import auth from "../../middlewares/auth.middleware.js";
 import optionalAuth from "../../middlewares/optionalAuth.middleware.js";
 import roleMiddleware from "../../middlewares/role.middleware.js";
+import validateRequest from "../../middlewares/validate.middleware.js";
 import roles from "../../constants/roles.js";
 import { validateCheckout } from "../../middlewares/checkoutValidation.middleware.js";
 import { guestCheckoutLimiter } from "../../middlewares/rateLimiter.js";
+import { updateOrderValidationSchema } from "./order.validation.js";
 
 const router = express.Router();
 
@@ -55,6 +57,7 @@ router.patch(
     "/:id",
     auth(),
     roleMiddleware(roles.ADMIN),
+    validateRequest(updateOrderValidationSchema),
     orderController.updateOrder
 );
 

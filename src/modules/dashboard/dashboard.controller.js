@@ -4,15 +4,27 @@ import httpStatus from "../../constants/httpStatus.js";
 import dashboardService from "./dashboard.service.js";
 
 /**
- * Get complete dashboard data
+ * Get dashboard overview — SINGLE aggregated endpoint
+ * GET /api/v1/dashboard/overview
+ */
+const getOverview = catchAsync(async (req, res) => {
+    const userId = req.user.userId;
+    const overview = await dashboardService.getOverview(userId);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Dashboard overview fetched successfully",
+        data: overview,
+    });
+});
+
+/**
+ * Get complete dashboard data (legacy)
  * GET /api/v1/dashboard
- * 
- * Requires authentication
- * Returns all user resources in one unified response
  */
 const getDashboard = catchAsync(async (req, res) => {
     const userId = req.user.userId;
-
     const dashboardData = await dashboardService.getDashboard(userId);
 
     sendResponse(res, {
@@ -26,12 +38,9 @@ const getDashboard = catchAsync(async (req, res) => {
 /**
  * Get dashboard summary counts
  * GET /api/v1/dashboard/counts
- * 
- * Lightweight endpoint for navbar/header
  */
 const getDashboardCounts = catchAsync(async (req, res) => {
     const userId = req.user.userId;
-
     const counts = await dashboardService.getResourceCounts(userId);
 
     sendResponse(res, {
@@ -45,12 +54,9 @@ const getDashboardCounts = catchAsync(async (req, res) => {
 /**
  * Check if user has resources
  * GET /api/v1/dashboard/has-resources
- * 
- * Used for onboarding flow
  */
 const hasResources = catchAsync(async (req, res) => {
     const userId = req.user.userId;
-
     const hasResources = await dashboardService.hasResources(userId);
 
     sendResponse(res, {
@@ -63,12 +69,9 @@ const hasResources = catchAsync(async (req, res) => {
 /**
  * Get recent activity
  * GET /api/v1/dashboard/activity
- * 
- * Returns recent actions in chronological order
  */
 const getRecentActivity = catchAsync(async (req, res) => {
     const userId = req.user.userId;
-
     const activities = await dashboardService.getRecentActivity(userId);
 
     sendResponse(res, {
@@ -80,6 +83,7 @@ const getRecentActivity = catchAsync(async (req, res) => {
 });
 
 export default {
+    getOverview,
     getDashboard,
     getDashboardCounts,
     hasResources,

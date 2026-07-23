@@ -3,6 +3,11 @@ import AppError from "../../utils/AppError.js";
 import favoriteRepository from "./favorite.repository.js";
 import productRepository from "../product/product.repository.js";
 import quoteRepository from "../quote/quote.repository.js";
+import activityService from "../activity/activity.service.js";
+import subscriptionService from "../subscription/subscription.service.js";
+
+// Free user favorites cap
+const FREE_FAVORITES_CAP = 50;
 
 /**
  * Add a favorite (Product or Quote)
@@ -11,7 +16,8 @@ import quoteRepository from "../quote/quote.repository.js";
  * 1. Validate input (productId or quoteId)
  * 2. Check if item exists
  * 3. Check if already favorited
- * 4. Create favorite
+ * 4. Check favorites cap for free users
+ * 5. Create favorite
  */
 const addFavorite = async (userId, { productId, quoteId }) => {
     // Validate: Must have either product or quote
@@ -42,6 +48,22 @@ const addFavorite = async (userId, { productId, quoteId }) => {
             httpStatus.CONFLICT,
             "Item is already in favorites"
         );
+    }
+
+    // Check favorites cap for free users
+    const subscriptions = await subscriptionService.getMySubscriptions(userId);
+    const hasActiveSubscription = subscriptions.some(
+        (s) => s.subscriptionType === "subscriber" && ["active", "trialing", "past_due"].includes(s.status)
+    );
+
+    if (!hasActiveSubscription) {
+        const currentCount = await favoriteRepository.getFavoriteCountByType(userId);
+        if (currentCount >= FREE_FAVORITES_CAP) {
+            throw new AppError(
+                httpStatus.FORBIDDEN,
+                `Free users can save up to ${FREE_FAVORITES_CAP} favorites. Upgrade to Premium for unlimited favorites.`
+            );
+        }
     }
 
     // Validate existence

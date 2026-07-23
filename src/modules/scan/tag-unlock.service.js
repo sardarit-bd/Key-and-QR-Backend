@@ -1,5 +1,3 @@
-// modules/scan/tag-unlock.service.js
-
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import tagRepository from "../tag/tag.repository.js";
@@ -24,22 +22,54 @@ const getTodayKey = () => {
  * No scan history recorded (privacy)
  */
 const publicUnlock = async (tagCode) => {
-    // ✅ 1. Validate Tag
-    const tag = await tagRepository.findByTagCode(tagCode);
-
-    if (!tag) {
-        throw new AppError(httpStatus.NOT_FOUND, "QR code not found");
+    // ✅ 0. Validate QR Code format (basic input guard)
+    if (!tagCode || typeof tagCode !== "string" || !tagCode.trim()) {
+        throw new AppError(
+            httpStatus.BAD_REQUEST,
+            "Invalid QR code",
+            "INVALID_TAG_CODE"
+        );
     }
 
+    let tag;
+    try {
+        // ✅ 1. Validate Tag exists
+        tag = await tagRepository.findByTagCode(tagCode.trim());
+    } catch (err) {
+        // Unexpected DB/lookup failure — do not leak internals
+        throw new AppError(
+            httpStatus.INTERNAL_SERVER_ERROR,
+            "Unable to process QR code right now. Please try again.",
+            "TAG_LOOKUP_FAILED"
+        );
+    }
+
+    if (!tag) {
+        throw new AppError(
+            httpStatus.NOT_FOUND,
+            "QR code not found",
+            "TAG_NOT_FOUND"
+        );
+    }
+
+    // ✅ 2. Validate Active Tag
     if (!tag.isActive) {
-        throw new AppError(httpStatus.BAD_REQUEST, "This QR code is no longer active");
+        throw new AppError(
+            httpStatus.BAD_REQUEST,
+            "This QR code is no longer active",
+            "TAG_INACTIVE"
+        );
     }
 
     if (!tag.isActivated) {
-        throw new AppError(httpStatus.BAD_REQUEST, "This QR code has not been activated yet");
+        throw new AppError(
+            httpStatus.BAD_REQUEST,
+            "This QR code has not been activated yet",
+            "TAG_NOT_ACTIVATED"
+        );
     }
 
-    // ✅ 2. Check Personal Message (Public)
+    // ✅ 3. Check Personal Message (Public)
     if (tag.personalMessage && tag.personalMessage.trim() !== "") {
         return {
             _id: null,
@@ -53,43 +83,56 @@ const publicUnlock = async (tagCode) => {
         };
     }
 
-    // ✅ 3. Get Assigned Quote (Public)
+    // ✅ 4. Get Assigned Quote (Public) — priority order unchanged
     let quote = null;
     let sourceType = "random";
 
-    // Priority 1: Tag assignment
-    const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
-    if (tagAssignment?.quote) {
-        quote = tagAssignment.quote;
-        sourceType = "tag_assignment";
-    }
-
-    // Priority 2: User assignment (if owner exists)
-    if (!quote && tag.owner) {
-        const userAssignment = await quoteAssignmentService.getTopAssignmentByUser(tag.owner);
-        if (userAssignment?.quote) {
-            quote = userAssignment.quote;
-            sourceType = "user_assignment";
+    try {
+        // Priority 1: Tag assignment
+        const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
+        if (tagAssignment?.quote) {
+            quote = tagAssignment.quote;
+            sourceType = "tag_assignment";
         }
-    }
 
-    // Priority 3: Random fallback
-    if (!quote) {
-        const randomQuote = await Quote.aggregate([
-            { $match: { isActive: true } },
-            { $sample: { size: 1 } },
-        ]);
-        if (randomQuote.length > 0) {
-            quote = randomQuote[0];
-            sourceType = "random";
+        // Priority 2: User assignment (if owner exists)
+        if (!quote && tag.owner) {
+            const userAssignment = await quoteAssignmentService.getTopAssignmentByUser(tag.owner);
+            if (userAssignment?.quote) {
+                quote = userAssignment.quote;
+                sourceType = "user_assignment";
+            }
         }
+
+        // Priority 3: Random fallback
+        if (!quote) {
+            const randomQuote = await Quote.aggregate([
+                { $match: { isActive: true } },
+                { $sample: { size: 1 } },
+            ]);
+            if (randomQuote.length > 0) {
+                quote = randomQuote[0];
+                sourceType = "random";
+            }
+        }
+    } catch (err) {
+        throw new AppError(
+            httpStatus.INTERNAL_SERVER_ERROR,
+            "Unable to fetch a quote for this QR code right now. Please try again.",
+            "QUOTE_LOOKUP_FAILED"
+        );
     }
 
+    // ✅ 5. Validate Assigned Quote
     if (!quote) {
-        throw new AppError(httpStatus.NOT_FOUND, "No quote available for this QR code");
+        throw new AppError(
+            httpStatus.NOT_FOUND,
+            "No quote available for this QR code",
+            "NO_QUOTE_AVAILABLE"
+        );
     }
 
-    // ✅ 4. Return ONLY Public Data
+    // ✅ 6. Return ONLY Public Data
     return {
         _id: null,  // ✅ Do not expose internal ID
         quote: quote.text,

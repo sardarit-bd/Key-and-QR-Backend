@@ -15,10 +15,53 @@ import resetPasswordTemplate from "../../templates/resetPasswordTemplate.js";
 import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
 import guestClaimService from "./guestClaim.service.js";
 import logger from "../../utils/logger.js";
+import RefreshToken from "../../models/refreshToken.model.js";
+import { hashToken } from "../../utils/tokenHash.js";
 
 // ===============================
 // PRIVATE HELPER FUNCTIONS
 // ===============================
+
+/**
+ * Store a refresh token in the database
+ */
+const storeRefreshToken = async (userId, token, metadata = {}) => {
+  const tokenHash = hashToken(token);
+  
+  // Decode JWT to get expiry
+  const decoded = verifyRefreshToken(token);
+  const expiresAt = new Date(decoded.exp * 1000);
+
+  await RefreshToken.create({
+    user: userId,
+    tokenHash,
+    expiresAt,
+    ipAddress: metadata.ipAddress || null,
+    userAgent: metadata.userAgent || null,
+  });
+
+  return tokenHash;
+};
+
+/**
+ * Revoke a specific refresh token
+ */
+const revokeRefreshToken = async (tokenHash) => {
+  await RefreshToken.findOneAndUpdate(
+    { tokenHash },
+    { revoked: true }
+  );
+};
+
+/**
+ * Revoke all refresh tokens for a user
+ */
+const revokeAllUserTokens = async (userId) => {
+  await RefreshToken.updateMany(
+    { user: userId, revoked: false },
+    { revoked: true }
+  );
+};
 
 /**
  * Build authentication response with tokens and user data
@@ -99,10 +142,11 @@ const claimGuestResourcesIfExists = async (userId, email) => {
  * 1. Validate email not already registered
  * 2. Hash password
  * 3. Create user account
- * 4. Attempt to claim guest resources
- * 5. Return auth response
+ * 4. Store refresh token
+ * 5. Attempt to claim guest resources
+ * 6. Return auth response
  */
-const registerUser = async (payload) => {
+const registerUser = async (payload, metadata = {}) => {
   // 1. Check for existing user
   const existingUser = await authRepository.findUserByEmail(payload.email);
 
@@ -121,11 +165,17 @@ const registerUser = async (payload) => {
     isEmailVerified: false,
   });
 
-  // 4. Claim guest resources (non-blocking)
+  // 4. Build auth response (generates tokens)
+  const authResponse = buildAuthResponse(createdUser);
+
+  // 5. Store refresh token
+  await storeRefreshToken(createdUser._id, authResponse.refreshToken, metadata);
+
+  // 6. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(createdUser._id, createdUser.email);
 
-  // 5. Return auth response
-  return buildAuthResponse(createdUser);
+  // 7. Return auth response
+  return authResponse;
 };
 
 /**
@@ -134,18 +184,28 @@ const registerUser = async (payload) => {
  * Flow:
  * 1. Find user by email
  * 2. Validate password
- * 3. Attempt to claim guest resources
- * 4. Return auth response
+ * 3. Store refresh token
+ * 4. Attempt to claim guest resources
+ * 5. Return auth response
  */
-const loginUser = async (payload) => {
-  // 1. Find user
+const loginUser = async (payload, metadata = {}) => {
+  // 1. Find user (include lockout fields)
   const user = await authRepository.findUserByEmail(payload.email, true);
 
   if (!user) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
-  // 2. Validate provider
+  // 2. Check account lockout
+  if (user.lockedUntil && user.lockedUntil > new Date()) {
+    const minutesLeft = Math.ceil((user.lockedUntil - new Date()) / 60000);
+    throw new AppError(
+      httpStatus.TOO_MANY_REQUESTS,
+      `Account is locked due to too many failed attempts. Try again in ${minutesLeft} minute${minutesLeft > 1 ? 's' : ''}.`
+    );
+  }
+
+  // 3. Validate provider
   if (user.provider !== "local") {
     throw new AppError(
       httpStatus.UNAUTHORIZED,
@@ -153,18 +213,29 @@ const loginUser = async (payload) => {
     );
   }
 
-  // 3. Validate password
+  // 4. Validate password
   const isPasswordMatched = await bcrypt.compare(payload.password, user.password);
 
   if (!isPasswordMatched) {
+    // Increment failed attempts and potentially lock account
+    await authRepository.incrementFailedLoginAttempts(user._id);
     throw new AppError(httpStatus.UNAUTHORIZED, "Invalid email or password");
   }
 
-  // 4. Claim guest resources (non-blocking)
+  // 5. Successful login - reset failed attempts and lockout
+  await authRepository.resetFailedLoginAttempts(user._id);
+
+  // 6. Build auth response (generates tokens)
+  const authResponse = buildAuthResponse(user);
+
+  // 7. Store refresh token
+  await storeRefreshToken(user._id, authResponse.refreshToken, metadata);
+
+  // 8. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(user._id, user.email);
 
-  // 5. Return auth response
-  return buildAuthResponse(user);
+  // 9. Return auth response
+  return authResponse;
 };
 
 /**
@@ -172,10 +243,11 @@ const loginUser = async (payload) => {
  * 
  * Flow:
  * 1. Find or create user from social profile
- * 2. Attempt to claim guest resources
- * 3. Return auth response
+ * 2. Store refresh token
+ * 3. Attempt to claim guest resources
+ * 4. Return auth response
  */
-const handleSocialLogin = async (profile, provider) => {
+const handleSocialLogin = async (profile, provider, metadata = {}) => {
   let user = null;
 
   // 1. Find existing social user
@@ -229,11 +301,17 @@ const handleSocialLogin = async (profile, provider) => {
     user = await authRepository.createUser(userData);
   }
 
-  // 4. Claim guest resources (non-blocking)
+  // 4. Build auth response (generates tokens)
+  const authResponse = buildAuthResponse(user);
+
+  // 5. Store refresh token
+  await storeRefreshToken(user._id, authResponse.refreshToken, metadata);
+
+  // 6. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(user._id, user.email);
 
-  // 5. Return auth response
-  return buildAuthResponse(user);
+  // 7. Return auth response
+  return authResponse;
 };
 
 /**
@@ -264,23 +342,54 @@ const getMe = async (userId) => {
 };
 
 /**
- * Refresh Access Token
- * Returns both access and refresh tokens
+ * Refresh Access Token with Atomic Token Rotation
+ * 
+ * Uses a single atomic findOneAndUpdate to claim the old token,
+ * preventing race conditions where the same token is rotated twice.
  */
-const refreshAccessToken = async (token) => {
+const refreshAccessToken = async (token, metadata = {}) => {
   if (!token) {
     throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token is required");
   }
 
   try {
+    // 1. Verify JWT signature
     const decoded = verifyRefreshToken(token);
+    const tokenHash = hashToken(token);
 
+    // 2. Atomically claim the token: find it unrevoked and mark it revoked
+    //    in a single operation. If another request already rotated it,
+    //    this returns null (modifiedCount=0).
+    const claimedToken = await RefreshToken.findOneAndUpdate(
+      {
+        tokenHash,
+        revoked: false,
+        expiresAt: { $gt: new Date() },
+      },
+      {
+        $set: { revoked: true },
+      },
+      {
+        new: true,
+      }
+    );
+
+    if (!claimedToken) {
+      // Token was already revoked or doesn't exist - possible theft attempt
+      // Revoke ALL tokens for this user as a security measure
+      logger.warn(`Revoked refresh token used for user ${decoded.userId} - revoking all tokens`);
+      await revokeAllUserTokens(decoded.userId);
+      throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token has been revoked. Please login again.");
+    }
+
+    // 3. Get user
     const user = await authRepository.findUserById(decoded.userId);
 
     if (!user) {
       throw new AppError(httpStatus.UNAUTHORIZED, "User not found or account deleted");
     }
 
+    // 4. Generate new token pair
     const jwtPayload = {
       userId: user._id.toString(),
       email: user.email,
@@ -290,10 +399,66 @@ const refreshAccessToken = async (token) => {
     const accessToken = generateAccessToken(jwtPayload);
     const refreshToken = generateRefreshToken(jwtPayload);
 
+    // 5. Store new refresh token, linked to the old one via replacedByTokenHash
+    const newTokenHash = hashToken(refreshToken);
+    const newDecoded = verifyRefreshToken(refreshToken);
+    const newExpiresAt = new Date(newDecoded.exp * 1000);
+
+    await RefreshToken.create({
+      user: user._id,
+      tokenHash: newTokenHash,
+      expiresAt: newExpiresAt,
+      replacedByTokenHash: null,
+      ipAddress: metadata.ipAddress || null,
+      userAgent: metadata.userAgent || null,
+    });
+
+    // 6. Link old token to new token (chain preservation)
+    claimedToken.replacedByTokenHash = newTokenHash;
+    await claimedToken.save();
+
     return { accessToken, refreshToken };
   } catch (error) {
+    if (error instanceof AppError) {
+      throw error;
+    }
     throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token expired or invalid. Please login again.");
   }
+};
+
+/**
+ * Logout - Revoke refresh token
+ * 
+ * Flow:
+ * 1. Find and revoke the specific refresh token
+ * 2. Return success
+ */
+const logout = async (refreshToken) => {
+  if (!refreshToken) {
+    // No token provided - just return success (client clears local storage)
+    return;
+  }
+
+  try {
+    const tokenHash = hashToken(refreshToken);
+    await revokeRefreshToken(tokenHash);
+  } catch (error) {
+    // Non-blocking: Don't fail logout if revocation fails
+    logger.error(`Failed to revoke refresh token on logout:`, {
+      error: error.message,
+    });
+  }
+};
+
+/**
+ * Logout All Devices - Revoke all refresh tokens for a user
+ * 
+ * Flow:
+ * 1. Revoke all tokens for the user
+ * 2. Return success
+ */
+const logoutAll = async (userId) => {
+  await revokeAllUserTokens(userId);
 };
 
 /**
@@ -351,6 +516,9 @@ const resetPassword = async ({ token, newPassword }) => {
 
   await authRepository.updatePassword(user._id, hashedPassword);
 
+  // Revoke all tokens on password reset (security best practice)
+  await revokeAllUserTokens(user._id);
+
   return null;
 };
 
@@ -390,6 +558,9 @@ const changePassword = async (userId, oldPassword, newPassword) => {
   const hashedPassword = await bcrypt.hash(newPassword, env.bcryptSaltRounds);
 
   await authRepository.updatePassword(user._id, hashedPassword);
+
+  // Revoke all tokens on password change (security best practice)
+  await revokeAllUserTokens(userId);
 
   return null;
 };
@@ -449,6 +620,8 @@ export default {
   handleSocialLogin,
   getMe,
   refreshAccessToken,
+  logout,
+  logoutAll,
   forgotPassword,
   resetPassword,
   changePassword,
