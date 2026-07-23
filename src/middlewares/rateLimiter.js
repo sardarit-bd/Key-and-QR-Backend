@@ -9,6 +9,10 @@ export const apiLimiter = rateLimit({
     max: 1000,
     standardHeaders: true,
     legacyHeaders: false,
+    skip: (req) => {
+        // Stripe webhooks must not be rate-limited (raw body, mounted before json parser)
+        return req.originalUrl?.includes("/stripe/webhook");
+    },
     message: {
         success: false,
         message: "Too many requests from this IP, please try again later.",

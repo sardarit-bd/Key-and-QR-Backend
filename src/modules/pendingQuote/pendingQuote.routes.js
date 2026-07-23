@@ -4,6 +4,7 @@ import auth from "../../middlewares/auth.middleware.js";
 import roleMiddleware from "../../middlewares/role.middleware.js";
 import roles from "../../constants/roles.js";
 import validateRequest from "../../middlewares/validate.middleware.js";
+import sanitizeBody from "../../middlewares/sanitize.middleware.js";
 import Joi from "joi";
 
 const router = express.Router();
@@ -11,7 +12,10 @@ const router = express.Router();
 // Validation schemas
 const submitQuoteValidation = Joi.object({
   text: Joi.string().required().min(3).max(500),
-  category: Joi.string().valid("faith", "love", "hope", "success", "motivation", "other"),
+  category: Joi.string().valid("love", "strength", "healing", "faith", "gratitude", "other"),
+  author: Joi.string().trim().max(100).optional().allow("", null),
+  type: Joi.string().valid("community", "gift").optional(),
+  orderId: Joi.string().optional(),
 });
 
 const approveRejectValidation = Joi.object({
@@ -22,6 +26,7 @@ const approveRejectValidation = Joi.object({
 router.post(
   "/submit",
   auth(),
+  sanitizeBody,
   validateRequest(submitQuoteValidation),
   pendingQuoteController.submitQuote
 );

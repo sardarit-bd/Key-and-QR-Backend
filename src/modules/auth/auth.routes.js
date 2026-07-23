@@ -18,6 +18,7 @@ import {
     registerLimiter,
     passwordResetLimiter,
 } from "../../middlewares/rateLimiter.js";
+import sanitizeBody from "../../middlewares/sanitize.middleware.js";
 
 const router = express.Router();
 
@@ -103,6 +104,7 @@ router.get("/social/success", authController.socialLoginSuccess);
 router.patch(
     "/update-profile",
     auth(roles.USER, roles.ADMIN),
+    sanitizeBody,
     validateRequest(updateProfileValidationSchema),
     authController.updateProfile
 );

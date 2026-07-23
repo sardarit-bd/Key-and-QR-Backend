@@ -9,6 +9,9 @@ const submitQuote = async (userId, payload) => {
     user: userId,
     text: payload.text,
     category: payload.category || "other",
+    type: payload.type || "community",
+    author: payload.author || null,
+    order: payload.orderId || null,
   });
 };
 
@@ -38,6 +41,7 @@ const approveQuote = async (id, adminNote = null) => {
   await quoteRepository.createQuote({
     text: pendingQuote.text,
     category: pendingQuote.category === "other" ? "motivation" : pendingQuote.category,
+    author: pendingQuote.author || null,
     isActive: true,
   });
 
