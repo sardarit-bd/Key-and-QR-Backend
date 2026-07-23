@@ -166,6 +166,7 @@ const buildShippingAddress = (payload) => ({
   phone: payload.phone || payload.shippingAddress?.phone || null,
   address: payload.address || payload.shippingAddress?.address || null,
   city: payload.city || payload.shippingAddress?.city || null,
+  state: payload.state || payload.shippingAddress?.state || null,
   postalCode: payload.postalCode || payload.shippingAddress?.postalCode || null,
   country: payload.country || payload.shippingAddress?.country || null,
 });
