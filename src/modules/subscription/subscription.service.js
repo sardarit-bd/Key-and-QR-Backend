@@ -182,7 +182,7 @@ const createCustomerPortalSession = async (userId) => {
 
   const session = await stripe.billingPortal.sessions.create({
     customer: user.stripeCustomerId,
-    return_url: `${env.clientUrl}/dashboard/user/subscription`,
+    return_url: `${env.clientUrl}/new-dashboard/user/subscription`,
   });
 
   return {
