@@ -14,11 +14,11 @@ const router = express.Router();
 
 router.get("/random", quoteController.getRandomQuote);
 
-// Admin only routes
+// Admin & Moderator routes
 router.post(
   "/",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   uploadSingleImage,
   validateRequest(createQuoteValidation),
   quoteController.createQuote
@@ -27,21 +27,21 @@ router.post(
 router.get(
   "/",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   quoteController.getAllQuotes
 );
 
 router.get(
   "/:id",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   quoteController.getQuoteById
 );
 
 router.patch(
   "/:id",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   uploadSingleImage,
   validateRequest(updateQuoteValidation),
   quoteController.updateQuote
@@ -50,14 +50,14 @@ router.patch(
 router.patch(
   "/:id/toggle",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   quoteController.toggleQuoteActive
 );
 
 router.delete(
   "/:id",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   quoteController.deleteQuote
 );
 

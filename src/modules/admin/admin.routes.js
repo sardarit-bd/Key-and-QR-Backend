@@ -19,6 +19,18 @@ router.get(
 );
 
 router.get(
+  "/users/stats",
+  auth(roles.ADMIN),
+  adminController.getUsersStats
+);
+
+router.get(
+  "/dashboard/overview",
+  auth(roles.ADMIN),
+  adminController.getDashboardOverview
+);
+
+router.get(
   "/users/:id",
   auth(roles.ADMIN),
   adminController.getUserById
@@ -42,6 +54,24 @@ router.delete(
   "/users/:id",
   auth(roles.ADMIN),
   adminController.deleteUser
+);
+
+router.patch(
+  "/users/:id/suspend",
+  auth(roles.ADMIN),
+  adminController.suspendUser
+);
+
+router.patch(
+  "/users/:id/activate",
+  auth(roles.ADMIN),
+  adminController.activateUser
+);
+
+router.patch(
+  "/users/:id",
+  auth(roles.ADMIN),
+  adminController.updateUser
 );
 
 export default router;

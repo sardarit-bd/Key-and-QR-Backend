@@ -15,8 +15,8 @@ const submitQuote = async (userId, payload) => {
   });
 };
 
-const getPendingQuotes = async (page, limit, search) => {
-  return pendingQuoteRepository.getPendingQuotes(page, limit, search);
+const getPendingQuotes = async (page, limit, search, status) => {
+  return pendingQuoteRepository.getPendingQuotes(page, limit, search, status);
 };
 
 const getPendingQuoteById = async (id) => {

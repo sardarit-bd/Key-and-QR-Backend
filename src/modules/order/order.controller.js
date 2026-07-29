@@ -129,12 +129,14 @@ const getAllOrders = catchAsync(async (req, res) => {
     const limit = parseInt(req.query.limit) || 10;
     const search = req.query.search || "";
     const fulfillmentStatus = req.query.fulfillmentStatus || null;
+    const tagAssignmentStatus = req.query.tagAssignmentStatus || null;
 
     const result = await orderService.getAllOrders(
         page,
         limit,
         search,
         fulfillmentStatus,
+        tagAssignmentStatus,
     );
 
     sendResponse(res, {

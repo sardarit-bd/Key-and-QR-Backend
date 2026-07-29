@@ -118,6 +118,10 @@ const getRelatedProducts = async (productId, limit = 4) => {
   }).limit(limit);
 };
 
+const countProducts = async (filter = {}) => {
+  return Product.countDocuments(filter);
+};
+
 const decreaseStock = async (id, quantity) => {
   return Product.findOneAndUpdate(
     { _id: id, stock: { $gte: quantity } },
@@ -147,4 +151,5 @@ export default {
   permanentDeleteProduct,
   decreaseStock,
   increaseStock,
+  countProducts,
 };

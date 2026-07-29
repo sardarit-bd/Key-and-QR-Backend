@@ -276,6 +276,16 @@ const getTagLifecycleStats = async () => {
   };
 };
 
+/**
+ * BULK UNASSIGN TAGS - Admin Feature
+ */
+const bulkUnassignTags = async (tagIds) => {
+  if (!tagIds || tagIds.length === 0) {
+    throw new AppError(httpStatus.BAD_REQUEST, "No tag IDs provided");
+  }
+  return tagRepository.bulkUnassignTags(tagIds);
+};
+
 // ================================
 // EXPORTS
 // ================================
@@ -299,4 +309,5 @@ export default {
   checkTagAvailabilityForOrder,
   getTagLifecycleStats,
   generateTagCodes,
+  bulkUnassignTags,
 };

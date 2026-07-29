@@ -703,28 +703,27 @@ const confirmPaymentAndAssignTag = async (
       requiredQty = order.quantity || 1;
     }
 
-    // ✅ 6. ATOMIC TAG ASSIGNMENT
+    // ✅ 6. ATOMIC TAG ASSIGNMENT (best-effort — payment never fails)
     const assignedTags = [];
     let tagAssignmentStatus = "none";
 
     if (requiredQty > 0) {
-      // Find and assign tags atomically
-      const assignedTagIds = await tagRepository.findAndAssignMultipleTags(
+      const found = await tagRepository.findAndAssignMultipleTags(
         requiredQty,
         order.user || null,
         orderId,
         session,
       );
 
-      if (assignedTagIds.length > 0) {
-        assignedTags.push(...assignedTagIds);
+      if (found.length > 0) {
+        assignedTags.push(...found);
 
         // Update order items with assigned tags
         if (order.items && order.items.length > 0) {
           let tagIndex = 0;
           for (const item of order.items) {
             const itemTagCount = item.quantity || 1;
-            const itemTags = assignedTagIds.slice(
+            const itemTags = found.slice(
               tagIndex,
               tagIndex + itemTagCount,
             );
@@ -741,46 +740,36 @@ const confirmPaymentAndAssignTag = async (
       }
 
       // Determine assignment status
-      if (assignedTagIds.length === 0) {
+      if (found.length === 0) {
         tagAssignmentStatus = "pending_assignment";
-      } else if (assignedTagIds.length < requiredQty) {
+      } else if (found.length < requiredQty) {
         tagAssignmentStatus = "partial";
       } else {
         tagAssignmentStatus = "complete";
       }
     }
 
-    // ✅ 7. BUILD UPDATE DATA
+    // ✅ 7. BUILD UPDATE DATA — payment ALWAYS succeeds
     const updateData = {
       paymentStatus: PAYMENT_STATUS.SUCCEEDED,
       stripePaymentIntentId: paymentIntentId,
-      tagAssignmentStatus: tagAssignmentStatus,
+      tagAssignmentStatus,
     };
 
-    // Update fulfillment status
+    // Update fulfillment status based on tag assignment
     if (tagAssignmentStatus === "complete") {
       updateData.fulfillmentStatus = "assigned";
     } else if (tagAssignmentStatus === "pending_assignment") {
       updateData.fulfillmentStatus = "pending";
-      // ✅ TRIGGER ADMIN NOTIFICATION
-      await createAdminNotification({
-        type: "TAG_NOT_AVAILABLE",
-        orderId: order._id,
-        userId: order.user,
-        requiredQty: requiredQty,
-        availableTags: assignedTagIds.length,
-        message: `No tags available for order ${order._id}. Required: ${requiredQty}, Available: ${assignedTagIds.length}`,
-      });
+    } else if (tagAssignmentStatus === "partial") {
+      updateData.fulfillmentStatus = "pending";
     } else {
       updateData.fulfillmentStatus = "pending";
     }
 
-    // Update assigned tags
+    // Update assigned tags in order
     if (assignedTags.length > 0) {
-      // Legacy support
       updateData.assignedTag = assignedTags[0];
-
-      // New format
       updateData.assignedTags = assignedTags.map((tagId) => ({
         tag: tagId,
         assignedAt: new Date(),
@@ -798,7 +787,7 @@ const confirmPaymentAndAssignTag = async (
     // ✅ 9. COMMIT TRANSACTION
     await session.commitTransaction();
     logger.info(
-      `✅ Order ${orderId} confirmed with ${assignedTags.length} tags assigned`,
+      `✅ Order ${orderId} confirmed with ${assignedTags.length} tags assigned (status: ${tagAssignmentStatus})`,
     );
 
     return updatedOrder;
@@ -1012,12 +1001,16 @@ const getAllOrders = async (
   limit = 10,
   search = "",
   fulfillmentStatus = null,
+  tagAssignmentStatus = null,
 ) => {
   const skip = (page - 1) * limit;
 
   const filter = {};
   if (fulfillmentStatus && fulfillmentStatus !== "all") {
     filter.fulfillmentStatus = fulfillmentStatus;
+  }
+  if (tagAssignmentStatus && tagAssignmentStatus !== "all") {
+    filter.tagAssignmentStatus = tagAssignmentStatus;
   }
 
   let orders = await Order.find(filter)

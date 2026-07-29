@@ -15,7 +15,7 @@ const findByTagCode = async (tagCode) => {
 };
 
 const getAllTags = async (query = {}) => {
-  const { page = 1, limit = 10, search, isActivated, isActive, unused } = query;
+  const { page = 1, limit = 10, search, isActivated, isActive, unused, subscriptionType } = query;
 
   const filter = {};
 
@@ -29,6 +29,10 @@ const getAllTags = async (query = {}) => {
 
   if (isActive !== undefined) {
     filter.isActive = isActive === "true";
+  }
+
+  if (subscriptionType && subscriptionType !== "all") {
+    filter.subscriptionType = subscriptionType;
   }
 
   if (unused === "true") {
@@ -347,6 +351,22 @@ const bulkCreateTags = async (tagCodes, batchSize = 100) => {
   return results;
 };
 
+/** Bulk unassign tags: set owner=null, isActivated=false, activatedAt=null, personalMessage=null */
+const bulkUnassignTags = async (tagIds) => {
+  const result = await Tag.updateMany(
+    { _id: { $in: tagIds } },
+    {
+      $set: {
+        owner: null,
+        isActivated: false,
+        activatedAt: null,
+        personalMessage: null,
+      },
+    }
+  );
+  return result;
+};
+
 // ================================
 // EXPORTS
 // ================================
@@ -375,4 +395,5 @@ export default {
   countUnassignedTags,
   getTagAvailabilityStatus,
   bulkCreateTags,
+  bulkUnassignTags,
 };

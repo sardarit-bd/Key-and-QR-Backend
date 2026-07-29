@@ -62,6 +62,14 @@ router.patch(
   tagController.updateTag
 );
 
+// Bulk unassign tags
+router.post(
+  "/bulk-unassign",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.bulkUnassign
+);
+
 // ==================== DYNAMIC ROUTES LAST ====================
 
 // Get tag info by code
