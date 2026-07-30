@@ -39,6 +39,7 @@ const getTagByCode = catchAsync(async (req, res) => {
 });
 
 const updateTag = catchAsync(async (req, res) => {
+
   const result = await tagService.updateTag(req.params.id, req.body);
 
   sendResponse(res, {

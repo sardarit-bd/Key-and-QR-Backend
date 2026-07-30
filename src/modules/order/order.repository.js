@@ -74,8 +74,10 @@ const findById = (id) => {
         .lean();
 };
 
-const updateOrder = (id, payload) => {
-    return Order.findByIdAndUpdate(id, payload, { returnDocument: "after" })
+const updateOrder = (id, payload, session = null) => {
+    const options = { returnDocument: "after" };
+    if (session) options.session = session;
+    return Order.findByIdAndUpdate(id, payload, options)
         .populate("product")
         .populate("items.product")
         .populate("assignedTag", "tagCode")

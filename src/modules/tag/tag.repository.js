@@ -15,7 +15,7 @@ const findByTagCode = async (tagCode) => {
 };
 
 const getAllTags = async (query = {}) => {
-  const { page = 1, limit = 10, search, isActivated, isActive, unused } = query;
+  const { page = 1, limit = 10, search, isActivated, isActive, unused, subscriptionType } = query;
 
   const filter = {};
 
@@ -29,6 +29,10 @@ const getAllTags = async (query = {}) => {
 
   if (isActive !== undefined) {
     filter.isActive = isActive === "true";
+  }
+
+  if (subscriptionType && subscriptionType !== "all") {
+    filter.subscriptionType = subscriptionType;
   }
 
   if (unused === "true") {
@@ -177,42 +181,34 @@ const findAndAssignMultipleTags = async (limit = 10, userId, orderId, session = 
   const assignedTags = [];
 
   for (let i = 0; i < limit; i++) {
-    try {
-      const options = { 
-        new: true, 
-        sort: { createdAt: 1 } // FIFO - oldest tags first
-      };
-      if (session) options.session = session;
+    const options = {
+      new: true,
+      sort: { createdAt: 1 }, // FIFO — oldest tags first
+    };
+    if (session) options.session = session;
 
-      const tag = await Tag.findOneAndUpdate(
-        {
-          owner: null,
-          isActive: true,
-          isActivated: false,
-          _id: { $nin: assignedTagIds.concat(assignedTags) },
-        },
-        {
-          owner: userId,
-          isActivated: true,
-          activatedAt: new Date(),
-          assignedOrderId: orderId,
-        },
-        options
-      );
+    const tag = await Tag.findOneAndUpdate(
+      {
+        owner: null,
+        isActive: true,
+        isActivated: false,
+        _id: { $nin: assignedTagIds.concat(assignedTags) },
+      },
+      {
+        owner: userId,
+        isActivated: true,
+        activatedAt: new Date(),
+        assignedOrderId: orderId,
+      },
+      options,
+    );
 
-      if (tag) {
-        assignedTags.push(tag._id);
-        logger.info(`✅ Tag ${tag.tagCode} assigned atomically to order ${orderId}`);
-      } else {
-        logger.warn(`⚠️ No more tags available for order ${orderId}. Needed: ${limit - i}, Found: ${assignedTags.length}`);
-        break;
-      }
-    } catch (error) {
-      if (error.code === 11000) {
-        logger.warn(`⚠️ Tag assignment conflict, retrying...`);
-        continue;
-      }
-      throw error;
+    if (tag) {
+      assignedTags.push(tag._id);
+      logger.info(`✅ Tag ${tag.tagCode} assigned atomically to order ${orderId}`);
+    } else {
+      logger.warn(`⚠️ No more tags available for order ${orderId}. Needed: ${limit - i}, Found: ${assignedTags.length}`);
+      break;
     }
   }
 

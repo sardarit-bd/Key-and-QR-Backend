@@ -31,11 +31,11 @@ router.post(
   pendingQuoteController.submitQuote
 );
 
-// Admin routes
+// Admin & Moderator routes
 router.get(
   "/",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   pendingQuoteController.getPendingQuotes
 );
 
@@ -48,7 +48,7 @@ router.get(
 router.patch(
   "/:id/approve",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   validateRequest(approveRejectValidation),
   pendingQuoteController.approveQuote
 );
@@ -56,7 +56,7 @@ router.patch(
 router.patch(
   "/:id/reject",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   validateRequest(approveRejectValidation),
   pendingQuoteController.rejectQuote
 );
@@ -64,7 +64,7 @@ router.patch(
 router.delete(
   "/:id",
   auth(),
-  roleMiddleware(roles.ADMIN),
+  roleMiddleware(roles.ADMIN, roles.MODERATOR),
   pendingQuoteController.deletePendingQuote
 );
 

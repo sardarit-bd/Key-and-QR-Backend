@@ -16,8 +16,8 @@ const createAdmin = async (payload) => {
     });
 };
 
-const getAllUsers = async () => {
-    return adminRepository.getAllUsers();
+const getAllUsers = async (query = {}) => {
+    return adminRepository.getAllUsers(query);
 };
 
 const getUserById = async (id) => {
@@ -78,6 +78,24 @@ const deleteUser = async (id) => {
     return user;
 };
 
+const suspendUser = async (id) => {
+    const user = await adminRepository.suspendUser(id);
+    if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+    return user;
+};
+
+const activateUser = async (id) => {
+    const user = await adminRepository.activateUser(id);
+    if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+    return user;
+};
+
+const updateUser = async (id, updates) => {
+    const user = await adminRepository.updateUser(id, updates);
+    if (!user) throw new AppError(httpStatus.NOT_FOUND, "User not found");
+    return user;
+};
+
 export default {
     createAdmin,
     getAllUsers,
@@ -85,4 +103,7 @@ export default {
     updateUserRole,
     updateAdminProfile,
     deleteUser,
+    suspendUser,
+    activateUser,
+    updateUser,
 };

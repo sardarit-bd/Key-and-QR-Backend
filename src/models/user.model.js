@@ -37,7 +37,7 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-      enum: [roles.USER, roles.ADMIN],
+      enum: [roles.USER, roles.MODERATOR, roles.ADMIN],
       default: roles.USER,
     },
 
@@ -66,6 +66,11 @@ const userSchema = new mongoose.Schema(
     },
 
     isEmailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    isSuspended: {
       type: Boolean,
       default: false,
     },

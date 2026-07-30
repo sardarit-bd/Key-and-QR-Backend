@@ -5,10 +5,18 @@ const createPendingQuote = (payload) => {
   return PendingQuote.create(payload);
 };
 
-const getPendingQuotes = async (page = 1, limit = 10, search = "") => {
+const getPendingQuotes = async (page = 1, limit = 10, search = "", status = "") => {
   const skip = (page - 1) * limit;
 
-  const filter = { status: "pending" };
+  const filter = {};
+
+  if (status && status !== "all") {
+    filter.status = status;
+  } else if (!status || status === "all") {
+    // no filter — return all statuses
+  } else {
+    filter.status = "pending";
+  }
 
   if (search) {
     filter.$or = [
@@ -96,6 +104,10 @@ const getMyQuotes = async (userId, page = 1, limit = 50) => {
   };
 };
 
+const countPendingQuotes = async () => {
+  return PendingQuote.countDocuments({ status: "pending" });
+};
+
 
 export default {
   createPendingQuote,
@@ -105,4 +117,5 @@ export default {
   rejectQuote,
   deletePendingQuote,
   getMyQuotes,
+  countPendingQuotes,
 };

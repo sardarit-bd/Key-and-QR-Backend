@@ -20,8 +20,9 @@ const getPendingQuotes = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
   const search = req.query.search || "";
-  
-  const result = await pendingQuoteService.getPendingQuotes(page, limit, search);
+  const status = req.query.status || "";
+
+  const result = await pendingQuoteService.getPendingQuotes(page, limit, search, status);
   
   sendResponse(res, {
     statusCode: httpStatus.OK,

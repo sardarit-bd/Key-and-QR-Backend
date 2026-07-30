@@ -154,7 +154,7 @@ const orderSchema = new mongoose.Schema(
 
         tagAssignmentStatus: {
             type: String,
-            enum: ["none", "partial", "complete"],
+            enum: ["none", "pending_assignment", "partial", "complete"],
             default: "none",
             index: true,
         },

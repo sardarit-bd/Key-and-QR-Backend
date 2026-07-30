@@ -42,6 +42,12 @@ const tagSchema = new mongoose.Schema(
       trim: true,
       maxlength: 500,
     },
+
+    assignedOrderId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+    },
   },
   { timestamps: true }
 );

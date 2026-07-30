@@ -86,6 +86,14 @@ router.delete(
     orderController.removeTagFromOrder
 );
 
+// Bulk unassign tags (orchestrated from Order module)
+router.post(
+    "/bulk-unassign",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.bulkUnassignTags
+);
+
 // ===============================
 // SHIPPING (Auth Required)
 // ===============================

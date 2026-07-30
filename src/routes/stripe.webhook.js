@@ -91,7 +91,6 @@ router.post(
             await orderService.confirmPaymentAndAssignTag(
               orderId,
               paymentIntentId,
-              eventId // Pass eventId for idempotency
             );
           } else if (session.mode === "subscription") {
             await handleSubscriptionWebhook(event);
