@@ -410,6 +410,22 @@ const removeTagFromOrder = catchAsync(async (req, res) => {
     });
 });
 
+/**
+ * Bulk Unassign Tags (Admin)
+ * Orchestrates from Order module so every tag unassign also syncs its Order.
+ */
+const bulkUnassignTags = catchAsync(async (req, res) => {
+    const { tagIds } = req.body;
+    const result = await orderService.bulkUnassignTags(tagIds);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: `${result.modifiedCount} tag(s) unassigned successfully`,
+        data: result,
+    });
+});
+
 export default {
     createCheckout,
     getOrderById,
@@ -430,4 +446,5 @@ export default {
     addTagToOrder,
     replaceOrderTag,
     removeTagFromOrder,
+    bulkUnassignTags,
 };

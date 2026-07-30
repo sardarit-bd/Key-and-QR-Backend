@@ -181,17 +181,6 @@ const getMyTags = catchAsync(async (req, res) => {
   });
 });
 
-const bulkUnassign = catchAsync(async (req, res) => {
-  const { tagIds } = req.body;
-  const result = await tagService.bulkUnassignTags(tagIds);
-  sendResponse(res, {
-    statusCode: httpStatus.OK,
-    success: true,
-    message: `${result.modifiedCount} tag(s) unassigned successfully`,
-    data: result,
-  });
-});
-
 export default {
   createTag,
   getAllTags,
@@ -202,5 +191,4 @@ export default {
   setPersonalMessage,
   getPersonalMessage,
   getMyTags,
-  bulkUnassign,
 };

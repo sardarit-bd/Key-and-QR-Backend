@@ -10,7 +10,6 @@ import mongoose from "mongoose";
 import pendingQuoteRepository from "../pendingQuote/pendingQuote.repository.js";
 import PAYMENT_CONFIG from "../../config/payment.config.js";
 import PAYMENT_STATUS from "../../config/paymentStatus.js";
-import WebhookLog from "../../models/webhookLog.model.js";
 import logger from "../../utils/logger.js";
 import { generateGuestAccessToken } from "../../utils/jwt.js";
 
@@ -210,10 +209,11 @@ const getTagId = (item) => {
 };
 
 /**
- * Build tag assignment status
+ * Build tag assignment status — single source of truth
+ * Used by: webhook, admin assignment, manual update, unassign
  */
 const buildTagAssignmentStatus = (assignedCount, requiredQty) => {
-  if (assignedCount === 0) return "none";
+  if (assignedCount === 0) return "pending_assignment";
   if (assignedCount < requiredQty) return "partial";
   return "complete";
 };
@@ -608,204 +608,160 @@ const createCheckoutSession = async (orderId) => {
 
 /**
  * Confirm Payment & Assign Tags
+ *
+ * Called by the Stripe webhook handler AFTER webhook-level idempotency.
+ * Assumes the event has already been claimed by the webhook route.
+ * Uses MongoDB withTransaction for full atomicity:
+ *   - Tag assignment and order update commit together or roll back together.
  */
 const confirmPaymentAndAssignTag = async (
   orderId,
   paymentIntentId,
-  webhookEventId = null,
 ) => {
   const session = await mongoose.startSession();
-  session.startTransaction();
 
   try {
-    // ✅ 1. VERIFY WEBHOOK IDEMPOTENCY
-    if (webhookEventId) {
-      const existingWebhook = await WebhookLog.findOne({
-        eventId: webhookEventId,
-        status: "completed",
-        "metadata.orderId": orderId,
-      });
+    const result = await session.withTransaction(async () => {
+      // ✅ 1. GET ORDER WITH LOCK (inside transaction)
+      const order = await Order.findById(orderId).session(session);
+      if (!order) {
+        throw new AppError(httpStatus.NOT_FOUND, "Order not found");
+      }
 
-      if (existingWebhook) {
-        logger.info(
-          `✅ Webhook ${webhookEventId} already processed this order`,
-        );
-        // If already processed, return existing order
-        const order = await orderRepository.findById(orderId);
-        await session.abortTransaction();
+      // ✅ 2. ALREADY PAID — idempotent
+      if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
+        logger.info(`Order ${orderId} already paid — returning`);
         return order;
       }
-    }
 
-    // ✅ 2. GET ORDER WITH LOCK
-    const order = await Order.findById(orderId).session(session);
-    if (!order) {
-      throw new AppError(httpStatus.NOT_FOUND, "Order not found");
-    }
-
-    // ✅ 3. VERIFY PAYMENT INTENT
-    let paymentIntent;
-    try {
-      paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-
-      if (paymentIntent.status !== "succeeded") {
+      // ✅ 3. CANCELLED — reject
+      if (order.fulfillmentStatus === "cancelled") {
         throw new AppError(
           httpStatus.BAD_REQUEST,
-          `Payment not completed. Status: ${paymentIntent.status}`,
+          "Cannot confirm payment for cancelled order",
         );
       }
 
-      // Verify amount matches
-      const expectedAmount = Math.round(order.grandTotal * 100);
-      if (paymentIntent.amount !== expectedAmount) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          `Payment amount mismatch. Expected: ${expectedAmount}, Received: ${paymentIntent.amount}`,
+      // ✅ 4. VERIFY PAYMENT INTENT
+      let paymentIntent;
+      try {
+        paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+
+        if (paymentIntent.status !== "succeeded") {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Payment not completed. Status: ${paymentIntent.status}`,
+          );
+        }
+
+        const expectedAmount = Math.round(order.grandTotal * 100);
+        if (paymentIntent.amount !== expectedAmount) {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Payment amount mismatch. Expected: ${expectedAmount}, Received: ${paymentIntent.amount}`,
+          );
+        }
+
+        if (paymentIntent.currency !== PAYMENT_CONFIG.getCurrency()) {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Currency mismatch. Expected: ${PAYMENT_CONFIG.getCurrency()}, Received: ${paymentIntent.currency}`,
+          );
+        }
+      } catch (error) {
+        if (error.type === "StripeInvalidRequestError") {
+          throw new AppError(httpStatus.BAD_REQUEST, "Invalid payment intent ID");
+        }
+        throw error;
+      }
+
+      // ✅ 5. CALCULATE REQUIRED TAGS
+      let requiredQty = 0;
+      if (order.items && order.items.length > 0) {
+        requiredQty = order.items.reduce(
+          (sum, item) => sum + (item.quantity || 1),
+          0,
         );
+      } else {
+        requiredQty = order.quantity || 1;
       }
 
-      // Verify currency
-      if (paymentIntent.currency !== PAYMENT_CONFIG.getCurrency()) {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          `Currency mismatch. Expected: ${PAYMENT_CONFIG.getCurrency()}, Received: ${paymentIntent.currency}`,
+      // ✅ 6. ATOMIC TAG ASSIGNMENT (best-effort — payment never fails)
+      const assignedTags = [];
+
+      if (requiredQty > 0) {
+        const found = await tagRepository.findAndAssignMultipleTags(
+          requiredQty,
+          order.user || null,
+          orderId,
+          session,
         );
-      }
-    } catch (error) {
-      if (error.type === "StripeInvalidRequestError") {
-        throw new AppError(httpStatus.BAD_REQUEST, "Invalid payment intent ID");
-      }
-      throw error;
-    }
 
-    // ✅ 4. CHECK ORDER STATUS
-    if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
-      logger.info(`Order ${orderId} already paid`);
-      await session.abortTransaction();
-      return order;
-    }
+        if (found.length > 0) {
+          assignedTags.push(...found);
 
-    if (order.fulfillmentStatus === "cancelled") {
-      throw new AppError(
-        httpStatus.BAD_REQUEST,
-        "Cannot confirm payment for cancelled order",
-      );
-    }
-
-    // ✅ 5. CALCULATE REQUIRED TAGS
-    let requiredQty = 0;
-    if (order.items && order.items.length > 0) {
-      requiredQty = order.items.reduce(
-        (sum, item) => sum + (item.quantity || 1),
-        0,
-      );
-    } else {
-      requiredQty = order.quantity || 1;
-    }
-
-    // ✅ 6. ATOMIC TAG ASSIGNMENT (best-effort — payment never fails)
-    const assignedTags = [];
-    let tagAssignmentStatus = "none";
-
-    if (requiredQty > 0) {
-      const found = await tagRepository.findAndAssignMultipleTags(
-        requiredQty,
-        order.user || null,
-        orderId,
-        session,
-      );
-
-      if (found.length > 0) {
-        assignedTags.push(...found);
-
-        // Update order items with assigned tags
-        if (order.items && order.items.length > 0) {
-          let tagIndex = 0;
-          for (const item of order.items) {
-            const itemTagCount = item.quantity || 1;
-            const itemTags = found.slice(
-              tagIndex,
-              tagIndex + itemTagCount,
-            );
-            if (itemTags.length > 0) {
-              await Order.updateOne(
-                { _id: orderId, "items._id": item._id },
-                { $set: { "items.$.assignedTags": itemTags } },
-                { session },
+          // Update order items with assigned tags
+          if (order.items && order.items.length > 0) {
+            let tagIndex = 0;
+            for (const item of order.items) {
+              const itemTagCount = item.quantity || 1;
+              const itemTags = found.slice(
+                tagIndex,
+                tagIndex + itemTagCount,
               );
+              if (itemTags.length > 0) {
+                await Order.updateOne(
+                  { _id: orderId, "items._id": item._id },
+                  { $set: { "items.$.assignedTags": itemTags } },
+                  { session },
+                );
+              }
+              tagIndex += itemTagCount;
             }
-            tagIndex += itemTagCount;
           }
         }
       }
 
-      // Determine assignment status
-      if (found.length === 0) {
-        tagAssignmentStatus = "pending_assignment";
-      } else if (found.length < requiredQty) {
-        tagAssignmentStatus = "partial";
-      } else {
-        tagAssignmentStatus = "complete";
-      }
-    }
-
-    // ✅ 7. BUILD UPDATE DATA — payment ALWAYS succeeds
-    const updateData = {
-      paymentStatus: PAYMENT_STATUS.SUCCEEDED,
-      stripePaymentIntentId: paymentIntentId,
-      tagAssignmentStatus,
-    };
-
-    // Update fulfillment status based on tag assignment
-    if (tagAssignmentStatus === "complete") {
-      updateData.fulfillmentStatus = "assigned";
-    } else if (tagAssignmentStatus === "pending_assignment") {
-      updateData.fulfillmentStatus = "pending";
-    } else if (tagAssignmentStatus === "partial") {
-      updateData.fulfillmentStatus = "pending";
-    } else {
-      updateData.fulfillmentStatus = "pending";
-    }
-
-    // Update assigned tags in order
-    if (assignedTags.length > 0) {
-      updateData.assignedTag = assignedTags[0];
-      updateData.assignedTags = assignedTags.map((tagId) => ({
-        tag: tagId,
-        assignedAt: new Date(),
-        assignedBy: "auto",
-      }));
-    }
-
-    // ✅ 8. UPDATE ORDER
-    const updatedOrder = await orderRepository.updateOrder(
-      orderId,
-      updateData,
-      session,
-    );
-
-    // ✅ 9. COMMIT TRANSACTION
-    await session.commitTransaction();
-    logger.info(
-      `✅ Order ${orderId} confirmed with ${assignedTags.length} tags assigned (status: ${tagAssignmentStatus})`,
-    );
-
-    return updatedOrder;
-  } catch (error) {
-    await session.abortTransaction();
-    logger.error(`❌ Failed to confirm payment for order ${orderId}:`, error);
-
-    // Update webhook log if exists
-    if (webhookEventId) {
-      await WebhookLog.updateOne(
-        { eventId: webhookEventId },
-        {
-          status: "failed",
-          error: error.message,
-        },
+      const tagAssignmentStatus = buildTagAssignmentStatus(
+        assignedTags.length,
+        requiredQty,
       );
-    }
 
+      // ✅ 7. BUILD UPDATE DATA
+      const updateData = {
+        paymentStatus: PAYMENT_STATUS.SUCCEEDED,
+        stripePaymentIntentId: paymentIntentId,
+        tagAssignmentStatus,
+        fulfillmentStatus:
+          tagAssignmentStatus === "complete" ? "assigned" : "pending",
+      };
+
+      if (assignedTags.length > 0) {
+        updateData.assignedTag = assignedTags[0];
+        updateData.assignedTags = assignedTags.map((tagId) => ({
+          tag: tagId,
+          assignedAt: new Date(),
+          assignedBy: "auto",
+        }));
+      }
+
+      // ✅ 8. UPDATE ORDER (inside transaction — same session)
+      const updatedOrder = await orderRepository.updateOrder(
+        orderId,
+        updateData,
+        session,
+      );
+
+      logger.info(
+        `✅ Order ${orderId} confirmed with ${assignedTags.length} tags assigned (status: ${tagAssignmentStatus})`,
+      );
+
+      return updatedOrder;
+    });
+
+    return result;
+  } catch (error) {
+    logger.error(`❌ Failed to confirm payment for order ${orderId}:`, error.message);
     throw error;
   } finally {
     session.endSession();
@@ -2048,8 +2004,9 @@ const addTagToOrder = async (orderId, tagId) => {
 
 /**
  * Remove Tag from Order (Admin)
+ * Supports optional session for transactional bulk operations
  */
-const removeTagFromOrder = async (orderId, tagId) => {
+const removeTagFromOrder = async (orderId, tagId, session = null) => {
   const order = await orderRepository.findById(orderId);
 
   if (!order) {
@@ -2071,7 +2028,7 @@ const removeTagFromOrder = async (orderId, tagId) => {
     throw new AppError(404, "Tag is not assigned to this order");
   }
 
-  await tagRepository.resetTag(targetTagId);
+  await tagRepository.resetTag(targetTagId, session);
 
   const updatedAssignedTags = existingAssignedTags
     .filter((item) => getTagId(item) !== targetTagId)
@@ -2088,16 +2045,61 @@ const removeTagFromOrder = async (orderId, tagId) => {
     requiredQty,
   );
 
-
   const result = await orderRepository.updateOrder(orderId, {
     assignedTags: updatedAssignedTags,
     assignedTag: updatedAssignedTags[0]?.tag || null,
     tagAssignmentStatus,
     fulfillmentStatus:
       tagAssignmentStatus === "complete" ? "assigned" : "pending",
-  });
+  }, session);
 
   return result;
+};
+
+/**
+ * Bulk Unassign Tags — orchestrates from the Order module
+ *
+ * For each tag ID, finds the related order and calls removeTagFromOrder()
+ * so that Tag reset + Order update always stay synchronized.
+ * Wrapped in a single MongoDB transaction.
+ */
+const bulkUnassignTags = async (tagIds) => {
+  if (!tagIds || tagIds.length === 0) {
+    throw new AppError(400, "No tag IDs provided");
+  }
+
+  const session = await mongoose.startSession();
+
+  try {
+    const result = await session.withTransaction(async () => {
+      let totalModified = 0;
+
+      for (const tagId of tagIds) {
+        // Find the order that currently references this tag
+        const order = await Order.findOne({
+          fulfillmentStatus: { $nin: ["cancelled", "returned"] },
+          $or: [
+            { assignedTag: tagId },
+            { "assignedTags.tag": tagId },
+          ],
+        }).session(session);
+
+        if (!order) {
+          // Tag may already be free — skip silently
+          continue;
+        }
+
+        await removeTagFromOrder(order._id, tagId, session);
+        totalModified++;
+      }
+
+      return { modifiedCount: totalModified };
+    });
+
+    return result;
+  } finally {
+    session.endSession();
+  }
 };
 
 /**
@@ -2240,5 +2242,6 @@ export default {
   addTagToOrder,
   replaceOrderTag,
   removeTagFromOrder,
+  bulkUnassignTags,
   claimGiftOrder,
 };

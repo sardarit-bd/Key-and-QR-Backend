@@ -51,8 +51,7 @@ const updateTag = async (id, payload) => {
     throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
   }
 
-  const result = await tagRepository.updateTag(id, payload);
-  return result;
+  return tagRepository.updateTag(id, payload);
 };
 
 const activateTag = async (tagCode, userId) => {
@@ -277,16 +276,6 @@ const getTagLifecycleStats = async () => {
   };
 };
 
-/**
- * BULK UNASSIGN TAGS - Admin Feature
- */
-const bulkUnassignTags = async (tagIds) => {
-  if (!tagIds || tagIds.length === 0) {
-    throw new AppError(httpStatus.BAD_REQUEST, "No tag IDs provided");
-  }
-  return tagRepository.bulkUnassignTags(tagIds);
-};
-
 // ================================
 // EXPORTS
 // ================================
@@ -310,5 +299,4 @@ export default {
   checkTagAvailabilityForOrder,
   getTagLifecycleStats,
   generateTagCodes,
-  bulkUnassignTags,
 };
