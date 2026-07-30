@@ -361,6 +361,7 @@ const bulkUnassignTags = async (tagIds) => {
         isActivated: false,
         activatedAt: null,
         personalMessage: null,
+        assignedOrderId: null,
       },
     }
   );

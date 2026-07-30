@@ -51,7 +51,8 @@ const updateTag = async (id, payload) => {
     throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
   }
 
-  return tagRepository.updateTag(id, payload);
+  const result = await tagRepository.updateTag(id, payload);
+  return result;
 };
 
 const activateTag = async (tagCode, userId) => {

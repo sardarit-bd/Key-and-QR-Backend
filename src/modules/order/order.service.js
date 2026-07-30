@@ -1281,6 +1281,7 @@ const updateOrder = async (id, payload, session = null, user = null) => {
         owner: order.user,
         isActivated: true,
         activatedAt: new Date(),
+        assignedOrderId: id,
       },
       updateOptions,
     );
@@ -2012,6 +2013,7 @@ const addTagToOrder = async (orderId, tagId) => {
     owner: order.user,
     isActivated: true,
     activatedAt: new Date(),
+    assignedOrderId: orderId,
   });
 
   const updatedAssignedTags = [
@@ -2032,13 +2034,16 @@ const addTagToOrder = async (orderId, tagId) => {
     requiredQty,
   );
 
-  return orderRepository.updateOrder(orderId, {
+
+  const result = await orderRepository.updateOrder(orderId, {
     assignedTags: updatedAssignedTags,
     assignedTag: order.assignedTag || tag._id,
     tagAssignmentStatus,
     fulfillmentStatus:
       tagAssignmentStatus === "complete" ? "assigned" : "pending",
   });
+
+  return result;
 };
 
 /**
@@ -2083,13 +2088,16 @@ const removeTagFromOrder = async (orderId, tagId) => {
     requiredQty,
   );
 
-  return orderRepository.updateOrder(orderId, {
+
+  const result = await orderRepository.updateOrder(orderId, {
     assignedTags: updatedAssignedTags,
     assignedTag: updatedAssignedTags[0]?.tag || null,
     tagAssignmentStatus,
     fulfillmentStatus:
       tagAssignmentStatus === "complete" ? "assigned" : "pending",
   });
+
+  return result;
 };
 
 /**
@@ -2135,6 +2143,7 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     owner: order.user,
     isActivated: true,
     activatedAt: new Date(),
+    assignedOrderId: orderId,
   });
 
   let updatedAssignedTags = existingAssignedTags.map((item) => {
@@ -2171,7 +2180,8 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     requiredQty,
   );
 
-  return orderRepository.updateOrder(orderId, {
+
+  const result = await orderRepository.updateOrder(orderId, {
     assignedTags: updatedAssignedTags,
     assignedTag: oldExistsInAssignedTag
       ? newTag._id
@@ -2180,6 +2190,8 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     fulfillmentStatus:
       tagAssignmentStatus === "complete" ? "assigned" : "pending",
   });
+
+  return result;
 };
 
 // ============================================================
