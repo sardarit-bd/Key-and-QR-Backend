@@ -89,15 +89,14 @@ favoriteSchema.index(
 );
 
 // Pre-save middleware to set type
-favoriteSchema.pre('save', function(next) {
-    if (this.product) {
-        this.type = 'product';
-    } else if (this.quote) {
-        this.type = 'quote';
-    } else {
-        return next(new Error('Favorite must have either product or quote'));
-    }
-    next();
+favoriteSchema.pre("save", function () {
+  if (this.product) {
+    this.type = "product";
+  } else if (this.quote) {
+    this.type = "quote";
+  } else {
+    throw new Error("Favorite must have either product or quote");
+  }
 });
 
 // Virtual for favorite type display

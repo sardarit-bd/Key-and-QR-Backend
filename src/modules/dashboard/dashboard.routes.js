@@ -15,6 +15,12 @@ router.use(auth());
 router.get("/overview", dashboardController.getOverview);
 
 /**
+ * Dashboard home — SINGLE aggregated endpoint for the new User Dashboard
+ * GET /api/v1/dashboard/home
+ */
+router.get("/home", dashboardController.getHome);
+
+/**
  * Main dashboard endpoint (legacy)
  * GET /api/v1/dashboard
  */

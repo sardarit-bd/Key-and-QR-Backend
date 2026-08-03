@@ -82,10 +82,27 @@ const getRecentActivity = catchAsync(async (req, res) => {
     });
 });
 
+/**
+ * Get dashboard home data — SINGLE aggregated endpoint for the new User Dashboard
+ * GET /api/v1/dashboard/home
+ */
+const getHome = catchAsync(async (req, res) => {
+    const userId = req.user.userId;
+    const homeData = await dashboardService.getHomeData(userId);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Dashboard home data fetched successfully",
+        data: homeData,
+    });
+});
+
 export default {
     getOverview,
     getDashboard,
     getDashboardCounts,
     hasResources,
     getRecentActivity,
+    getHome,
 };

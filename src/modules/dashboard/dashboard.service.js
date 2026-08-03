@@ -9,6 +9,11 @@ import heroRepository from "../hero/hero.repository.js";
 import activityService from "./activity.service.js";
 import authRepository from "../auth/auth.repository.js";
 import logger from "../../utils/logger.js";
+import receivedQuoteService from "../received-quote/receivedQuote.service.js";
+import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
+import categoryRepository from "../category/category.repository.js";
+import favoriteRepository from "../favorite/favorite.repository.js";
+import streakService from "../streak/streak.service.js";
 
 /**
  * Dashboard Service
@@ -16,11 +21,168 @@ import logger from "../../utils/logger.js";
  */
 class DashboardService {
     /**
+     * Generate a server-side truncated preview for dashboard cards.
+     */
+    buildPreviewText(text, maxLength = 120) {
+        if (!text) return "";
+        const trimmed = text.trim();
+        if (trimmed.length <= maxLength) return trimmed;
+        return `${trimmed.slice(0, maxLength).trimEnd()}...`;
+    }
+
+    /**
+     * Resolve which categories are available to the user today.
+     * Free users: only Inspire. Subscribers: all active categories
+     * (locked only when today's limit is reached).
+     */
+    buildAvailableCategories(categories, plan, isLimitReached) {
+        return categories.map((category) => {
+            const isPremium = !!category.isPremium;
+            const isInspire = category.slug === "inspire";
+
+            let isLocked = false;
+            let lockedReason = null;
+
+            if (plan === "free") {
+                if (!isInspire) {
+                    isLocked = true;
+                    lockedReason = "premium";
+                } else if (isLimitReached) {
+                    isLocked = true;
+                    lockedReason = "daily-limit";
+                }
+            } else {
+                if (isLimitReached) {
+                    isLocked = true;
+                    lockedReason = "daily-limit";
+                }
+            }
+
+            return {
+                id: category._id,
+                name: category.name,
+                slug: category.slug,
+                icon: category.icon,
+                color: category.color,
+                isPremium,
+                isLocked,
+                isAvailableToday: !isLocked,
+            };
+        });
+    }
+
+    /**
+     * NEW dashboard home — SINGLE aggregated endpoint.
+     * GET /api/v1/dashboard/home
+     */
+    async getHomeData(userId) {
+        const [
+            latestReceivedQuote,
+            dailyUsage,
+            receivedStats,
+            favoriteCount,
+            categories,
+            historyDates,
+        ] = await Promise.all([
+            receivedQuoteRepository.getLatestReceivedQuote(userId),
+            receivedQuoteService.getDailyUsage(userId),
+            receivedQuoteRepository.getStatistics(userId),
+            favoriteRepository.getFavoriteCountByType(userId, "quote"),
+            categoryRepository.getAllCategories({ page: 1, limit: 100, includeInactive: false }),
+            receivedQuoteRepository.getUserHistoryDates(userId),
+        ]);
+
+        const categoryList = categories?.data || [];
+        const plan = dailyUsage.plan;
+
+        // ---- Streak (source of truth: ReceivedQuote) ----
+        const streak = await streakService.getStreakForDashboard(
+            userId,
+            historyDates || []
+        );
+
+        // ---- Latest Inspiration ----
+        let latestInspiration = {
+            hasReceivedQuote: false,
+            latestQuote: null,
+        };
+
+        if (latestReceivedQuote) {
+            const quote = latestReceivedQuote.quote;
+            const text = quote?.text || "";
+
+            // Current favorite state (NOT the old snapshot).
+            const favoriteMap = quote
+                ? await favoriteRepository.getFavoritesByQuoteIds(userId, [
+                      quote._id,
+                  ])
+                : new Map();
+            const isFavorite = quote
+                ? favoriteMap.has(quote._id.toString())
+                : false;
+
+            latestInspiration = {
+                hasReceivedQuote: true,
+                latestQuote: {
+                    id: latestReceivedQuote._id,
+                    quoteId: quote?._id || null,
+                    previewText: this.buildPreviewText(text),
+                    fullText: text,
+                    author: quote?.author || "InspireTag",
+                    description: quote?.description || null,
+                    image: quote?.image || null,
+                    theme: quote?.theme || null,
+                    category: latestReceivedQuote.category
+                        ? {
+                              id: latestReceivedQuote.category._id,
+                              name: latestReceivedQuote.category.name,
+                              slug: latestReceivedQuote.category.slug,
+                              icon: latestReceivedQuote.category.icon,
+                              color: latestReceivedQuote.category.color,
+                          }
+                        : {
+                              id: null,
+                              name: latestReceivedQuote.categorySlug || "inspire",
+                              slug: latestReceivedQuote.categorySlug || "inspire",
+                              icon: null,
+                              color: null,
+                          },
+                    receivedAt: latestReceivedQuote.receivedAt,
+                    favorite: isFavorite,
+                    favoriteId: favoriteMap.get(quote?._id.toString()) || null,
+                },
+            };
+        }
+
+        return {
+            streak,
+            latestInspiration,
+            dailyUsage: {
+                plan,
+                dailyLimit: dailyUsage.dailyLimit,
+                usedToday: dailyUsage.usedToday,
+                remainingToday: dailyUsage.remainingToday,
+                isLimitReached: dailyUsage.isLimitReached,
+            },
+            categories: this.buildAvailableCategories(
+                categoryList,
+                plan,
+                dailyUsage.isLimitReached
+            ),
+            statistics: {
+                totalQuotesReceived: receivedStats?.totalQuotes || 0,
+                favoriteCount: favoriteCount || 0,
+                unreadCount: receivedStats?.unread || 0,
+            },
+        };
+    }
+
+    /**
      * Get complete dashboard overview — SINGLE aggregated endpoint
      * Returns everything the dashboard needs in one response
      */
     async getOverview(userId) {
-        const [user, orders, tags, assignedQuotes, scanStats, recentActivity, favorites, subscription, hero, scanHistory] = await Promise.all([
+        const [user, orders, tags, assignedQuotes, scanStats, recentActivity, favorites, subscription, hero, scanHistory, categoryList] = await Promise.all([
             authRepository.findUserById(userId),
             Order.find({ user: userId }).populate("product", "name price image").sort({ createdAt: -1 }).limit(5).lean(),
             Tag.find({ owner: userId }).sort({ createdAt: -1 }).lean(),
@@ -31,6 +193,7 @@ class DashboardService {
             Subscription.findOne({ user: userId, status: { $in: ["active", "trialing", "past_due"] } }).lean(),
             heroRepository.getHeroContent().catch(() => null),
             scanRepository.getUserScanHistory(userId, 1, 5),
+            categoryRepository.getAllCategories({ page: 1, limit: 100, includeInactive: false }),
         ]);
 
         // Build greeting
@@ -42,8 +205,12 @@ class DashboardService {
         // Determine subscription plan
         const plan = this.getPlan(subscription);
 
-        // Build categories with counts
-        const categories = this.buildCategories(assignedQuotes);
+        // Build categories with counts, lock state and display metadata
+        const categories = this.buildOverviewCategories(
+            categoryList?.data || [],
+            assignedQuotes,
+            plan
+        );
 
         // Build recent quotes from scan history
         const recentQuotes = (scanHistory?.data || []).map(scan => ({
@@ -214,6 +381,41 @@ class DashboardService {
             categoryMap[cat] = (categoryMap[cat] || 0) + 1;
         }
         return Object.entries(categoryMap).map(([name, count]) => ({ name, count }));
+    }
+
+    /**
+     * Build rich categories for the dashboard overview:
+     * full category metadata (id, name, slug, icon, color) + assigned quote
+     * count + premium/daily-limit lock state, so the UI renders purely from
+     * backend data.
+     */
+    buildOverviewCategories(categories, assignedQuotes, plan) {
+        const categoryMap = {};
+        for (const item of assignedQuotes) {
+            const cat = item.quote?.category || "faith";
+            categoryMap[cat] = (categoryMap[cat] || 0) + 1;
+        }
+
+        // Free users: only "inspire" is available; premium categories are locked.
+        // (Daily-limit lock state is resolved by the /dashboard/home engine —
+        // the overview reports plan-based locks.)
+        return categories.map((category) => {
+            const isPremium = !!category.isPremium;
+            const isInspire = category.slug === "inspire";
+            const isLocked = plan === "free" && !isPremium ? !isInspire : false;
+
+            return {
+                id: category._id,
+                name: category.name,
+                slug: category.slug,
+                icon: category.icon,
+                color: category.color,
+                count: categoryMap[category.slug] || categoryMap[category.name] || 0,
+                isPremium,
+                isLocked,
+                isAvailableToday: !isLocked,
+            };
+        });
     }
 
     /**

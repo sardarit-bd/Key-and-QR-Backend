@@ -49,7 +49,9 @@ const validateRequest = (schemas) => {
       if (error) {
         errors.push(...error.details.map((d) => `[query] ${d.message}`));
       } else {
-        req.query = value;
+        // Express 5 exposes req.query as a read-only getter — store the
+        // sanitized result on a dedicated property instead of reassigning.
+        req.validatedQuery = value;
       }
     }
 
