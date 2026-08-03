@@ -117,6 +117,17 @@ const getRandomQuoteByCategory = async (category = null, excludeIds = []) => {
   return quotes[0] || null;
 };
 
+/**Count active quotes (with optional category) — used for cycle/remaining detection*/
+const countActiveQuotes = async (category = null) => {
+  const filter = { isActive: true };
+
+  if (category) {
+    filter.category = category;
+  }
+
+  return Quote.countDocuments(filter);
+};
+
 export default {
   createQuote,
   getAllQuotes,
@@ -125,4 +136,5 @@ export default {
   deleteQuote,
   toggleActive,
   getRandomQuoteByCategory,
+  countActiveQuotes,
 };

@@ -3,7 +3,7 @@ import Joi from "joi";
 export const createCheckoutValidation = Joi.object({
   tagCode: Joi.string().trim().required(),
   preferredCategory: Joi.string()
-    .valid("faith", "love", "hope", "success", "motivation")
+    .valid("love", "strength", "healing", "faith", "gratitude")
     .optional(),
 });
 

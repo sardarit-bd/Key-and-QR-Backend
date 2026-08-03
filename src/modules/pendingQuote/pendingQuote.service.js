@@ -40,7 +40,7 @@ const approveQuote = async (id, adminNote = null) => {
 
   await quoteRepository.createQuote({
     text: pendingQuote.text,
-    category: pendingQuote.category === "other" ? "motivation" : pendingQuote.category,
+    category: pendingQuote.category === "other" ? "faith" : pendingQuote.category,
     author: pendingQuote.author || null,
     isActive: true,
   });

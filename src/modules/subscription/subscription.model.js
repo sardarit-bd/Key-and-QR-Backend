@@ -39,7 +39,7 @@ const subscriptionSchema = new mongoose.Schema(
     },
     preferredCategory: {
       type: String,
-      enum: ["faith", "love", "hope", "success", "motivation", null],
+      enum: ["love", "strength", "healing", "faith", "gratitude", null],
       default: null,
     },
     stripeCustomerId: {

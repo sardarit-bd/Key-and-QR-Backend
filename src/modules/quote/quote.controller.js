@@ -97,14 +97,9 @@ const toggleQuoteActive = catchAsync(async (req, res) => {
 const getRandomQuote = catchAsync(async (req, res) => {
   const category = req.query.category || "random";
 
-  let queryCategory = category;
-  if (category === "random") {
-    queryCategory = null;
-  } else if (category === "gratitude") {
-    queryCategory = "hope";
-  } else if (category === "healing") {
-    queryCategory = "hope";
-  }
+  // Pass through the requested category — "random" means any quote.
+  // The current category set is: love, strength, healing, faith, gratitude.
+  const queryCategory = category === "random" ? null : category;
 
   const result = await quoteService.getRandomQuote(queryCategory);
 

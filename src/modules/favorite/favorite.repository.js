@@ -218,6 +218,26 @@ const checkMultipleFavorites = async (userId, items) => {
     return results;
 };
 
+/**
+ * Get favorites for a batch of quote ids (single query — avoids N+1).
+ * Returns a Map of quoteId → favoriteId for the given user.
+ */
+const getFavoritesByQuoteIds = async (userId, quoteIds) => {
+    if (!quoteIds || quoteIds.length === 0) return new Map();
+
+    const favorites = await Favorite.find({
+        user: userId,
+        isDeleted: false,
+        quote: { $in: quoteIds },
+    }).select("quote _id");
+
+    const map = new Map();
+    for (const fav of favorites) {
+        map.set(fav.quote.toString(), fav._id.toString());
+    }
+    return map;
+};
+
 export default {
     createFavorite,
     findFavorite,
@@ -229,4 +249,5 @@ export default {
     batchCreateFavorites,
     getFavoriteCountByType,
     checkMultipleFavorites,
+    getFavoritesByQuoteIds,
 };
