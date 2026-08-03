@@ -19,6 +19,14 @@ const getDayKey = () => {
   return new Date().toISOString().split("T")[0];
 };
 
+// UTC midnight following the current instant — when the daily limit resets.
+const getNextAvailableAt = () => {
+  const now = new Date();
+  const next = new Date(now);
+  next.setUTCHours(24, 0, 0, 0);
+  return next.toISOString();
+};
+
 // Resolve the CURRENT favorite state for a batch of received quotes using a
 // single favorites query — the old isFavoriteSnapshot is never trusted alone.
 const annotateFavorites = async (receivedQuotes, userId) => {
@@ -205,13 +213,15 @@ const getDailyUsage = async (userId) => {
 
   const usedToday = await receivedQuoteRepository.countToday(userId, dayKey);
   const remainingToday = Math.max(dailyLimit - usedToday, 0);
+  const isLimitReached = usedToday >= dailyLimit;
 
   return {
     plan,
     dailyLimit,
     usedToday,
     remainingToday,
-    isLimitReached: usedToday >= dailyLimit,
+    isLimitReached,
+    nextAvailableAt: isLimitReached ? getNextAvailableAt() : null,
   };
 };
 

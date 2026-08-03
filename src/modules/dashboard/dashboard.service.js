@@ -83,6 +83,10 @@ class DashboardService {
             favoriteCount,
             categories,
             historyDates,
+            user,
+            scanStats,
+            giftedCount,
+            subscription,
         ] = await Promise.all([
             receivedQuoteRepository.getLatestReceivedQuote(userId),
             receivedQuoteService.getDailyUsage(userId),
@@ -90,10 +94,22 @@ class DashboardService {
             favoriteRepository.getFavoriteCountByType(userId, "quote"),
             categoryRepository.getAllCategories({ page: 1, limit: 100, includeInactive: false }),
             receivedQuoteRepository.getUserHistoryDates(userId),
+            authRepository.findUserById(userId),
+            scanRepository.getUserScanStats(userId),
+            Tag.countDocuments({
+                owner: userId,
+                personalMessage: { $ne: null, $ne: "" },
+            }),
+            Subscription.findOne({
+                user: userId,
+                status: { $in: ["active", "trialing", "past_due"] },
+                subscriptionType: "subscriber",
+            }).lean(),
         ]);
 
         const categoryList = categories?.data || [];
         const plan = dailyUsage.plan;
+        const greeting = this.buildGreeting(user?.name);
 
         // ---- Streak (source of truth: ReceivedQuote) ----
         const streak = await streakService.getStreakForDashboard(
@@ -155,6 +171,22 @@ class DashboardService {
         }
 
         return {
+            user: user
+                ? {
+                      id: user._id,
+                      name: user.name,
+                      email: user.email,
+                      profileImage: user.profileImage?.url || user.profileImage || null,
+                      memberSince: user.createdAt,
+                  }
+                : null,
+            greeting,
+            subscription: {
+                plan,
+                isPremium: plan === "subscriber",
+                status: subscription?.status || null,
+                currentPeriodEnd: subscription?.currentPeriodEnd || null,
+            },
             streak,
             latestInspiration,
             dailyUsage: {
@@ -163,6 +195,7 @@ class DashboardService {
                 usedToday: dailyUsage.usedToday,
                 remainingToday: dailyUsage.remainingToday,
                 isLimitReached: dailyUsage.isLimitReached,
+                nextAvailableAt: dailyUsage.nextAvailableAt || null,
             },
             categories: this.buildAvailableCategories(
                 categoryList,
@@ -173,6 +206,10 @@ class DashboardService {
                 totalQuotesReceived: receivedStats?.totalQuotes || 0,
                 favoriteCount: favoriteCount || 0,
                 unreadCount: receivedStats?.unread || 0,
+                scans: scanStats?.totalScans || 0,
+                giftedMessages: giftedCount || 0,
+                // Alias consumed by the existing dashboard mapper (dashboard.utils.js).
+                tags: giftedCount || 0,
             },
         };
     }
