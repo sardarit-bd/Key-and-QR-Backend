@@ -105,6 +105,7 @@ const getUserFavorites = catchAsync(async (req, res) => {
         sortBy = 'createdAt',
         sortOrder = 'desc',
         search = '',
+        category = '',
     } = req.query;
 
     const result = await favoriteService.getUserFavorites(
@@ -116,6 +117,7 @@ const getUserFavorites = catchAsync(async (req, res) => {
             sortBy,
             sortOrder,
             search,
+            category,
         }
     );
 

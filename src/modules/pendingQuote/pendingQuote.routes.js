@@ -10,12 +10,29 @@ import Joi from "joi";
 const router = express.Router();
 
 // Validation schemas
+const PENDING_QUOTE_CATEGORIES = [
+  "inspire", "love", "strength", "healing", "faith", "gratitude",
+  "hope", "success", "leadership", "family", "friendship", "kindness",
+  "happiness", "wisdom", "motivation", "self-growth", "positivity",
+  "courage", "mindfulness", "dreams", "life", "peace", "discipline",
+  "purpose", "other",
+];
+
 const submitQuoteValidation = Joi.object({
   text: Joi.string().required().min(3).max(500),
-  category: Joi.string().valid("love", "strength", "healing", "faith", "gratitude", "other"),
+  category: Joi.string().valid(...PENDING_QUOTE_CATEGORIES),
   author: Joi.string().trim().max(100).optional().allow("", null),
   type: Joi.string().valid("community", "gift").optional(),
   orderId: Joi.string().optional(),
+});
+
+const myQuotesQueryValidation = Joi.object({
+  page: Joi.number().integer().min(1).optional(),
+  limit: Joi.number().integer().min(1).max(100).optional(),
+  search: Joi.string().trim().max(100).optional().allow(""),
+  category: Joi.string().valid(...PENDING_QUOTE_CATEGORIES, "all").optional().allow(""),
+  status: Joi.string().valid("pending", "approved", "rejected", "all").optional().allow(""),
+  sortBy: Joi.string().valid("newest", "oldest").optional(),
 });
 
 const approveRejectValidation = Joi.object({
@@ -42,6 +59,7 @@ router.get(
 router.get(
   "/my-quotes",
   auth(),
+  validateRequest({ query: myQuotesQueryValidation }),
   pendingQuoteController.getMyQuotes
 );
 

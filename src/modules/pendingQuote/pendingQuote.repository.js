@@ -80,14 +80,31 @@ const deletePendingQuote = (id) => {
   return PendingQuote.findByIdAndDelete(id);
 };
 
-const getMyQuotes = async (userId, page = 1, limit = 50) => {
+const getMyQuotes = async (userId, page = 1, limit = 50, search = "", category = "all", status = "all", sortBy = "newest") => {
   const skip = (page - 1) * limit;
 
   const filter = { user: userId };
 
+  if (status && status !== "all") {
+    filter.status = status;
+  }
+
+  if (category && category !== "all") {
+    filter.category = category;
+  }
+
+  if (search) {
+    filter.$or = [
+      { text: { $regex: search, $options: "i" } },
+      { author: { $regex: search, $options: "i" } },
+    ];
+  }
+
+  const sort = { createdAt: sortBy === "oldest" ? 1 : -1 };
+
   const [data, total] = await Promise.all([
     PendingQuote.find(filter)
-      .sort({ createdAt: -1 })
+      .sort(sort)
       .skip(skip)
       .limit(limit),
     PendingQuote.countDocuments(filter)

@@ -131,6 +131,7 @@ const getUserFavorites = async (userId, options = {}) => {
         sortBy = 'createdAt',
         sortOrder = 'desc',
         search = '',
+        category = '',
     } = options;
 
     return favoriteRepository.getUserFavorites(userId, {
@@ -140,6 +141,7 @@ const getUserFavorites = async (userId, options = {}) => {
         sortBy,
         sortOrder,
         search,
+        category,
     });
 };
 

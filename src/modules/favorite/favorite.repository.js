@@ -1,4 +1,5 @@
 import Favorite from "./favorite.model.js";
+import Quote from "../quote/quote.model.js";
 
 /**
  * Create a favorite
@@ -36,6 +37,7 @@ const getUserFavorites = async (
         sortBy = 'createdAt',
         sortOrder = 'desc',
         search = '',
+        category = '',
     } = options;
 
     const skip = (page - 1) * limit;
@@ -75,6 +77,64 @@ const getUserFavorites = async (
     }
     if (type === 'quote' || !type) {
         populateFields = populateFields ? `${populateFields} quote` : 'quote';
+    }
+
+    // Search: resolve matching quote IDs first, then filter favorites.
+    // Favorites reference quotes by ObjectId; quote text lives in the Quote
+    // collection, so a two-step query is needed for server-side text search.
+    if (search && type !== 'product') {
+        const matchingQuoteIds = await Quote.find({
+            $or: [
+                { text: { $regex: search, $options: 'i' } },
+                { author: { $regex: search, $options: 'i' } },
+                { category: { $regex: search, $options: 'i' } },
+            ],
+        }).distinct('_id');
+
+        if (matchingQuoteIds.length === 0) {
+            // No quotes match — return empty result immediately.
+            return {
+                meta: {
+                    page: parseInt(page),
+                    limit: parseInt(limit),
+                    total: 0,
+                    totalPage: 0,
+                },
+                data: [],
+            };
+        }
+
+        // Intersect with any existing type filter.
+        if (filter.$or) {
+            // type='quote' or type='product' $or is already set — narrow it.
+            filter.$and = [
+                { $or: filter.$or },
+                { quote: { $in: matchingQuoteIds } },
+            ];
+            delete filter.$or;
+        } else {
+            filter.quote = { $in: matchingQuoteIds };
+        }
+    }
+
+    // Category filter — find matching quote IDs by category, then filter.
+    // Category lives on the Quote doc (populated), so we resolve IDs first.
+    if (category && category !== 'all' && type !== 'product') {
+        const catQuoteIds = await Quote.find({ category }).distinct('_id');
+        if (catQuoteIds.length === 0) {
+            return {
+                meta: { page: parseInt(page), limit: parseInt(limit), total: 0, totalPage: 0 },
+                data: [],
+            };
+        }
+        if (filter.$or) {
+            filter.$and = [{ $or: filter.$or }, { quote: { $in: catQuoteIds } }];
+            delete filter.$or;
+        } else if (filter.$and) {
+            filter.$and.push({ quote: { $in: catQuoteIds } });
+        } else {
+            filter.quote = { $in: catQuoteIds };
+        }
     }
 
     // Build query

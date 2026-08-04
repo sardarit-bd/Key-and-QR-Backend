@@ -40,6 +40,8 @@ const scanHistorySchema = new mongoose.Schema(
 scanHistorySchema.index({ tag: 1, scanDateKey: 1 });
 scanHistorySchema.index({ user: 1, createdAt: -1 });
 scanHistorySchema.index({ user: 1, scanDateKey: 1 });
+// Supports category filtering + createdAt sorting in scan history queries.
+scanHistorySchema.index({ user: 1, category: 1, createdAt: -1 });
 
 const ScanHistory = mongoose.model("ScanHistory", scanHistorySchema);
 

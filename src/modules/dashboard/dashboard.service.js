@@ -229,7 +229,7 @@ class DashboardService {
             Favorite.countDocuments({ user: userId, isDeleted: false }),
             Subscription.findOne({ user: userId, status: { $in: ["active", "trialing", "past_due"] } }).lean(),
             heroRepository.getHeroContent().catch(() => null),
-            scanRepository.getUserScanHistory(userId, 1, 5),
+            scanRepository.getUserScanHistory({ userId, page: 1, limit: 5 }),
             categoryRepository.getAllCategories({ page: 1, limit: 100, includeInactive: false }),
         ]);
 
@@ -504,7 +504,7 @@ class DashboardService {
     async getRecentActivity(userId) {
         const [orders, scans, favorites] = await Promise.all([
             Order.find({ user: userId }).sort({ createdAt: -1 }).limit(5).lean(),
-            scanRepository.getUserScanHistory(userId, 1, 5),
+            scanRepository.getUserScanHistory({ userId, page: 1, limit: 5 }),
             activityService.getRecentActivities(userId, 5),
         ]);
 
