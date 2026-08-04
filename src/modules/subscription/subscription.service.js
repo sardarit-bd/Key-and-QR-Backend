@@ -26,9 +26,35 @@ const getRules = (subscriptionType = "free") => {
 };
 
 const getPlans = async () => {
+  // Single source of truth for pricing is the live Stripe Price attached to
+  // the configured subscription Price ID. subscription.config.js only defines
+  // feature rules (limits), never pricing — so future Stripe price changes
+  // automatically propagate to the Billing UI without any code change.
+  let livePrice = null;
+  try {
+    if (env.stripeSubscriptionPriceId) {
+      const stripePrice = await stripe.prices.retrieve(env.stripeSubscriptionPriceId, {
+        expand: ["product"],
+      });
+      livePrice = {
+        amount: (stripePrice.unit_amount || 0) / 100,
+        currency: stripePrice.currency || "usd",
+        interval: stripePrice.recurring?.interval || "month",
+        priceId: stripePrice.id,
+      };
+    }
+  } catch (error) {
+    console.error("Failed to retrieve Stripe subscription price:", error?.message);
+  }
+
   return Object.entries(subscriptionRules).map(([name, rule]) => ({
     name,
     ...rule,
+    // The subscriber plan carries the live Stripe price; other plans use 0.
+    price: name === "subscriber" && livePrice ? livePrice.amount : 0,
+    priceId: name === "subscriber" ? livePrice?.priceId : null,
+    currency: name === "subscriber" ? livePrice?.currency : "usd",
+    interval: name === "subscriber" ? livePrice?.interval : "month",
   }));
 };
 
@@ -354,6 +380,18 @@ const getAllSubscriptionsForAdmin = async (page = 1, limit = 10, search = "", st
 const getSubscriptionStatsForAdmin = async () => {
   const subscriptions = await subscriptionRepository.findAllSubscriptions();
 
+  // Resolve the live subscription price once (Stripe is the source of truth).
+  // Never falls back to a hardcoded amount — revenue reflects real Stripe data.
+  let unitPrice = 0;
+  try {
+    if (env.stripeSubscriptionPriceId) {
+      const p = await stripe.prices.retrieve(env.stripeSubscriptionPriceId);
+      unitPrice = (p.unit_amount || 0) / 100;
+    }
+  } catch (error) {
+    console.error("Failed to retrieve Stripe price for stats:", error?.message);
+  }
+
   const stats = {
     total: subscriptions.length,
     active: subscriptions.filter(s => s.status === "active").length,
@@ -364,10 +402,10 @@ const getSubscriptionStatsForAdmin = async () => {
     incomplete: subscriptions.filter(s => s.status === "incomplete").length,
     totalRevenue: subscriptions
       .filter(s => s.status === "active" || s.status === "trialing")
-      .length * 4.99,
+      .length * unitPrice,
     monthlyRecurringRevenue: subscriptions
       .filter(s => s.status === "active")
-      .length * 4.99,
+      .length * unitPrice,
   };
 
   return stats;
