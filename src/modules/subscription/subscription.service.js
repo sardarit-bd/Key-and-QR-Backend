@@ -182,11 +182,48 @@ const createCustomerPortalSession = async (userId) => {
 
   const session = await stripe.billingPortal.sessions.create({
     customer: user.stripeCustomerId,
-    return_url: `${env.clientUrl}/new-dashboard/user/subscription`,
+    return_url: `${env.clientUrl}/new-dashboard/user/premium`,
   });
 
   return {
     portalUrl: session.url,
+  };
+};
+
+/**
+ * Get the latest paid invoice PDF for the authenticated user.
+ * Only returns invoices belonging to the user's Stripe customer ID.
+ * Prefers invoice_pdf (direct download) falling back to hosted_invoice_url.
+ */
+const getLatestInvoice = async (userId) => {
+  const user = await authRepository.findUserById(userId);
+
+  if (!user || !user.stripeCustomerId) {
+    throw new AppError(httpStatus.NOT_FOUND, "No Stripe customer found for this user");
+  }
+
+  // Find an active subscription for this user to confirm they are a paying customer.
+  const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(userId);
+  if (!activeSubs || activeSubs.length === 0) {
+    throw new AppError(httpStatus.NOT_FOUND, "No active subscription found");
+  }
+
+  // Fetch the most recent paid invoices for this customer.
+  const invoices = await stripe.invoices.list({
+    customer: user.stripeCustomerId,
+    status: "paid",
+    limit: 1,
+  });
+
+  if (!invoices.data || invoices.data.length === 0) {
+    return { invoicePdf: null, hostedInvoiceUrl: null };
+  }
+
+  const latest = invoices.data[0];
+
+  return {
+    invoicePdf: latest.invoice_pdf || null,
+    hostedInvoiceUrl: latest.hosted_invoice_url || null,
   };
 };
 
@@ -370,4 +407,5 @@ export default {
   getAllSubscriptionsForAdmin,
   getSubscriptionStatsForAdmin,
   syncAllSubscriptionsWithStripe,
+  getLatestInvoice,
 };
