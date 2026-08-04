@@ -105,8 +105,11 @@ const getUserOrders = catchAsync(async (req, res) => {
 
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || "";
+    const status = req.query.status || "";
+    const sort = req.query.sort || "newest";
 
-    const result = await orderService.getUserOrders(req.user.userId, page, limit);
+    const result = await orderService.getUserOrders(req.user.userId, page, limit, search, status, sort);
     const totalSpent = await orderService.getUserTotalSpent(req.user.userId);
 
     sendResponse(res, {

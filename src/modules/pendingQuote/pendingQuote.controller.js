@@ -74,9 +74,21 @@ const deletePendingQuote = catchAsync(async (req, res) => {
 const getMyQuotes = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 50;
-  
-  const result = await pendingQuoteService.getMyQuotes(req.user.userId, page, limit);
-  
+  const search = req.query.search || "";
+  const category = req.query.category || "all";
+  const status = req.query.status || "all";
+  const sortBy = req.query.sortBy || "newest";
+
+  const result = await pendingQuoteService.getMyQuotes(
+    req.user.userId,
+    page,
+    limit,
+    search,
+    category,
+    status,
+    sortBy
+  );
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,

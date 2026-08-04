@@ -1,4 +1,6 @@
 import ScanHistory from "./scan.model.js";
+import Quote from "../quote/quote.model.js";
+import Tag from "../tag/tag.model.js";
 
 const createScan = (payload) => {
   return ScanHistory.create(payload);
@@ -62,17 +64,78 @@ const getScanByTagAndDate = async (tagId, dateKey) => {
   }).populate("quote", "text category");
 };
 
-const getUserScanHistory = async (userId, page = 1, limit = 10) => {
+/**
+ * Resolve the ObjectIds of Quotes and Tags matching a free-text search.
+ * Quote text/author and Tag tagCode are searched case-insensitively.
+ * Returns { quoteIds, tagIds } — each possibly empty.
+ */
+const resolveSearchIds = async (search) => {
+  const safe = search.trim();
+  if (!safe) return { quoteIds: [], tagIds: [] };
+
+  const regex = { $regex: safe, $options: "i" };
+
+  const [matchingQuotes, matchingTags] = await Promise.all([
+    Quote.find({ $or: [{ text: regex }, { author: regex }] })
+      .select("_id")
+      .limit(200)
+      .lean(),
+    Tag.find({ tagCode: regex }).select("_id").limit(200).lean(),
+  ]);
+
+  return {
+    quoteIds: matchingQuotes.map((q) => q._id),
+    tagIds: matchingTags.map((t) => t._id),
+  };
+};
+
+/**
+ * Get paginated scan history for a user with optional search, category
+ * filter and sort. Search matches quote text / author / tag code.
+ */
+const getUserScanHistory = async ({
+  userId,
+  page = 1,
+  limit = 10,
+  search = "",
+  category = "",
+  sortOrder = "desc",
+}) => {
   const skip = (page - 1) * limit;
+  const sortDir = sortOrder === "asc" ? 1 : -1;
+
+  const filter = { user: userId };
+
+  // Category filter (top-level string field on the scan doc).
+  if (category) {
+    filter.category = category;
+  }
+
+  // Search: resolve matching quote/tag ids, then filter scans by $in.
+  // Keeps the main query indexed on { user, createdAt } and only loads
+  // matching docs (no unindexed $lookup on every row).
+  if (search && search.trim()) {
+    const { quoteIds, tagIds } = await resolveSearchIds(search);
+    if (quoteIds.length === 0 && tagIds.length === 0) {
+      // Nothing matches — return empty page without scanning the collection.
+      return {
+        meta: { page, limit, total: 0, totalPage: 0 },
+        data: [],
+      };
+    }
+    filter.$or = [];
+    if (quoteIds.length > 0) filter.$or.push({ quote: { $in: quoteIds } });
+    if (tagIds.length > 0) filter.$or.push({ tag: { $in: tagIds } });
+  }
 
   const [data, total] = await Promise.all([
-    ScanHistory.find({ user: userId })
+    ScanHistory.find(filter)
       .populate("tag", "tagCode")
       .populate("quote", "text category")
-      .sort({ createdAt: -1 })
+      .sort({ createdAt: sortDir })
       .skip(skip)
       .limit(limit),
-    ScanHistory.countDocuments({ user: userId }),
+    ScanHistory.countDocuments(filter),
   ]);
 
   return {

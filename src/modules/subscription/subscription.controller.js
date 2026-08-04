@@ -109,6 +109,17 @@ const syncAllSubscriptionsWithStripe = catchAsync(async (req, res) => {
   });
 });
 
+const getLatestInvoice = catchAsync(async (req, res) => {
+  const result = await subscriptionService.getLatestInvoice(req.user.userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Latest invoice fetched",
+    data: result,
+  });
+});
+
 export default {
   getPlans,
   getMySubscriptions,
@@ -118,4 +129,5 @@ export default {
   getAllSubscriptionsForAdmin,
   getSubscriptionStatsForAdmin,
   syncAllSubscriptionsWithStripe,
+  getLatestInvoice,
 };

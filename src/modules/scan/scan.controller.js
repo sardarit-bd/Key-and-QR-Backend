@@ -79,8 +79,18 @@ const getLastUnlock = catchAsync(async (req, res) => {
 const getUserScanHistory = catchAsync(async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 10;
+    const search = req.query.search || "";
+    const category = req.query.category || "";
+    const sortOrder = req.query.sortOrder || "desc";
 
-    const result = await scanRepository.getUserScanHistory(req.user.userId, page, limit);
+    const result = await scanRepository.getUserScanHistory({
+        userId: req.user.userId,
+        page,
+        limit,
+        search,
+        category,
+        sortOrder,
+    });
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

@@ -4,6 +4,41 @@ import pendingQuoteRepository from "./pendingQuote.repository.js";
 import quoteRepository from "../quote/quote.repository.js";
 import orderRepository from "../order/order.repository.js";
 
+// The main Quote collection only accepts the 5 core categories.
+// Submissions may use the full premium list — map any extended category
+// to the closest core category at approval time so publishing never fails.
+// Core categories pass through unchanged (existing behavior preserved).
+const CORE_QUOTE_CATEGORIES = ["love", "strength", "healing", "faith", "gratitude"];
+const CATEGORY_FALLBACK_MAP = {
+  inspire: "faith",
+  hope: "faith",
+  wisdom: "faith",
+  mindfulness: "faith",
+  peace: "faith",
+  purpose: "strength",
+  discipline: "strength",
+  courage: "strength",
+  success: "strength",
+  motivation: "strength",
+  leadership: "strength",
+  "self-growth": "strength",
+  positivity: "strength",
+  dreams: "strength",
+  life: "gratitude",
+  happiness: "gratitude",
+  kindness: "love",
+  family: "love",
+  friendship: "love",
+  healing: "healing",
+  other: "faith",
+};
+
+const resolveApprovedCategory = (category) => {
+  const normalized = (category || "other").toLowerCase();
+  if (CORE_QUOTE_CATEGORIES.includes(normalized)) return normalized;
+  return CATEGORY_FALLBACK_MAP[normalized] || "faith";
+};
+
 const submitQuote = async (userId, payload) => {
   return pendingQuoteRepository.createPendingQuote({
     user: userId,
@@ -40,7 +75,7 @@ const approveQuote = async (id, adminNote = null) => {
 
   await quoteRepository.createQuote({
     text: pendingQuote.text,
-    category: pendingQuote.category === "other" ? "faith" : pendingQuote.category,
+    category: resolveApprovedCategory(pendingQuote.category),
     author: pendingQuote.author || null,
     isActive: true,
   });
@@ -91,8 +126,8 @@ const deletePendingQuote = async (id) => {
   return pendingQuoteRepository.deletePendingQuote(id);
 };
 
-const getMyQuotes = async (userId, page, limit) => {
-  return pendingQuoteRepository.getMyQuotes(userId, page, limit);
+const getMyQuotes = async (userId, page, limit, search = "", category = "all", status = "all", sortBy = "newest") => {
+  return pendingQuoteRepository.getMyQuotes(userId, page, limit, search, category, status, sortBy);
 };
 
 export default {

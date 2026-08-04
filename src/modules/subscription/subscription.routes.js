@@ -38,6 +38,13 @@ router.post(
   subscriptionController.createCustomerPortalSession
 );
 
+// Latest invoice
+router.get(
+  "/latest-invoice",
+  auth(),
+  subscriptionController.getLatestInvoice
+);
+
 // Admin routes
 router.get(
     "/admin/subscriptions",

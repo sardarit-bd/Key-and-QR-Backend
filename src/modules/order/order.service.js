@@ -845,21 +845,62 @@ const getOrderById = async (id) => {
 /**
  * Get Authenticated User's Orders with Pagination
  */
-const getUserOrders = async (userId, page = 1, limit = 10) => {
+const getUserOrders = async (userId, page = 1, limit = 10, search = "", status = "", sort = "newest") => {
   const skip = (page - 1) * limit;
 
-  const total = await Order.countDocuments({ user: userId });
-  const orders = await Order.find({ user: userId })
+  const filter = { user: userId };
+
+  // Status filter
+  if (status && status !== "all") {
+    if (status === "processing") {
+      filter.fulfillmentStatus = { $in: ["pending", "assigned", "shipped"] };
+    } else if (status === "completed") {
+      filter.fulfillmentStatus = "delivered";
+    } else {
+      filter.fulfillmentStatus = status;
+    }
+  }
+
+  // Search — match order ID or item names
+  if (search) {
+    // Search by order ID prefix or by item name
+    filter.$or = [
+      { _id: { $regex: search, $options: "i" } },
+    ];
+
+    // Also search by item name via aggregation or by first populating
+    // For simplicity we add item name filtering via a pre-query
+    const nameMatches = await Order.find(filter).select("_id").lean().then((orders) => orders.map((o) => o._id));
+    if (nameMatches.length === 0) {
+      // No ID matches — try searching by item names
+      // We need to check if any item name matches; use aggregation for this
+      const matchingByName = await Order.aggregate([
+        { $match: { user: userId } },
+        { $lookup: { from: "products", localField: "items.product", foreignField: "_id", as: "productDocs" } },
+        { $match: { "productDocs.name": { $regex: search, $options: "i" } } },
+        { $project: { _id: 1 } },
+      ]);
+      const nameIds = matchingByName.map((o) => o._id);
+      if (nameIds.length > 0) {
+        delete filter.$or;
+        filter._id = { $in: nameIds };
+      }
+    }
+  }
+
+  const sortOrder = sort === "oldest" ? 1 : -1;
+
+  const total = await Order.countDocuments(filter);
+  const orders = await Order.find(filter)
     .populate("product", "name price image")
     .populate("items.product", "name price image")
     .populate("assignedTag", "tagCode")
     .populate("assignedTags.tag", "tagCode")
-    .sort({ createdAt: -1 })
+    .sort({ createdAt: sortOrder })
     .skip(skip)
     .limit(limit)
     .lean();
 
-  // ✅ Normalize each order
   const normalizedOrders = orders.map((order) =>
     orderRepository.normalizeOrder(order),
   );

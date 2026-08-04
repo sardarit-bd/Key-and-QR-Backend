@@ -20,7 +20,13 @@ const pendingQuoteSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: ["love", "strength", "healing", "faith", "gratitude", "other"],
+      enum: [
+        "inspire", "love", "strength", "healing", "faith", "gratitude",
+        "hope", "success", "leadership", "family", "friendship", "kindness",
+        "happiness", "wisdom", "motivation", "self-growth", "positivity",
+        "courage", "mindfulness", "dreams", "life", "peace", "discipline",
+        "purpose", "other",
+      ],
       default: "other",
     },
     // Discriminator: "community" for user submissions, "gift" for gift messages attached to orders
