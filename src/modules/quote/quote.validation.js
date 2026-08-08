@@ -29,6 +29,8 @@ export const createQuoteValidation = Joi.object({
 
   allowReuse: Joi.boolean().optional(),
 
+  editorData: Joi.object().optional().allow(null),
+
   // image will come from file upload (multer), not body
 });
 
@@ -49,4 +51,6 @@ export const updateQuoteValidation = Joi.object({
   allowReuse: Joi.boolean().optional(),
 
   isActive: Joi.boolean(),
+
+  editorData: Joi.object().optional().allow(null),
 });
