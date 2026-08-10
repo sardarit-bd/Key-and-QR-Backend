@@ -378,6 +378,9 @@ const getAllSubscriptionsForAdmin = async (page = 1, limit = 10, search = "", st
 
 // Admin: Get subscription stats
 const getSubscriptionStatsForAdmin = async () => {
+  // Transition expired active subscriptions to past_due before counting
+  await subscriptionRepository.bulkUpdateExpiredSubscriptions();
+
   const subscriptions = await subscriptionRepository.findAllSubscriptions();
 
   // Resolve the live subscription price once (Stripe is the source of truth).
@@ -413,6 +416,9 @@ const getSubscriptionStatsForAdmin = async () => {
 
 // Admin: Sync all subscriptions with Stripe
 const syncAllSubscriptionsWithStripe = async () => {
+  // First, mark any expired active subscriptions as past_due
+  await subscriptionRepository.bulkUpdateExpiredSubscriptions();
+
   const subscriptions = await subscriptionRepository.findSubscriptionsWithStripeId();
   let synced = 0;
   let failed = 0;
