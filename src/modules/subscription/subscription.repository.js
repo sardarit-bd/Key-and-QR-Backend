@@ -162,8 +162,8 @@ const hasActiveSubscription = async (tagId) => {
 // Find subscriptions with filters (for admin)
 const findSubscriptionsWithFilters = async (filter, skip, limit) => {
   return Subscription.find(filter)
-    .populate("user", "name email")
-    .populate("tag", "tagCode")
+    .populate("user", "name email stripeCustomerId")
+    .populate("tag", "tagCode subscriptionType owner isActivated isActive")
     .sort({ createdAt: -1 })
     .skip(skip)
     .limit(limit);

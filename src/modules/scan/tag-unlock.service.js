@@ -31,9 +31,11 @@ const publicUnlock = async (tagCode) => {
         );
     }
 
+    const todayKey = getTodayKey();
+
     let tag;
     try {
-        // ✅ 1. Validate Tag exists
+        // ✅ 1. Validate Tag exists (with owner + activation state)
         tag = await tagRepository.findByTagCode(tagCode.trim());
     } catch (err) {
         // Unexpected DB/lookup failure — do not leak internals
@@ -61,15 +63,29 @@ const publicUnlock = async (tagCode) => {
         );
     }
 
+    // ✅ 3. First-scan activation (P0.1)
+    // Discovered (unowned) tags are activated atomically on first public scan.
+    // activateTagIfNotActivated only matches isActivated:false + owner:null, so
+    // it never conflicts with order-based activation (findAndAssignMultipleTags
+    // requires isActivated:false — an already-activated tag is never re-assigned).
     if (!tag.isActivated) {
-        throw new AppError(
-            httpStatus.BAD_REQUEST,
-            "This QR code has not been activated yet",
-            "TAG_NOT_ACTIVATED"
-        );
+        const activated = await tagRepository.activateTagIfNotActivated(tag.tagCode);
+        if (activated) {
+            tag = activated;
+        } else {
+            // Another concurrent scan may have activated it — re-fetch
+            tag = await tagRepository.findByTagCode(tagCode.trim());
+            if (!tag || !tag.isActivated) {
+                throw new AppError(
+                    httpStatus.BAD_REQUEST,
+                    "This QR code has not been activated yet",
+                    "TAG_NOT_ACTIVATED"
+                );
+            }
+        }
     }
 
-    // ✅ 3. Check Personal Message (Public)
+    // ✅ 4. Check Personal Message (Public)
     if (tag.personalMessage && tag.personalMessage.trim() !== "") {
         return {
             _id: null,
@@ -79,11 +95,28 @@ const publicUnlock = async (tagCode) => {
             image: null,
             theme: null,
             isPersonalMessage: true,
-            // ✅ No internal data
+            sourceType: "personal",
         };
     }
 
-    // ✅ 4. Get Assigned Quote (Public) — priority order unchanged
+    // ✅ 5. Daily quote (P0.1, P0.2, P0.4) — one persistent quote per tag per day,
+    // identical across all scans that day. Fast path: a scan was already recorded.
+    const existingScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    if (existingScan && existingScan.quote) {
+        const q = existingScan.quote;
+        return {
+            _id: q._id,
+            quote: q.text,
+            category: q.category,
+            author: q.author || null,
+            image: q.image?.url || null,
+            theme: q.theme || null,
+            sourceType: existingScan.sourceType || "random",
+            isPersonalMessage: false,
+        };
+    }
+
+    // Slow path: assign a quote for today (tag assignment > user assignment > random).
     let quote = null;
     let sourceType = "random";
 
@@ -123,7 +156,7 @@ const publicUnlock = async (tagCode) => {
         );
     }
 
-    // ✅ 5. Validate Assigned Quote
+    // ✅ 6. Validate Assigned Quote
     if (!quote) {
         throw new AppError(
             httpStatus.NOT_FOUND,
@@ -132,17 +165,30 @@ const publicUnlock = async (tagCode) => {
         );
     }
 
-    // ✅ 6. Return ONLY Public Data
-    return {
-        _id: null,  // ✅ Do not expose internal ID
-        quote: quote.text,
+    // ✅ 7. Persist atomically (P0.2) — upsert guarded by the unique index on
+    // { tag, scanDateKey, user:null }. The first writer inserts; concurrent
+    // writers are no-ops. Re-read returns the persisted (winning) quote so
+    // every scan that day displays and saves the SAME quote (P0.8).
+    await scanRepository.createPublicScan({
+        tag: tag._id,
+        quote: quote._id,
         category: quote.category,
-        author: quote.author || null,
-        image: quote.image?.url || null,
-        theme: quote.theme || null,
-        sourceType: sourceType,
+        scanDateKey: todayKey,
+        sourceType,
+    });
+
+    const persistedScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    const persistedQuote = persistedScan?.quote || quote;
+
+    return {
+        _id: persistedQuote._id,
+        quote: persistedQuote.text,
+        category: persistedQuote.category || quote.category,
+        author: persistedQuote.author || null,
+        image: persistedQuote.image?.url || null,
+        theme: persistedQuote.theme || null,
+        sourceType: persistedScan?.sourceType || sourceType,
         isPersonalMessage: false,
-        // ✅ No internal data
     };
 };
 

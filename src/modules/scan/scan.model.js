@@ -33,10 +33,22 @@ const scanHistorySchema = new mongoose.Schema(
       required: true,
       index: true,
     },
+
+    sourceType: {
+      type: String,
+      default: "random",
+    },
   },
   { timestamps: true }
 );
 
+// One anonymous (public) scan per tag per day — enforces daily-quote
+// consistency at the DB level so concurrent first-scans cannot create
+// duplicate assignments (race-condition safety, P0.2).
+scanHistorySchema.index(
+  { tag: 1, scanDateKey: 1, user: 1 },
+  { unique: true, partialFilterExpression: { user: { $eq: null } } }
+);
 scanHistorySchema.index({ tag: 1, scanDateKey: 1 });
 scanHistorySchema.index({ user: 1, createdAt: -1 });
 scanHistorySchema.index({ user: 1, scanDateKey: 1 });

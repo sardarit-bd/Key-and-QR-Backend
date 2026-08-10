@@ -63,6 +63,11 @@ const quoteSchema = new mongoose.Schema(
       default: true,
       index: true,
     },
+
+    editorData: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null,
+    },
   },
   { timestamps: true }
 );
