@@ -181,6 +181,37 @@ const getUserScanCount = async (userId) => {
   return ScanHistory.countDocuments({ user: userId });
 };
 
+/**
+ * Get today's public (anonymous) scan for a tag — used by the daily-quote
+ * fast path. Filters user:null so it never collides with per-user scans.
+ */
+const getPublicDailyScan = async (tagId, dateKey) => {
+  return ScanHistory.findOne({
+    tag: tagId,
+    scanDateKey: dateKey,
+    user: null,
+  }).populate("quote", "text category author image theme");
+};
+
+/**
+ * Persist a public scan atomically. Uses $setOnInsert so the first writer
+ * wins and concurrent writers are no-ops (guarded by the unique index on
+ * { tag, scanDateKey, user:null }).
+ */
+const createPublicScan = async ({
+  tag,
+  quote,
+  category,
+  scanDateKey,
+  sourceType,
+}) => {
+  return ScanHistory.findOneAndUpdate(
+    { tag, scanDateKey, user: null },
+    { $setOnInsert: { quote, category, sourceType } },
+    { upsert: true, new: true }
+  );
+};
+
 export default {
   createScan,
   countTodayScans,
@@ -191,6 +222,8 @@ export default {
   getTodayScan,
   getTodayScanByUser,
   getScanByTagAndDate,
+  getPublicDailyScan,
+  createPublicScan,
   getUserScanHistory,
   getUserScanStats,
   getUserScanCount,

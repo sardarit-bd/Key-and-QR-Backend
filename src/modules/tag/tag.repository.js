@@ -347,6 +347,20 @@ const bulkCreateTags = async (tagCodes, batchSize = 100) => {
 // EXPORTS
 // ================================
 
+/**
+ * Atomically activate a discovered (unowned, not-yet-activated) tag.
+ * Only matches tags that are isActivated:false AND owner:null, so it never
+ * touches order-assigned tags (already isActivated:true) or tags a user is
+ * claiming via POST /tags/activate — no conflict with order-based activation.
+ */
+const activateTagIfNotActivated = async (tagCode) => {
+  return Tag.findOneAndUpdate(
+    { tagCode, isActivated: false, owner: null, isActive: true },
+    { isActivated: true, owner: null, activatedAt: new Date() },
+    { new: true }
+  );
+};
+
 export default {
   // Existing functions
   createTag,
@@ -365,7 +379,8 @@ export default {
   findMultipleUnusedTags,
   isTagAssignedToActiveOrder,
   getAssignedTagIdsFromActiveOrders,
-  
+  activateTagIfNotActivated,
+
   // NEW FUNCTIONS
   findAndAssignMultipleTags,
   countUnassignedTags,

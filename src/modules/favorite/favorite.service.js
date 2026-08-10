@@ -50,12 +50,22 @@ const addFavorite = async (userId, { productId, quoteId }) => {
         );
     }
 
-    // Check favorites cap for free users
+    // Subscription check
     const subscriptions = await subscriptionService.getMySubscriptions(userId);
     const hasActiveSubscription = subscriptions.some(
         (s) => s.subscriptionType === "subscriber" && ["active", "trialing", "past_due"].includes(s.status)
     );
 
+    // Quote favorites require Premium (subscriber-only save, P0.5)
+    if (quoteId && !hasActiveSubscription) {
+        throw new AppError(
+            httpStatus.FORBIDDEN,
+            "Premium subscription required to save quotes. Upgrade to Premium for unlimited saves.",
+            "UPGRADE_REQUIRED"
+        );
+    }
+
+    // Free-user cap (products only — quote saves are blocked above for free users)
     if (!hasActiveSubscription) {
         const currentCount = await favoriteRepository.getFavoriteCountByType(userId);
         if (currentCount >= FREE_FAVORITES_CAP) {
