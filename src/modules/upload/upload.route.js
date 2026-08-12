@@ -1,5 +1,5 @@
 import express from "express";
-import { uploadImage } from "./upload.controller.js";
+import { uploadImage, uploadCategoryIcon } from "./upload.controller.js";
 import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 import auth from "../../middlewares/auth.middleware.js";
 import roleMiddleware from "../../middlewares/role.middleware.js";
@@ -13,6 +13,14 @@ router.post(
   roleMiddleware(roles.ADMIN),
   uploadSingleImage,
   uploadImage
+);
+
+router.post(
+  "/icon",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  uploadSingleImage,
+  uploadCategoryIcon
 );
 
 export default router;

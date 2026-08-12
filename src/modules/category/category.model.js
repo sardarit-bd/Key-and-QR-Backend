@@ -34,6 +34,20 @@ const categorySchema = new mongoose.Schema(
       maxlength: 100,
     },
 
+    iconType: {
+      type: String,
+      enum: ["library", "custom", null],
+      default: "library",
+      trim: true,
+    },
+
+    iconUrl: {
+      type: String,
+      default: null,
+      trim: true,
+      maxlength: 500,
+    },
+
     color: {
       type: String,
       default: "#6366f1",

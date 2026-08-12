@@ -25,7 +25,8 @@ const quoteSchema = new mongoose.Schema(
     category: {
       type: String,
       required: true,
-      enum: ["love", "strength", "healing", "faith", "gratitude"],
+      trim: true,
+      maxlength: 100,
     },
 
     author: {

@@ -23,6 +23,14 @@ export const createCategoryValidation = Joi.object({
     "string.max": "Icon cannot exceed 100 characters",
   }),
 
+  iconType: Joi.string().valid("library", "custom").optional().messages({
+    "any.only": "Icon type must be 'library' or 'custom'",
+  }),
+
+  iconUrl: Joi.string().max(500).optional().allow(null, "").messages({
+    "string.max": "Icon URL cannot exceed 500 characters",
+  }),
+
   color: Joi.string()
     .pattern(/^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/)
     .optional()
@@ -58,6 +66,14 @@ export const updateCategoryValidation = Joi.object({
 
   icon: Joi.string().max(100).optional().allow(null, "").messages({
     "string.max": "Icon cannot exceed 100 characters",
+  }),
+
+  iconType: Joi.string().valid("library", "custom").optional().messages({
+    "any.only": "Icon type must be 'library' or 'custom'",
+  }),
+
+  iconUrl: Joi.string().max(500).optional().allow(null, "").messages({
+    "string.max": "Icon URL cannot exceed 500 characters",
   }),
 
   color: Joi.string()
