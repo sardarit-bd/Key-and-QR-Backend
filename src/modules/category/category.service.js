@@ -1,6 +1,7 @@
 import AppError from "../../utils/AppError.js";
 import httpStatus from "../../constants/httpStatus.js";
 import categoryRepository from "./category.repository.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
 
 const slugify = (value) =>
   value
@@ -118,6 +119,18 @@ const deleteCategory = async (id) => {
 
   if (!category) {
     throw new AppError(httpStatus.NOT_FOUND, "Category not found", "CATEGORY_NOT_FOUND");
+  }
+
+  // Data-integrity guard: refuse to hard-delete a category that is still
+  // referenced by received quotes (the only true ObjectId FK to Category).
+  // Admins should deactivate (toggle isActive) instead, preserving history.
+  const referenceCount = await ReceivedQuote.countDocuments({ category: id });
+  if (referenceCount > 0) {
+    throw new AppError(
+      httpStatus.CONFLICT,
+      `Cannot delete category — it is referenced by ${referenceCount} quote${referenceCount === 1 ? "" : "s"} in user history. Deactivate it instead.`,
+      "CATEGORY_IN_USE"
+    );
   }
 
   return categoryRepository.deleteCategory(id);

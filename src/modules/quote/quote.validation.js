@@ -8,11 +8,11 @@ export const createQuoteValidation = Joi.object({
   }),
 
   category: Joi.string()
-    .valid("love", "strength", "healing", "faith", "gratitude")
+    .max(100)
     .required()
     .messages({
-      "any.only": "Category must be one of: love, strength, healing, faith, gratitude",
       "string.empty": "Category is required",
+      "string.max": "Category cannot exceed 100 characters",
     }),
 
   author: Joi.string().max(100).optional().messages({
@@ -40,7 +40,9 @@ export const updateQuoteValidation = Joi.object({
     "string.max": "Quote cannot exceed 1000 characters",
   }),
 
-  category: Joi.string().valid("love", "strength", "healing", "faith", "gratitude"),
+  category: Joi.string().max(100).messages({
+    "string.max": "Category cannot exceed 100 characters",
+  }),
 
   author: Joi.string().max(100).optional(),
 
