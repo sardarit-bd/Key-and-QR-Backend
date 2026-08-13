@@ -7,6 +7,7 @@ import roles from "../../constants/roles.js";
 import {
   createTagValidation,
   updateTagValidation,
+  bulkCreateTagValidation,
 } from "./tag.validation.js";
 
 const router = express.Router();
@@ -35,6 +36,15 @@ router.put(
 );
 
 // ==================== ADMIN ONLY ROUTES ====================
+
+// Bulk generate tags
+router.post(
+  "/bulk-generate",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(bulkCreateTagValidation),
+  tagController.bulkCreateTags
+);
 
 // Create tag
 router.post(

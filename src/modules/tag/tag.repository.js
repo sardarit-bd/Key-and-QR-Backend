@@ -15,7 +15,7 @@ const findByTagCode = async (tagCode) => {
 };
 
 const getAllTags = async (query = {}) => {
-  const { page = 1, limit = 10, search, isActivated, isActive, unused, subscriptionType } = query;
+  const { page = 1, limit = 10, search, isActivated, isActive, unused, subscriptionType, status } = query;
 
   const filter = {};
 
@@ -42,11 +42,37 @@ const getAllTags = async (query = {}) => {
     filter._id = { $nin: assignedTagIds };
   }
 
+  if (status && status !== "all") {
+    if (status === "unused") {
+      const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
+      filter.owner = null;
+      filter.isActive = true;
+      filter._id = { $nin: assignedTagIds };
+    } else if (status === "assigned") {
+      filter.owner = null;
+      filter.isActive = true;
+      filter.assignedOrderId = { $ne: null };
+    } else if (status === "activated") {
+      filter.owner = { $ne: null };
+      filter.isActive = true;
+    } else if (status === "disabled") {
+      filter.isActive = false;
+    }
+  }
+
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
   const [data, total] = await Promise.all([
     Tag.find(filter)
       .populate("owner", "name email")
+      .populate({
+        path: "assignedOrderId",
+        populate: {
+          path: "items.product",
+          model: "Product",
+          select: "name price"
+        }
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit)),
@@ -361,6 +387,26 @@ const activateTagIfNotActivated = async (tagCode) => {
   );
 };
 
+const assignTagAtomically = async (tagId, orderId, ownerId = null) => {
+  return Tag.findOneAndUpdate(
+    {
+      _id: tagId,
+      isActive: true,
+      $or: [
+        { assignedOrderId: null },
+        { assignedOrderId: orderId }
+      ]
+    },
+    {
+      owner: ownerId,
+      isActivated: true,
+      activatedAt: new Date(),
+      assignedOrderId: orderId,
+    },
+    { new: true }
+  );
+};
+
 export default {
   // Existing functions
   createTag,
@@ -380,6 +426,7 @@ export default {
   isTagAssignedToActiveOrder,
   getAssignedTagIdsFromActiveOrders,
   activateTagIfNotActivated,
+  assignTagAtomically,
 
   // NEW FUNCTIONS
   findAndAssignMultipleTags,

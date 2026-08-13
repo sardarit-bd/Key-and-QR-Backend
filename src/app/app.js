@@ -88,6 +88,11 @@ app.get("/", (req, res) => {
   });
 });
 
+app.post("/api/v1/debug-log", (req, res) => {
+  console.log("[CLIENT LOG]", ...(req.body?.args || []));
+  res.sendStatus(200);
+});
+
 app.use("/api/v1", router);
 
 app.use(notFoundHandler);

@@ -9,7 +9,7 @@ export const uploadImage = catchAsync(async (req, res) => {
     return sendResponse(res, {
       statusCode: httpStatus.BAD_REQUEST,
       success: false,
-      message: "No image file provided",
+      message: "No file provided",
     });
   }
 
@@ -18,12 +18,13 @@ export const uploadImage = catchAsync(async (req, res) => {
   
   const result = await cloudinary.uploader.upload(base64Image, {
     folder: "hero",
+    resource_type: "auto",
   });
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
-    message: "Image uploaded successfully",
+    message: "File uploaded successfully",
     data: { url: result.secure_url },
   });
 });

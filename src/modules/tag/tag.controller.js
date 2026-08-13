@@ -181,6 +181,18 @@ const getMyTags = catchAsync(async (req, res) => {
   });
 });
 
+const bulkCreateTags = catchAsync(async (req, res) => {
+  const { quantity, prefix } = req.body;
+  const result = await tagService.bulkCreateTags(quantity, prefix);
+
+  sendResponse(res, {
+    statusCode: httpStatus.CREATED,
+    success: true,
+    message: "Tags generated successfully",
+    data: result,
+  });
+});
+
 export default {
   createTag,
   getAllTags,
@@ -191,4 +203,5 @@ export default {
   setPersonalMessage,
   getPersonalMessage,
   getMyTags,
+  bulkCreateTags,
 };

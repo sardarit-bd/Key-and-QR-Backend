@@ -35,6 +35,13 @@ router.get(
     orderController.getAllOrders
 );
 
+router.post(
+    "/admin/manual-order",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.createManualOrder
+);
+
 router.get(
     "/admin/stats",
     auth(),

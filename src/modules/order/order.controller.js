@@ -2,6 +2,7 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
+import mongoose from "mongoose";
 import orderService from "./order.service.js";
 import { verifyGuestAccessToken } from "../../utils/jwt.js";
 
@@ -363,10 +364,17 @@ const rejectGiftMessage = catchAsync(async (req, res) => {
  * Add Tag to Order (Admin)
  */
 const addTagToOrder = catchAsync(async (req, res) => {
-    const result = await orderService.addTagToOrder(
-        req.params.id,
-        req.body.tagId,
-    );
+    const { id } = req.params;
+    const { tagId } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid order ID format");
+    }
+    if (!tagId || !mongoose.Types.ObjectId.isValid(tagId)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid tag ID format");
+    }
+
+    const result = await orderService.addTagToOrder(id, tagId);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -380,13 +388,20 @@ const addTagToOrder = catchAsync(async (req, res) => {
  * Replace Order Tag (Admin)
  */
 const replaceOrderTag = catchAsync(async (req, res) => {
+    const { id } = req.params;
     const { oldTagId, newTagId } = req.body;
 
-    const result = await orderService.replaceOrderTag(
-        req.params.id,
-        oldTagId,
-        newTagId,
-    );
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid order ID format");
+    }
+    if (!oldTagId || !mongoose.Types.ObjectId.isValid(oldTagId)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid old tag ID format");
+    }
+    if (!newTagId || !mongoose.Types.ObjectId.isValid(newTagId)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid new tag ID format");
+    }
+
+    const result = await orderService.replaceOrderTag(id, oldTagId, newTagId);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -400,10 +415,16 @@ const replaceOrderTag = catchAsync(async (req, res) => {
  * Remove Tag from Order (Admin)
  */
 const removeTagFromOrder = catchAsync(async (req, res) => {
-    const result = await orderService.removeTagFromOrder(
-        req.params.id,
-        req.params.tagId,
-    );
+    const { id, tagId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid order ID format");
+    }
+    if (!tagId || !mongoose.Types.ObjectId.isValid(tagId)) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Invalid tag ID format");
+    }
+
+    const result = await orderService.removeTagFromOrder(id, tagId);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,
@@ -429,6 +450,17 @@ const bulkUnassignTags = catchAsync(async (req, res) => {
     });
 });
 
+const createManualOrder = catchAsync(async (req, res) => {
+    const result = await orderService.createManualOrder(req.body);
+
+    sendResponse(res, {
+        statusCode: httpStatus.CREATED,
+        success: true,
+        message: "Manual order created successfully",
+        data: result,
+    });
+});
+
 export default {
     createCheckout,
     getOrderById,
@@ -450,4 +482,5 @@ export default {
     replaceOrderTag,
     removeTagFromOrder,
     bulkUnassignTags,
+    createManualOrder,
 };

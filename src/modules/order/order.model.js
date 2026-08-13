@@ -382,6 +382,13 @@ const orderSchema = new mongoose.Schema(
             default: null,
         },
 
+        orderSource: {
+            type: String,
+            enum: ["website", "etsy", "tiktok", "other", "manual"],
+            default: "website",
+            index: true,
+        },
+
         deliveredAt: {
             type: Date,
             default: null,

@@ -232,7 +232,7 @@ const ensureTagAvailableForOrder = async (tagId, orderId, orderUserId) => {
     throw new AppError(400, "This tag is disabled");
   }
 
-  if (tag.owner && tag.owner.toString() !== orderUserId.toString()) {
+  if (tag.owner && (!orderUserId || tag.owner.toString() !== orderUserId.toString())) {
     throw new AppError(
       400,
       "This tag is already assigned to another user/order",
@@ -544,8 +544,77 @@ const createCheckout = async (userId, payload, isGuest = false) => {
     order = await createOrder(userId, payload, isGuest);
   }
 
-  // ************* Return order, not session *************
   // Session creation moved to Payment Service
+  return order;
+};
+
+/**
+ * Create Manual Order (Admin Feature)
+ */
+const createManualOrder = async (payload) => {
+  const product = await productRepository.getProductById(payload.productId);
+  if (!product) {
+    throw new AppError(httpStatus.NOT_FOUND, "Product not found");
+  }
+
+  const quantity = payload.quantity || 1;
+  const unitPrice = product.price;
+  const subtotal = unitPrice * quantity;
+  const grandTotal = subtotal;
+
+  const items = [{
+    product: product._id,
+    quantity,
+    unitPrice,
+    subtotal,
+    purchaseType: "self",
+    giftMessage: null,
+    assignedTags: [],
+  }];
+
+  const shippingAddress = {
+    fullName: payload.fullName,
+    email: payload.email,
+    phone: payload.phone || null,
+    address: payload.address,
+    city: payload.city,
+    state: payload.state || "",
+    postalCode: payload.postalCode,
+    country: payload.country,
+  };
+
+  const guestCustomer = {
+    fullName: payload.fullName,
+    email: payload.email,
+    phone: payload.phone || null,
+  };
+
+  const orderData = {
+    user: null,
+    guestCustomer,
+    items,
+    subtotal,
+    shippingCost: 0,
+    discount: 0,
+    grandTotal,
+    purchaseType: "self",
+    giftMessage: null,
+    giftMessageStatus: "none",
+    giftStatus: "none",
+    shippingAddress,
+    isGuestOrder: true,
+    orderSource: payload.orderSource || "manual",
+    paymentStatus: "paid", // manual order is pre-paid
+    fulfillmentStatus: "pending",
+    // Legacy fields
+    product: product._id,
+    quantity,
+    assignedTag: null,
+    assignedTags: [],
+    tagAssignmentStatus: "pending_assignment",
+  };
+
+  const order = await orderRepository.createOrder(orderData);
   return order;
 };
 
@@ -2004,14 +2073,13 @@ const addTagToOrder = async (orderId, tagId) => {
     throw new AppError(400, "This tag is already assigned to this order");
   }
 
-  const tag = await ensureTagAvailableForOrder(tagId, orderId, order.user);
+  await ensureTagAvailableForOrder(tagId, orderId, order.user);
 
-  await tagRepository.updateTag(tag._id, {
-    owner: order.user,
-    isActivated: true,
-    activatedAt: new Date(),
-    assignedOrderId: orderId,
-  });
+  const tag = await tagRepository.assignTagAtomically(tagId, orderId, order.user);
+
+  if (!tag) {
+    throw new AppError(400, "Tag is not available or has already been assigned to another order");
+  }
 
   const updatedAssignedTags = [
     ...existingAssignedTags.map((item) => ({
@@ -2174,7 +2242,7 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     throw new AppError(404, "Old tag is not assigned to this order");
   }
 
-  const newTag = await ensureTagAvailableForOrder(
+  await ensureTagAvailableForOrder(
     targetNewTagId,
     orderId,
     order.user,
@@ -2182,12 +2250,11 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
 
   await tagRepository.resetTag(targetOldTagId);
 
-  await tagRepository.updateTag(newTag._id, {
-    owner: order.user,
-    isActivated: true,
-    activatedAt: new Date(),
-    assignedOrderId: orderId,
-  });
+  const newTag = await tagRepository.assignTagAtomically(targetNewTagId, orderId, order.user);
+
+  if (!newTag) {
+    throw new AppError(400, "New tag is not available or has already been assigned to another order");
+  }
 
   let updatedAssignedTags = existingAssignedTags.map((item) => {
     if (getTagId(item) === targetOldTagId) {
@@ -2262,6 +2329,7 @@ export default {
   createOrder,
   createCheckout,
   createCheckoutSession,
+  createManualOrder,
   confirmPaymentAndAssignTag,
   claimGiftOrder,
   getOrderById,
