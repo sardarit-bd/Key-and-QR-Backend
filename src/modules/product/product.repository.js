@@ -28,6 +28,7 @@ const getAllProducts = async ({
 
   const [data, total] = await Promise.all([
     Product.find(filter)
+      .populate('categoryId', 'name')
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -122,19 +123,23 @@ const countProducts = async (filter = {}) => {
   return Product.countDocuments(filter);
 };
 
-const decreaseStock = async (id, quantity) => {
+const decreaseStock = async (id, quantity, session = null) => {
+  const options = { new: true };
+  if (session) options.session = session;
   return Product.findOneAndUpdate(
     { _id: id, stock: { $gte: quantity } },
     { $inc: { stock: -quantity } },
-    { new: true }
+    options
   );
 };
 
-const increaseStock = async (id, quantity) => {
+const increaseStock = async (id, quantity, session = null) => {
+  const options = { new: true };
+  if (session) options.session = session;
   return Product.findByIdAndUpdate(
     id,
     { $inc: { stock: quantity } },
-    { new: true }
+    options
   );
 };
 

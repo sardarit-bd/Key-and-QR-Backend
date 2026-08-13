@@ -152,6 +152,11 @@ const getCachedStock = async (productId) => {
   return stock;
 };
 
+const invalidateStockCache = (productId) => {
+  const cacheKey = `stock_${productId}`;
+  _stockCache.delete(cacheKey);
+};
+
 // ============================================================
 // PRIVATE HELPER FUNCTIONS
 // ============================================================
@@ -558,6 +563,14 @@ const createManualOrder = async (payload) => {
   }
 
   const quantity = payload.quantity || 1;
+
+  // Deduct stock atomically
+  const productDeducted = await productRepository.decreaseStock(product._id, quantity);
+  if (!productDeducted) {
+    throw new AppError(httpStatus.BAD_REQUEST, `Not enough stock available for product ${product.name}`);
+  }
+  invalidateStockCache(product._id);
+
   const unitPrice = product.price;
   const subtotal = unitPrice * quantity;
   const grandTotal = subtotal;
@@ -744,7 +757,23 @@ const confirmPaymentAndAssignTag = async (
         throw error;
       }
 
-      // ✅ 5. CALCULATE REQUIRED TAGS
+      // ✅ 5. ATOMIC STOCK DEDUCTION (inside transaction)
+      for (const item of order.items) {
+        const productDeducted = await productRepository.decreaseStock(
+          item.product,
+          item.quantity || 1,
+          session
+        );
+        if (!productDeducted) {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Not enough stock available for product ID: ${item.product}`
+          );
+        }
+        invalidateStockCache(item.product);
+      }
+
+      // ✅ 6. CALCULATE REQUIRED TAGS
       let requiredQty = 0;
       if (order.items && order.items.length > 0) {
         requiredQty = order.items.reduce(
@@ -1635,6 +1664,19 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
     }
   }
 
+  // Restore stock if it was previously deducted (paid/succeeded order)
+  if (order.paymentStatus === "paid" || order.paymentStatus === "succeeded" || order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
+    if (order.items && order.items.length > 0) {
+      for (const item of order.items) {
+        await productRepository.increaseStock(item.product, item.quantity || 1);
+        invalidateStockCache(item.product);
+      }
+    } else if (order.product) {
+      await productRepository.increaseStock(order.product, order.quantity || 1);
+      invalidateStockCache(order.product);
+    }
+  }
+
   const updatedOrder = await orderRepository.updateOrder(orderId, {
     fulfillmentStatus: "cancelled",
     cancellationReason: reason,
@@ -1648,16 +1690,6 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
       refundAmount,
     }),
   });
-
-  if (
-    order.paymentStatus === "paid" &&
-    order.fulfillmentStatus !== "cancelled"
-  ) {
-    await productRepository.increaseStock(
-      order.product._id,
-      order.quantity || 1,
-    );
-  }
 
   if (order.assignedTag) {
     await tagRepository.resetTag(order.assignedTag._id);
@@ -1760,17 +1792,20 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
       updatePayload.cancellationReason = "Refund processed";
     }
 
+    if (order.items && order.items.length > 0) {
+      for (const item of order.items) {
+        await productRepository.increaseStock(item.product, item.quantity || 1);
+        invalidateStockCache(item.product);
+      }
+    } else if (order.product) {
+      await productRepository.increaseStock(order.product, order.quantity || 1);
+      invalidateStockCache(order.product);
+    }
+
     const updatedOrder = await orderRepository.updateOrder(
       orderId,
       updatePayload,
     );
-
-    if (["pending", "assigned"].includes(order.fulfillmentStatus)) {
-      await productRepository.increaseStock(
-        order.product._id,
-        order.quantity || 1,
-      );
-    }
 
     if (order.assignedTag && ["assigned"].includes(order.fulfillmentStatus)) {
       await tagRepository.resetTag(order.assignedTag._id);
@@ -1936,7 +1971,15 @@ const completeReturn = async (orderId) => {
     }),
   });
 
-  await productRepository.increaseStock(order.product._id, order.quantity || 1);
+  if (order.items && order.items.length > 0) {
+    for (const item of order.items) {
+      await productRepository.increaseStock(item.product, item.quantity || 1);
+      invalidateStockCache(item.product);
+    }
+  } else if (order.product) {
+    await productRepository.increaseStock(order.product._id || order.product, order.quantity || 1);
+    invalidateStockCache(order.product._id || order.product);
+  }
 
   if (order.assignedTag) {
     await tagRepository.resetTag(order.assignedTag._id);

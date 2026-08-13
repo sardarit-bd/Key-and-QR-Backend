@@ -1,70 +1,28 @@
 import mongoose from "mongoose";
 
-const imageSchema = new mongoose.Schema(
-  {
-    public_id: String,
-    url: String,
-  },
-  { _id: false }
-);
-
 const productSchema = new mongoose.Schema(
   {
-    name: {
-      type: String,
-      required: true,
-      trim: true,
+    name: { type: String, required: true, trim: true },
+    price: { type: Number, required: true },
+    categoryId: { type: mongoose.Schema.Types.ObjectId, ref: "Category", required: true },
+    brand: { type: String, default: null, trim: true },
+    description: { type: String, default: "", trim: true },
+    stock: { type: Number, default: 0 },
+    image: {
+      public_id: { type: String, default: null },
+      url: { type: String, default: null },
     },
-
-    price: {
-      type: Number,
-      required: true,
-    },
-
-    category: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    brand: {
-      type: String,
-      default: "",
-      trim: true,
-    },
-
-    image: imageSchema,
-
-    gallery: {
-      type: [imageSchema],
-      default: [],
-    },
-
-    description: {
-      type: String,
-      required: true,
-      trim: true,
-    },
-
-    stock: {
-      type: Number,
-      default: 0,
-    },
-
-    isActive: {
-      type: Boolean,
-      default: true,
-      index: true,
-    },
-
-    deletedAt: {
-      type: Date,
-      default: null,
-    },
+    gallery: [
+      {
+        public_id: { type: String, default: null },
+        url: { type: String, default: null },
+      }
+    ],
+    isActive: { type: Boolean, default: true, index: true },
+    deletedAt: { type: Date, default: null },
   },
   { timestamps: true }
 );
 
-productSchema.index({ name: "text", category: "text", brand: "text" });
-
-export default mongoose.model("Product", productSchema);
+const Product = mongoose.model("Product", productSchema);
+export default Product;
