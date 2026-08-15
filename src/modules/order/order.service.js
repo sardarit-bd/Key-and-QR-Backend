@@ -152,6 +152,72 @@ const getCachedStock = async (productId) => {
   return stock;
 };
 
+const invalidateStockCache = (productId) => {
+  const cacheKey = `stock_${productId}`;
+  _stockCache.delete(cacheKey);
+};
+
+// ============================================================
+// HELPER: Centralized & Atomic Inventory Management
+// ============================================================
+
+/**
+ * Atomically deduct inventory for all items in an order.
+ * Idempotent: Skips if order.isStockDeducted is already true.
+ */
+const deductOrderInventory = async (order, session = null) => {
+  if (order.isStockDeducted) {
+    logger.info(`Inventory already deducted for order ${order._id} — skipping duplicate deduction`);
+    return order;
+  }
+
+  const itemsToDeduct = (order.items && order.items.length > 0)
+    ? order.items
+    : (order.product ? [{ product: order.product, quantity: order.quantity || 1 }] : []);
+
+  for (const item of itemsToDeduct) {
+    const prodId = item.product?._id || item.product;
+    const qty = item.quantity || 1;
+    const updatedProduct = await productRepository.decreaseStock(prodId, qty, session);
+    if (!updatedProduct) {
+      throw new AppError(
+        httpStatus.BAD_REQUEST,
+        `Not enough stock available for product ID: ${prodId}`
+      );
+    }
+    invalidateStockCache(prodId);
+  }
+
+  order.isStockDeducted = true;
+  order.stockDeductedAt = new Date();
+  return order;
+};
+
+/**
+ * Atomically restore inventory for all items in an order upon cancellation/return/refund.
+ * Idempotent: Only restores if order.isStockDeducted is true.
+ */
+const restoreOrderInventory = async (order, session = null) => {
+  if (!order.isStockDeducted) {
+    logger.info(`Inventory was not deducted for order ${order._id} — skipping restock`);
+    return order;
+  }
+
+  const itemsToRestore = (order.items && order.items.length > 0)
+    ? order.items
+    : (order.product ? [{ product: order.product, quantity: order.quantity || 1 }] : []);
+
+  for (const item of itemsToRestore) {
+    const prodId = item.product?._id || item.product;
+    const qty = item.quantity || 1;
+    await productRepository.increaseStock(prodId, qty, session);
+    invalidateStockCache(prodId);
+  }
+
+  order.isStockDeducted = false;
+  return order;
+};
+
 // ============================================================
 // PRIVATE HELPER FUNCTIONS
 // ============================================================
@@ -232,7 +298,7 @@ const ensureTagAvailableForOrder = async (tagId, orderId, orderUserId) => {
     throw new AppError(400, "This tag is disabled");
   }
 
-  if (tag.owner && tag.owner.toString() !== orderUserId.toString()) {
+  if (tag.owner && (!orderUserId || tag.owner.toString() !== orderUserId.toString())) {
     throw new AppError(
       400,
       "This tag is already assigned to another user/order",
@@ -544,8 +610,87 @@ const createCheckout = async (userId, payload, isGuest = false) => {
     order = await createOrder(userId, payload, isGuest);
   }
 
-  // ************* Return order, not session *************
   // Session creation moved to Payment Service
+  return order;
+};
+
+/**
+ * Create Manual Order (Admin Feature)
+ */
+const createManualOrder = async (payload) => {
+  const product = await productRepository.getProductById(payload.productId);
+  if (!product) {
+    throw new AppError(httpStatus.NOT_FOUND, "Product not found");
+  }
+
+  const quantity = payload.quantity || 1;
+
+  // Deduct stock atomically
+  const productDeducted = await productRepository.decreaseStock(product._id, quantity);
+  if (!productDeducted) {
+    throw new AppError(httpStatus.BAD_REQUEST, `Not enough stock available for product ${product.name}`);
+  }
+  invalidateStockCache(product._id);
+
+  const unitPrice = product.price;
+  const subtotal = unitPrice * quantity;
+  const grandTotal = subtotal;
+
+  const items = [{
+    product: product._id,
+    quantity,
+    unitPrice,
+    subtotal,
+    purchaseType: "self",
+    giftMessage: null,
+    assignedTags: [],
+  }];
+
+  const shippingAddress = {
+    fullName: payload.fullName,
+    email: payload.email,
+    phone: payload.phone || null,
+    address: payload.address,
+    city: payload.city,
+    state: payload.state || "",
+    postalCode: payload.postalCode,
+    country: payload.country,
+  };
+
+  const guestCustomer = {
+    fullName: payload.fullName,
+    email: payload.email,
+    phone: payload.phone || null,
+  };
+
+  const orderData = {
+    user: null,
+    guestCustomer,
+    items,
+    subtotal,
+    shippingCost: 0,
+    discount: 0,
+    grandTotal,
+    purchaseType: "self",
+    giftMessage: null,
+    giftMessageStatus: "none",
+    giftStatus: "none",
+    shippingAddress,
+    isGuestOrder: true,
+    orderSource: payload.orderSource || "manual",
+    paymentStatus: "paid", // manual order is pre-paid
+    isStockDeducted: true,
+    stockDeductedAt: new Date(),
+    fulfillmentStatus: "pending",
+    // Legacy fields
+    product: product._id,
+    quantity,
+    assignedTag: null,
+    assignedTags: [],
+    tagAssignmentStatus: "pending_assignment",
+  };
+
+  const order = await orderRepository.createOrder(orderData);
   return order;
 };
 
@@ -629,8 +774,8 @@ const confirmPaymentAndAssignTag = async (
       }
 
       // ✅ 2. ALREADY PAID — idempotent
-      if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
-        logger.info(`Order ${orderId} already paid — returning`);
+      if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED && order.isStockDeducted) {
+        logger.info(`Order ${orderId} already paid and stock deducted — returning`);
         return order;
       }
 
@@ -675,7 +820,10 @@ const confirmPaymentAndAssignTag = async (
         throw error;
       }
 
-      // ✅ 5. CALCULATE REQUIRED TAGS
+      // ✅ 5. ATOMIC STOCK DEDUCTION (inside transaction, idempotent)
+      await deductOrderInventory(order, session);
+
+      // ✅ 6. CALCULATE REQUIRED TAGS
       let requiredQty = 0;
       if (order.items && order.items.length > 0) {
         requiredQty = order.items.reduce(
@@ -731,6 +879,8 @@ const confirmPaymentAndAssignTag = async (
       const updateData = {
         paymentStatus: PAYMENT_STATUS.SUCCEEDED,
         stripePaymentIntentId: paymentIntentId,
+        isStockDeducted: true,
+        stockDeductedAt: order.stockDeductedAt || new Date(),
         tagAssignmentStatus,
         fulfillmentStatus:
           tagAssignmentStatus === "complete" ? "assigned" : "pending",
@@ -1451,6 +1601,34 @@ const updateOrder = async (id, payload, session = null, user = null) => {
         }
       }
     }
+
+    // ✅ RESTOCK INVENTORY ON CANCELLATION
+    if (order.isStockDeducted) {
+      await restoreOrderInventory(order, session);
+      payload.isStockDeducted = false;
+    }
+  }
+
+  // ✅ HANDLE RESTOCK ON RETURN
+  if (
+    payload.fulfillmentStatus === "returned" &&
+    order.fulfillmentStatus !== "returned" &&
+    order.isStockDeducted
+  ) {
+    await restoreOrderInventory(order, session);
+    payload.isStockDeducted = false;
+  }
+
+  // ✅ HANDLE STOCK DEDUCTION IF ORDER TRANSITIONS TO PAID
+  if (
+    (payload.paymentStatus === "paid" || payload.paymentStatus === "succeeded") &&
+    !order.isStockDeducted &&
+    payload.fulfillmentStatus !== "cancelled" &&
+    order.fulfillmentStatus !== "cancelled"
+  ) {
+    await deductOrderInventory(order, session);
+    payload.isStockDeducted = true;
+    payload.stockDeductedAt = new Date();
   }
 
   // ✅ 10. UPDATE ORDER WITH SESSION SUPPORT
@@ -1550,9 +1728,9 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
 
   let refundProcessed = false;
   let refundTransactionId = null;
-  const refundAmount = (order.product.price || 0) * (order.quantity || 1);
+  const refundAmount = order.grandTotal || ((order.product?.price || 0) * (order.quantity || 1));
 
-  if (order.paymentStatus === "paid" && order.stripePaymentIntentId) {
+  if ((order.paymentStatus === "paid" || order.paymentStatus === "succeeded") && order.stripePaymentIntentId) {
     try {
       const refund = await stripe.refunds.create({
         payment_intent: order.stripePaymentIntentId,
@@ -1566,11 +1744,17 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
     }
   }
 
+  // Restore stock atomically if it was previously deducted
+  if (order.isStockDeducted) {
+    await restoreOrderInventory(order);
+  }
+
   const updatedOrder = await orderRepository.updateOrder(orderId, {
     fulfillmentStatus: "cancelled",
     cancellationReason: reason,
     cancelledAt: new Date(),
     cancelledBy,
+    isStockDeducted: false,
     ...(refundProcessed && {
       paymentStatus: "refunded",
       refundStatus: "completed",
@@ -1579,16 +1763,6 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
       refundAmount,
     }),
   });
-
-  if (
-    order.paymentStatus === "paid" &&
-    order.fulfillmentStatus !== "cancelled"
-  ) {
-    await productRepository.increaseStock(
-      order.product._id,
-      order.quantity || 1,
-    );
-  }
 
   if (order.assignedTag) {
     await tagRepository.resetTag(order.assignedTag._id);
@@ -1614,7 +1788,7 @@ const requestRefund = async (orderId, userId, reason) => {
     );
   }
 
-  if (order.paymentStatus !== "paid") {
+  if (order.paymentStatus !== "paid" && order.paymentStatus !== "succeeded") {
     throw new AppError(400, "Only paid orders can be refunded");
   }
 
@@ -1666,11 +1840,11 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
   }
 
   try {
-    const refundAmount = (order.product.price || 0) * (order.quantity || 1);
+    const refundAmount = order.grandTotal || ((order.product?.price || 0) * (order.quantity || 1));
 
     const refund = await stripe.refunds.create({
       payment_intent: order.stripePaymentIntentId,
-      amount: refundAmount * 100,
+      amount: Math.round(refundAmount * 100),
       reason: "requested_by_customer",
     });
 
@@ -1691,17 +1865,15 @@ const processRefund = async (orderId, approve = true, rejectReason = null) => {
       updatePayload.cancellationReason = "Refund processed";
     }
 
+    if (order.isStockDeducted) {
+      await restoreOrderInventory(order);
+      updatePayload.isStockDeducted = false;
+    }
+
     const updatedOrder = await orderRepository.updateOrder(
       orderId,
       updatePayload,
     );
-
-    if (["pending", "assigned"].includes(order.fulfillmentStatus)) {
-      await productRepository.increaseStock(
-        order.product._id,
-        order.quantity || 1,
-      );
-    }
 
     if (order.assignedTag && ["assigned"].includes(order.fulfillmentStatus)) {
       await tagRepository.resetTag(order.assignedTag._id);
@@ -1734,7 +1906,7 @@ const requestReturn = async (orderId, userId, reason) => {
     );
   }
 
-  if (order.paymentStatus !== "paid") {
+  if (order.paymentStatus !== "paid" && order.paymentStatus !== "succeeded") {
     throw new AppError(400, "Only paid orders can be returned");
   }
 
@@ -1828,11 +2000,11 @@ const completeReturn = async (orderId) => {
     throw new AppError(400, "Return is not ready to complete");
   }
 
-  const refundAmount = (order.product.price || 0) * (order.quantity || 1);
+  const refundAmount = order.grandTotal || ((order.product?.price || 0) * (order.quantity || 1));
   let refundTransactionId = null;
 
   // Paid order must be refunded before marking return completed
-  if (order.paymentStatus === "paid") {
+  if (order.paymentStatus === "paid" || order.paymentStatus === "succeeded") {
     if (!order.stripePaymentIntentId) {
       throw new AppError(
         400,
@@ -1843,7 +2015,7 @@ const completeReturn = async (orderId) => {
     try {
       const refund = await stripe.refunds.create({
         payment_intent: order.stripePaymentIntentId,
-        amount: refundAmount * 100,
+        amount: Math.round(refundAmount * 100),
         reason: "requested_by_customer",
       });
 
@@ -1854,11 +2026,16 @@ const completeReturn = async (orderId) => {
     }
   }
 
+  if (order.isStockDeducted) {
+    await restoreOrderInventory(order);
+  }
+
   const updatedOrder = await orderRepository.updateOrder(orderId, {
     returnStatus: "completed",
     returnReceivedAt: new Date(),
     fulfillmentStatus: "returned",
-    ...(order.paymentStatus === "paid" && {
+    isStockDeducted: false,
+    ...( (order.paymentStatus === "paid" || order.paymentStatus === "succeeded") && {
       paymentStatus: "refunded",
       refundStatus: "completed",
       refundProcessedAt: new Date(),
@@ -1866,8 +2043,6 @@ const completeReturn = async (orderId) => {
       refundAmount,
     }),
   });
-
-  await productRepository.increaseStock(order.product._id, order.quantity || 1);
 
   if (order.assignedTag) {
     await tagRepository.resetTag(order.assignedTag._id);
@@ -2004,14 +2179,13 @@ const addTagToOrder = async (orderId, tagId) => {
     throw new AppError(400, "This tag is already assigned to this order");
   }
 
-  const tag = await ensureTagAvailableForOrder(tagId, orderId, order.user);
+  await ensureTagAvailableForOrder(tagId, orderId, order.user);
 
-  await tagRepository.updateTag(tag._id, {
-    owner: order.user,
-    isActivated: true,
-    activatedAt: new Date(),
-    assignedOrderId: orderId,
-  });
+  const tag = await tagRepository.assignTagAtomically(tagId, orderId, order.user);
+
+  if (!tag) {
+    throw new AppError(400, "Tag is not available or has already been assigned to another order");
+  }
 
   const updatedAssignedTags = [
     ...existingAssignedTags.map((item) => ({
@@ -2174,7 +2348,7 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
     throw new AppError(404, "Old tag is not assigned to this order");
   }
 
-  const newTag = await ensureTagAvailableForOrder(
+  await ensureTagAvailableForOrder(
     targetNewTagId,
     orderId,
     order.user,
@@ -2182,12 +2356,11 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
 
   await tagRepository.resetTag(targetOldTagId);
 
-  await tagRepository.updateTag(newTag._id, {
-    owner: order.user,
-    isActivated: true,
-    activatedAt: new Date(),
-    assignedOrderId: orderId,
-  });
+  const newTag = await tagRepository.assignTagAtomically(targetNewTagId, orderId, order.user);
+
+  if (!newTag) {
+    throw new AppError(400, "New tag is not available or has already been assigned to another order");
+  }
 
   let updatedAssignedTags = existingAssignedTags.map((item) => {
     if (getTagId(item) === targetOldTagId) {
@@ -2262,6 +2435,7 @@ export default {
   createOrder,
   createCheckout,
   createCheckoutSession,
+  createManualOrder,
   confirmPaymentAndAssignTag,
   claimGiftOrder,
   getOrderById,

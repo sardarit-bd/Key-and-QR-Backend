@@ -9,22 +9,39 @@ export const uploadImage = catchAsync(async (req, res) => {
     return sendResponse(res, {
       statusCode: httpStatus.BAD_REQUEST,
       success: false,
-      message: "No image file provided",
+      message: "No file provided",
     });
   }
 
-  // Convert buffer to base64
-  const base64Image = `data:${req.file.mimetype};base64,${req.file.buffer.toString("base64")}`;
-  
-  const result = await cloudinary.uploader.upload(base64Image, {
-    folder: "hero",
+  const isAudio =
+    req.file.mimetype.startsWith("audio/") ||
+    /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(req.file.originalname);
+
+  const folder = isAudio ? "quote-audios" : "quote-media";
+  const resource_type = isAudio ? "video" : "auto";
+
+  const result = await new Promise((resolve, reject) => {
+    const uploadStream = cloudinary.uploader.upload_stream(
+      {
+        folder,
+        resource_type,
+      },
+      (error, uploadedResult) => {
+        if (error) return reject(error);
+        resolve(uploadedResult);
+      }
+    );
+    uploadStream.end(req.file.buffer);
   });
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
-    message: "Image uploaded successfully",
-    data: { url: result.secure_url },
+    message: "File uploaded successfully",
+    data: {
+      url: result.secure_url,
+      publicId: result.public_id,
+    },
   });
 });
 

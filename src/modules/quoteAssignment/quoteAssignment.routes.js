@@ -7,6 +7,8 @@ import quoteAssignmentController from "./quoteAssignment.controller.js";
 import {
   createQuoteAssignmentValidation,
   updateQuoteAssignmentValidation,
+  bulkCreateQuoteAssignmentValidation,
+  bulkDeleteQuoteAssignmentValidation,
 } from "./quoteAssignment.validation.js";
 
 const router = express.Router();
@@ -14,6 +16,24 @@ const router = express.Router();
 /**
  * Admin only routes
  */
+
+// Bulk create assignments
+router.post(
+  "/bulk",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(bulkCreateQuoteAssignmentValidation),
+  quoteAssignmentController.bulkAssign
+);
+
+// Bulk delete assignments
+router.post(
+  "/bulk-delete",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(bulkDeleteQuoteAssignmentValidation),
+  quoteAssignmentController.bulkDelete
+);
 
 // Create assignment
 router.post(

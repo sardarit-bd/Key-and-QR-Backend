@@ -281,6 +281,21 @@ const orderSchema = new mongoose.Schema(
         },
 
         // ============================================================
+        // INVENTORY TRACKING
+        // ============================================================
+
+        isStockDeducted: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+
+        stockDeductedAt: {
+            type: Date,
+            default: null,
+        },
+
+        // ============================================================
         // REFUND & RETURN
         // ============================================================
         
@@ -380,6 +395,13 @@ const orderSchema = new mongoose.Schema(
         returnTrackingNumber: {
             type: String,
             default: null,
+        },
+
+        orderSource: {
+            type: String,
+            enum: ["website", "etsy", "tiktok", "other", "manual"],
+            default: "website",
+            index: true,
         },
 
         deliveredAt: {
