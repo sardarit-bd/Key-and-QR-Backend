@@ -88,8 +88,7 @@ app.get("/", (req, res) => {
   });
 });
 
-app.post("/api/v1/debug-log", (req, res) => {
-  console.log("[CLIENT LOG]", ...(req.body?.args || []));
+app.post(["/api/v1/debug-log", "/api/v1/v1/debug-log", "/debug-log"], (req, res) => {
   res.sendStatus(200);
 });
 

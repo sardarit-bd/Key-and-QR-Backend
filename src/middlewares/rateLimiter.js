@@ -11,7 +11,11 @@ export const apiLimiter = rateLimit({
     legacyHeaders: false,
     skip: (req) => {
         // Stripe webhooks must not be rate-limited (raw body, mounted before json parser)
-        return req.originalUrl?.includes("/stripe/webhook");
+        // Debug-log telemetry must never consume client API rate limits
+        return (
+            req.originalUrl?.includes("/stripe/webhook") ||
+            req.originalUrl?.includes("/debug-log")
+        );
     },
     message: {
         success: false,
