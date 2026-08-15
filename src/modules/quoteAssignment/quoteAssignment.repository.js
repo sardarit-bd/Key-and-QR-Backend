@@ -13,12 +13,27 @@ const createAssignment = (payload) => {
 const getAllAssignments = async ({
   page = 1,
   limit = 10,
+  quote,
+  tag,
+  user,
   assignmentType,
   isActive,
 }) => {
   const skip = (page - 1) * limit;
 
   const filter = {};
+
+  if (quote) {
+    filter.quote = quote;
+  }
+
+  if (tag) {
+    filter.tag = tag;
+  }
+
+  if (user) {
+    filter.user = user;
+  }
 
   if (assignmentType) {
     filter.assignmentType = assignmentType;
@@ -30,9 +45,9 @@ const getAllAssignments = async ({
 
   const [data, total] = await Promise.all([
     QuoteAssignment.find(filter)
-      .populate("quote", "text category author image theme allowReuse")
-      .populate("tag", "tagCode")
-      .populate("user", "name email")
+      .populate("quote", "text category author image theme allowReuse isActive")
+      .populate("tag", "tagCode isActive isActivated")
+      .populate("user", "name email role")
       .sort({ priority: -1, createdAt: -1 })
       .skip(skip)
       .limit(limit),
@@ -52,13 +67,47 @@ const getAllAssignments = async ({
 };
 
 /**
+ * Find existing assignments for given quote and targets
+ */
+const findExistingAssignments = async (quoteId, assignmentType, targetIds) => {
+  const filter = {
+    quote: quoteId,
+    assignmentType,
+  };
+
+  if (assignmentType === "tag") {
+    filter.tag = { $in: targetIds };
+  } else if (assignmentType === "user") {
+    filter.user = { $in: targetIds };
+  }
+
+  return QuoteAssignment.find(filter);
+};
+
+/**
+ * Bulk create assignments
+ */
+const bulkCreateAssignments = async (assignments) => {
+  if (!assignments || assignments.length === 0) return [];
+  return QuoteAssignment.insertMany(assignments);
+};
+
+/**
+ * Bulk delete assignments by IDs
+ */
+const bulkDeleteAssignments = async (ids) => {
+  if (!ids || ids.length === 0) return { deletedCount: 0 };
+  return QuoteAssignment.deleteMany({ _id: { $in: ids } });
+};
+
+/**
  * Find assignment by ID
  */
 const findById = (id) => {
   return QuoteAssignment.findById(id)
-    .populate("quote", "text category author image theme allowReuse")
-    .populate("tag", "tagCode")
-    .populate("user", "name email");
+    .populate("quote", "text category author image theme allowReuse isActive")
+    .populate("tag", "tagCode isActive isActivated")
+    .populate("user", "name email role");
 };
 
 /**
@@ -66,9 +115,9 @@ const findById = (id) => {
  */
 const updateAssignment = (id, payload) => {
   return QuoteAssignment.findByIdAndUpdate(id, payload, { new: true })
-    .populate("quote", "text category author image theme allowReuse")
-    .populate("tag", "tagCode")
-    .populate("user", "name email");
+    .populate("quote", "text category author image theme allowReuse isActive")
+    .populate("tag", "tagCode isActive isActivated")
+    .populate("user", "name email role");
 };
 
 /**
@@ -142,6 +191,9 @@ const getAssignmentsByTag = async (tagId) => {
 
 export default {
   createAssignment,
+  bulkCreateAssignments,
+  bulkDeleteAssignments,
+  findExistingAssignments,
   getAllAssignments,
   findById,
   updateAssignment,
@@ -150,5 +202,5 @@ export default {
   getActiveAssignmentsByUser,
   getTopAssignmentByTag,
   getTopAssignmentByUser,
-    getAssignmentsByTag,
+  getAssignmentsByTag,
 };

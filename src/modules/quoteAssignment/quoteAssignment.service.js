@@ -4,6 +4,7 @@ import quoteAssignmentRepository from "./quoteAssignment.repository.js";
 import quoteRepository from "../quote/quote.repository.js";
 import tagRepository from "../tag/tag.repository.js";
 import User from "../../models/user.model.js";
+import Tag from "../tag/tag.model.js";
 
 /**
  * Create assignment
@@ -45,12 +46,106 @@ const createAssignment = async (payload) => {
 };
 
 /**
+ * Bulk assign quote to multiple tags or users
+ */
+const bulkAssign = async (payload) => {
+    const {
+        quote: quoteId,
+        assignmentType,
+        targetIds,
+        priority = 0,
+        isActive = true,
+        startAt = null,
+        endAt = null,
+    } = payload;
+
+    const quote = await quoteRepository.findById(quoteId);
+    if (!quote) {
+        throw new AppError(httpStatus.NOT_FOUND, "Quote not found");
+    }
+
+    if (quote.isActive === false) {
+        throw new AppError(httpStatus.BAD_REQUEST, "Cannot assign an inactive quote");
+    }
+
+    // Verify target recipients exist
+    if (assignmentType === "tag") {
+        const validTags = await Tag.find({ _id: { $in: targetIds } }, "_id");
+        const validTagIds = new Set(validTags.map((t) => t._id.toString()));
+        const missing = targetIds.filter((id) => !validTagIds.has(id.toString()));
+        if (missing.length > 0) {
+            throw new AppError(httpStatus.NOT_FOUND, `Some tags were not found`);
+        }
+    } else if (assignmentType === "user") {
+        const validUsers = await User.find({ _id: { $in: targetIds } }, "_id");
+        const validUserIds = new Set(validUsers.map((u) => u._id.toString()));
+        const missing = targetIds.filter((id) => !validUserIds.has(id.toString()));
+        if (missing.length > 0) {
+            throw new AppError(httpStatus.NOT_FOUND, `Some users were not found`);
+        }
+    }
+
+    // Find already existing assignments for this quote and target set
+    const existingAssignments = await quoteAssignmentRepository.findExistingAssignments(
+        quoteId,
+        assignmentType,
+        targetIds
+    );
+    const alreadyAssignedTargetIds = new Set();
+
+    existingAssignments.forEach((a) => {
+        if (assignmentType === "tag" && a.tag) {
+            alreadyAssignedTargetIds.add(a.tag.toString());
+        } else if (assignmentType === "user" && a.user) {
+            alreadyAssignedTargetIds.add(a.user.toString());
+        }
+    });
+
+    const newTargetIds = targetIds.filter(
+        (id) => !alreadyAssignedTargetIds.has(id.toString())
+    );
+
+    const newDocs = newTargetIds.map((id) => ({
+        quote: quoteId,
+        tag: assignmentType === "tag" ? id : null,
+        user: assignmentType === "user" ? id : null,
+        assignmentType,
+        priority,
+        isActive,
+        startAt,
+        endAt,
+    }));
+
+    const created = await quoteAssignmentRepository.bulkCreateAssignments(newDocs);
+
+    return {
+        summary: {
+            total: targetIds.length,
+            newlyAssigned: created.length,
+            alreadyAssigned: alreadyAssignedTargetIds.size,
+            failed: 0,
+        },
+        data: created,
+    };
+};
+
+/**
+ * Bulk delete assignments
+ */
+const bulkDelete = async (ids) => {
+    return quoteAssignmentRepository.bulkDeleteAssignments(ids);
+};
+
+/**
  * Get all assignments
  */
-const getAllAssignments = async ({ page, limit, assignmentType, isActive }) => {
+const getAllAssignments = async ({ page, limit, quote, tag, user, assignmentType, isActive }) => {
     return quoteAssignmentRepository.getAllAssignments({
         page,
         limit,
+        quote,
+        tag,
+        user,
         assignmentType,
         isActive,
     });
@@ -164,6 +259,8 @@ const getAssignmentsByTag = async (tagId) => {
 
 export default {
     createAssignment,
+    bulkAssign,
+    bulkDelete,
     getAllAssignments,
     getAssignmentById,
     updateAssignment,

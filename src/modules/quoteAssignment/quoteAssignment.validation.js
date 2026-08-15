@@ -53,3 +53,48 @@ export const updateQuoteAssignmentValidation = Joi.object({
   startAt: Joi.date().optional().allow(null),
   endAt: Joi.date().optional().allow(null),
 });
+
+/***-----------------Bulk Create Assignment Validation--------------------*/
+export const bulkCreateQuoteAssignmentValidation = Joi.object({
+  quote: Joi.string().required().messages({
+    "string.empty": "Quote ID is required",
+    "any.required": "Quote ID is required",
+  }),
+
+  assignmentType: Joi.string()
+    .valid("tag", "user")
+    .required()
+    .messages({
+      "any.only": "assignmentType must be either 'tag' or 'user'",
+      "string.empty": "assignmentType is required",
+      "any.required": "assignmentType is required",
+    }),
+
+  targetIds: Joi.array()
+    .items(Joi.string().required())
+    .min(1)
+    .required()
+    .messages({
+      "array.min": "At least one target recipient ID is required",
+      "any.required": "targetIds array is required",
+    }),
+
+  priority: Joi.number().optional().default(0),
+
+  isActive: Joi.boolean().optional().default(true),
+
+  startAt: Joi.date().optional().allow(null),
+  endAt: Joi.date().optional().allow(null),
+});
+
+/***-----------------Bulk Delete Assignment Validation--------------------*/
+export const bulkDeleteQuoteAssignmentValidation = Joi.object({
+  ids: Joi.array()
+    .items(Joi.string().required())
+    .min(1)
+    .required()
+    .messages({
+      "array.min": "At least one assignment ID is required",
+      "any.required": "ids array is required",
+    }),
+});

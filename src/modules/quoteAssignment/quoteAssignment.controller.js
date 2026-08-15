@@ -18,11 +18,42 @@ const createAssignment = catchAsync(async (req, res) => {
 });
 
 /**
- Get all assignments
+ * Bulk assign quote to multiple tags or users
+ */
+const bulkAssign = catchAsync(async (req, res) => {
+  const result = await quoteAssignmentService.bulkAssign(req.body);
+
+  sendResponse(res, {
+    statusCode: httpStatus.CREATED,
+    success: true,
+    message: `Quote assignment completed (${result.summary.newlyAssigned} new, ${result.summary.alreadyAssigned} already assigned)`,
+    data: result,
+  });
+});
+
+/**
+ * Bulk delete assignments
+ */
+const bulkDelete = catchAsync(async (req, res) => {
+  const result = await quoteAssignmentService.bulkDelete(req.body.ids);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Quote assignments removed successfully",
+    data: result,
+  });
+});
+
+/**
+ * Get all assignments
  */
 const getAllAssignments = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
   const limit = parseInt(req.query.limit) || 10;
+  const quote = req.query.quote || null;
+  const tag = req.query.tag || null;
+  const user = req.query.user || null;
   const assignmentType = req.query.assignmentType || null;
   const isActive =
     req.query.isActive !== undefined ? req.query.isActive === "true" : undefined;
@@ -30,6 +61,9 @@ const getAllAssignments = catchAsync(async (req, res) => {
   const result = await quoteAssignmentService.getAllAssignments({
     page,
     limit,
+    quote,
+    tag,
+    user,
     assignmentType,
     isActive,
   });
@@ -90,6 +124,8 @@ const deleteAssignment = catchAsync(async (req, res) => {
 
 export default {
   createAssignment,
+  bulkAssign,
+  bulkDelete,
   getAllAssignments,
   getAssignmentById,
   updateAssignment,
