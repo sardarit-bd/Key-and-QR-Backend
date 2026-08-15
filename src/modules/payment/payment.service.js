@@ -166,9 +166,16 @@ class PaymentService {
 
                 // Update order if status changed
                 if (mappedStatus !== order.paymentStatus) {
-                    await orderService.updateOrder(orderId, {
-                        paymentStatus: mappedStatus,
-                    });
+                    if (mappedStatus === PAYMENT_STATUS.SUCCEEDED && !order.isStockDeducted) {
+                        await orderService.confirmPaymentAndAssignTag(
+                            orderId,
+                            order.stripePaymentIntentId
+                        );
+                    } else {
+                        await orderService.updateOrder(orderId, {
+                            paymentStatus: mappedStatus,
+                        });
+                    }
                 }
 
                 return {

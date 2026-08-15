@@ -281,6 +281,21 @@ const orderSchema = new mongoose.Schema(
         },
 
         // ============================================================
+        // INVENTORY TRACKING
+        // ============================================================
+
+        isStockDeducted: {
+            type: Boolean,
+            default: false,
+            index: true,
+        },
+
+        stockDeductedAt: {
+            type: Date,
+            default: null,
+        },
+
+        // ============================================================
         // REFUND & RETURN
         // ============================================================
         
