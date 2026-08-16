@@ -22,9 +22,14 @@ const getAllQuotes = async ({
 
   const filter = {};
 
-  // Search (text)
+  // Search (text, author, category)
   if (search) {
-    filter.text = { $regex: search, $options: "i" };
+    const searchRegex = { $regex: search, $options: "i" };
+    filter.$or = [
+      { text: searchRegex },
+      { author: searchRegex },
+      { category: searchRegex },
+    ];
   }
 
   // Category filter
