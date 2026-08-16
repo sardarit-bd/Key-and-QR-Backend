@@ -21,7 +21,9 @@ const getAllAssignments = async ({
   assignmentType,
   isActive,
 }) => {
-  const skip = (page - 1) * limit;
+  const parsedPage = parseInt(page) || 1;
+  const parsedLimit = parseInt(limit) || 10;
+  const skip = (parsedPage - 1) * parsedLimit;
 
   const filter = {};
 
@@ -52,17 +54,17 @@ const getAllAssignments = async ({
       .populate("user", "name email role")
       .sort({ priority: -1, createdAt: -1 })
       .skip(skip)
-      .limit(limit),
+      .limit(parsedLimit),
 
     QuoteAssignment.countDocuments(filter),
   ]);
 
   return {
     meta: {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page: parsedPage,
+      limit: parsedLimit,
       total,
-      totalPage: Math.ceil(total / limit),
+      totalPage: Math.ceil(total / parsedLimit),
     },
     data,
   };
