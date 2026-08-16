@@ -115,10 +115,13 @@ const updateQuote = async (id, payload, imageFile) => {
     console.log("✅ Image removed from quote");
   }
 
-  // Clean up payload - remove empty strings and undefined
+  // Clean up payload - allow empty strings for text and author, remove undefined
   const cleanedPayload = {};
   for (const [key, value] of Object.entries(payload)) {
-    if (value !== undefined && value !== null && value !== "") {
+    if (value !== undefined && value !== null) {
+      if (value === "" && key !== "text" && key !== "author") {
+        continue;
+      }
       cleanedPayload[key] = value;
     }
   }
