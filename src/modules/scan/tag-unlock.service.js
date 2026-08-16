@@ -108,6 +108,7 @@ const publicUnlock = async (tagCode) => {
         return {
             _id: q?._id,
             quote: q?.text || "",
+            text: q?.text || "",
             category: q?.category || "faith",
             author: q?.author || null,
             description: q?.description || null,
@@ -154,9 +155,15 @@ const publicUnlock = async (tagCode) => {
     }
 
     // ✅ 6. Priority 3: No explicit assignment exists -> Use daily random quote cache
+    // Only reuse existingScan if it was actually a random quote scan (not a stale, deleted assignment)
     const existingScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
-    if (existingScan && existingScan.quote && existingScan.quote.isActive !== false) {
-        return formatQuotePayload(existingScan.quote, existingScan.sourceType || "random");
+    if (
+        existingScan &&
+        existingScan.quote &&
+        existingScan.quote.isActive !== false &&
+        existingScan.sourceType === "random"
+    ) {
+        return formatQuotePayload(existingScan.quote, "random");
     }
 
     // Pick new random quote for today

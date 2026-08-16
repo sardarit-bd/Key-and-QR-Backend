@@ -148,6 +148,7 @@ class DashboardService {
                     description: quote?.description || null,
                     image: quote?.image || null,
                     theme: quote?.theme || null,
+                    editorData: quote?.editorData || null,
                     category: latestReceivedQuote.category
                         ? {
                               id: latestReceivedQuote.category._id,

@@ -53,6 +53,11 @@ const createAssignment = async (payload) => {
         const result = await quoteAssignmentRepository.createAssignment(payload);
         if (payload.tag) {
             await scanRepository.invalidatePublicDailyScan(payload.tag);
+        } else if (payload.user) {
+            const userTags = await Tag.find({ owner: payload.user }, "_id");
+            if (userTags.length > 0) {
+                await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+            }
         }
         return result;
     } catch (error) {
@@ -141,6 +146,11 @@ const bulkAssign = async (payload) => {
 
     if (assignmentType === "tag" && newTargetIds.length > 0) {
         await scanRepository.invalidatePublicDailyScan(newTargetIds);
+    } else if (assignmentType === "user" && newTargetIds.length > 0) {
+        const userTags = await Tag.find({ owner: { $in: newTargetIds } }, "_id");
+        if (userTags.length > 0) {
+            await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+        }
     }
 
     return {
@@ -158,14 +168,21 @@ const bulkAssign = async (payload) => {
  * Bulk delete assignments
  */
 const bulkDelete = async (ids) => {
-    // Find assignments to get affected tag IDs before deleting
-    const existing = await QuoteAssignment.find({ _id: { $in: ids } }, "tag");
+    // Find assignments to get affected tag IDs and user IDs before deleting
+    const existing = await QuoteAssignment.find({ _id: { $in: ids } }, "tag user assignmentType");
     const tagIds = existing.map((a) => a.tag).filter(Boolean);
+    const userIds = existing.map((a) => a.user).filter(Boolean);
 
     const result = await quoteAssignmentRepository.bulkDeleteAssignments(ids);
 
     if (tagIds.length > 0) {
         await scanRepository.invalidatePublicDailyScan(tagIds);
+    }
+    if (userIds.length > 0) {
+        const userTags = await Tag.find({ owner: { $in: userIds } }, "_id");
+        if (userTags.length > 0) {
+            await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+        }
     }
 
     return result;
@@ -249,8 +266,15 @@ const updateAssignment = async (id, payload) => {
         }
 
         const affectedTagId = updated.tag?._id || updated.tag;
+        const affectedUserId = updated.user?._id || updated.user;
         if (affectedTagId) {
             await scanRepository.invalidatePublicDailyScan(affectedTagId);
+        }
+        if (affectedUserId) {
+            const userTags = await Tag.find({ owner: affectedUserId }, "_id");
+            if (userTags.length > 0) {
+                await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+            }
         }
 
         return updated;
@@ -276,10 +300,17 @@ const deleteAssignment = async (id) => {
     }
 
     const tagId = assignment.tag?._id || assignment.tag;
+    const userId = assignment.user?._id || assignment.user;
     const result = await quoteAssignmentRepository.deleteAssignment(id);
 
     if (tagId) {
         await scanRepository.invalidatePublicDailyScan(tagId);
+    }
+    if (userId) {
+        const userTags = await Tag.find({ owner: userId }, "_id");
+        if (userTags.length > 0) {
+            await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+        }
     }
 
     return result;

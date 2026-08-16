@@ -410,6 +410,7 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
       description: selection.quote.description || null,
       image: selection.quote.image || null,
       theme: selection.quote.theme || null,
+      editorData: selection.quote.editorData || null,
     },
     category: {
       _id: category._id,
