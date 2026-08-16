@@ -341,11 +341,14 @@ const getMe = async (userId) => {
   };
 };
 
+const ROTATION_GRACE_PERIOD_MS = 30 * 1000; // 30 seconds grace period for concurrent requests
+
 /**
- * Refresh Access Token with Atomic Token Rotation
+ * Refresh Access Token with Atomic Token Rotation and Grace Period
  * 
- * Uses a single atomic findOneAndUpdate to claim the old token,
- * preventing race conditions where the same token is rotated twice.
+ * Uses a single atomic findOneAndUpdate to claim the old token.
+ * If the token was already rotated within ROTATION_GRACE_PERIOD_MS,
+ * it safely issues a fresh access token without triggering reuse detection revocation.
  */
 const refreshAccessToken = async (token, metadata = {}) => {
   if (!token) {
@@ -375,9 +378,40 @@ const refreshAccessToken = async (token, metadata = {}) => {
     );
 
     if (!claimedToken) {
-      // Token was already revoked or doesn't exist - possible theft attempt
+      // Check if this token was already rotated recently within the grace period
+      const existingToken = await RefreshToken.findOne({ tokenHash });
+
+      if (existingToken && existingToken.revoked && existingToken.replacedByTokenHash) {
+        const timeSinceRevocation = Date.now() - new Date(existingToken.updatedAt).getTime();
+
+        if (timeSinceRevocation <= ROTATION_GRACE_PERIOD_MS) {
+          const replacementToken = await RefreshToken.findOne({
+            tokenHash: existingToken.replacedByTokenHash,
+            revoked: false,
+            expiresAt: { $gt: new Date() },
+          });
+
+          if (replacementToken) {
+            const user = await authRepository.findUserById(decoded.userId);
+            if (!user) {
+              throw new AppError(httpStatus.UNAUTHORIZED, "User not found or account deleted");
+            }
+
+            const jwtPayload = {
+              userId: user._id.toString(),
+              email: user.email,
+              role: user.role,
+            };
+
+            const accessToken = generateAccessToken(jwtPayload);
+            return { accessToken, refreshToken: null };
+          }
+        }
+      }
+
+      // Token was already revoked outside the grace period or doesn't exist - genuine reuse / theft attempt
       // Revoke ALL tokens for this user as a security measure
-      logger.warn(`Revoked refresh token used for user ${decoded.userId} - revoking all tokens`);
+      logger.warn(`Revoked refresh token used outside grace period for user ${decoded.userId} - revoking all tokens`);
       await revokeAllUserTokens(decoded.userId);
       throw new AppError(httpStatus.UNAUTHORIZED, "Refresh token has been revoked. Please login again.");
     }
