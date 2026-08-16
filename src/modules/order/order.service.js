@@ -298,6 +298,10 @@ const ensureTagAvailableForOrder = async (tagId, orderId, orderUserId) => {
     throw new AppError(400, "This tag is disabled");
   }
 
+  if (tag.assignedOrderId && tag.assignedOrderId.toString() !== orderId.toString()) {
+    throw new AppError(400, "This tag is already assigned to another order");
+  }
+
   if (tag.owner && (!orderUserId || tag.owner.toString() !== orderUserId.toString())) {
     throw new AppError(
       400,
