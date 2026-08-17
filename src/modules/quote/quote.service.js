@@ -134,6 +134,31 @@ const updateQuote = async (id, payload, imageFile) => {
   const result = await quoteRepository.updateQuote(id, updatedData);
   console.log("✅ Quote updated successfully:", result._id);
 
+  // Clean up superseded rendered Cloudinary images after successful DB update
+  if (payload.renderedImages) {
+    const oldDesktopId = existingQuote.renderedImages?.desktop?.publicId;
+    const newDesktopId = payload.renderedImages?.desktop?.publicId;
+    if (oldDesktopId && oldDesktopId !== newDesktopId) {
+      try {
+        await cloudinary.uploader.destroy(oldDesktopId);
+        console.log("✅ Old rendered desktop image deleted from Cloudinary");
+      } catch (err) {
+        console.warn("Failed to delete old rendered desktop image:", err.message);
+      }
+    }
+
+    const oldMobileId = existingQuote.renderedImages?.mobile?.publicId;
+    const newMobileId = payload.renderedImages?.mobile?.publicId;
+    if (oldMobileId && oldMobileId !== newMobileId) {
+      try {
+        await cloudinary.uploader.destroy(oldMobileId);
+        console.log("✅ Old rendered mobile image deleted from Cloudinary");
+      } catch (err) {
+        console.warn("Failed to delete old rendered mobile image:", err.message);
+      }
+    }
+  }
+
   return result;
 };
 
@@ -151,6 +176,22 @@ const deleteQuote = async (id) => {
       await cloudinary.uploader.destroy(quote.image.public_id);
     } catch (err) {
       console.error("Failed to delete image:", err.message);
+    }
+  }
+
+  // delete rendered images if exist
+  if (quote.renderedImages?.desktop?.publicId) {
+    try {
+      await cloudinary.uploader.destroy(quote.renderedImages.desktop.publicId);
+    } catch (err) {
+      console.warn("Failed to delete rendered desktop image:", err.message);
+    }
+  }
+  if (quote.renderedImages?.mobile?.publicId) {
+    try {
+      await cloudinary.uploader.destroy(quote.renderedImages.mobile.publicId);
+    } catch (err) {
+      console.warn("Failed to delete rendered mobile image:", err.message);
     }
   }
 

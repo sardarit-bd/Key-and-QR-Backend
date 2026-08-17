@@ -17,7 +17,8 @@ export const uploadImage = catchAsync(async (req, res) => {
     req.file.mimetype.startsWith("audio/") ||
     /\.(mp3|wav|ogg|m4a|aac|flac)$/i.test(req.file.originalname);
 
-  const folder = isAudio ? "quote-audios" : "quote-media";
+  const customFolder = req.body?.folder || req.query?.folder;
+  const folder = customFolder || (isAudio ? "quote-audios" : "quote-media");
   const resource_type = isAudio ? "video" : "auto";
 
   const result = await new Promise((resolve, reject) => {

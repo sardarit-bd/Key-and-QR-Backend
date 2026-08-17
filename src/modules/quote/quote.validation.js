@@ -29,6 +29,8 @@ export const createQuoteValidation = Joi.object({
 
   editorData: Joi.object().optional().allow(null),
 
+  renderedImages: Joi.object().optional().allow(null),
+
   // image will come from file upload (multer), not body
 });
 
@@ -52,4 +54,6 @@ export const updateQuoteValidation = Joi.object({
   isActive: Joi.boolean(),
 
   editorData: Joi.object().optional().allow(null),
+
+  renderedImages: Joi.object().optional().allow(null),
 });

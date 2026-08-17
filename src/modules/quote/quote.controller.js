@@ -126,6 +126,8 @@ const getRandomQuote = catchAsync(async (req, res) => {
         description: fallbackResult.description || null,
         image: fallbackResult.image || null,
         theme: fallbackResult.theme || null,
+        editorData: fallbackResult.editorData || null,
+        renderedImages: fallbackResult.renderedImages || null,
         allowReuse:
           typeof fallbackResult.allowReuse === "boolean"
             ? fallbackResult.allowReuse
@@ -145,6 +147,8 @@ const getRandomQuote = catchAsync(async (req, res) => {
       description: result.description || null,
       image: result.image || null,
       theme: result.theme || null,
+      editorData: result.editorData || null,
+      renderedImages: result.renderedImages || null,
       allowReuse:
         typeof result.allowReuse === "boolean" ? result.allowReuse : true,
     },

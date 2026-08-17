@@ -181,6 +181,8 @@ const readAgain = async (receivedQuoteId, userId) => {
       description: quote.description || null,
       image: quote.image || null,
       theme: quote.theme || null,
+      editorData: quote.editorData || null,
+      renderedImages: quote.renderedImages || null,
     },
     category: category
       ? {
@@ -411,6 +413,7 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
       image: selection.quote.image || null,
       theme: selection.quote.theme || null,
       editorData: selection.quote.editorData || null,
+      renderedImages: selection.quote.renderedImages || null,
     },
     category: {
       _id: category._id,
