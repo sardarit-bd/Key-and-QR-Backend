@@ -62,15 +62,36 @@ const getMySubscriptions = async (userId) => {
   return subscriptionRepository.findUserSubscriptions(userId);
 };
 
-const createCheckoutSession = async (userId, tagCode, preferredCategory = null) => {
-  const tag = await tagRepository.findByTagCode(tagCode);
+const createCheckoutSession = async (userId, tagCode = null, preferredCategory = null) => {
+  let tag = null;
 
-  if (!tag) {
-    throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
-  }
+  if (tagCode) {
+    tag = await tagRepository.findByTagCode(tagCode);
 
-  if (!tag.owner || tag.owner.toString() !== userId.toString()) {
-    throw new AppError(httpStatus.FORBIDDEN, "You don't own this tag");
+    if (!tag) {
+      throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
+    }
+
+    if (!tag.owner || tag.owner.toString() !== userId.toString()) {
+      throw new AppError(httpStatus.FORBIDDEN, "You don't own this tag");
+    }
+  } else {
+    // 1. Check if user already owns an active tag
+    const userTags = await tagRepository.findTagsByOwner(userId);
+    if (userTags && userTags.length > 0) {
+      tag = userTags[0];
+    } else {
+      // 2. Auto-provision a digital user tag anchor for this user
+      const uniqueCode = `TAG-${userId.toString().slice(-6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+      tag = await tagRepository.createTag({
+        tagCode: uniqueCode,
+        owner: userId,
+        isActive: true,
+        isActivated: true,
+        activatedAt: new Date(),
+        subscriptionType: "free",
+      });
+    }
   }
 
   if (!tag.isActive) {
@@ -86,7 +107,7 @@ const createCheckoutSession = async (userId, tagCode, preferredCategory = null) 
   ) {
     throw new AppError(
       httpStatus.CONFLICT,
-      "This tag already has an active subscription"
+      "You already have an active Premium subscription"
     );
   }
 
@@ -125,8 +146,8 @@ const createCheckoutSession = async (userId, tagCode, preferredCategory = null) 
         quantity: 1,
       },
     ],
-    success_url: `${env.clientUrl}/subscription/success?tagCode=${tagCode}`,
-    cancel_url: `${env.clientUrl}/subscription/cancel?tagCode=${tagCode}`,
+    success_url: `${env.clientUrl}/subscription/success?tagCode=${tag.tagCode}`,
+    cancel_url: `${env.clientUrl}/subscription/cancel?tagCode=${tag.tagCode}`,
     metadata: {
       userId: userId.toString(),
       tagId: tag._id.toString(),

@@ -190,13 +190,11 @@ const getPublicDailyScan = async (tagId, dateKey) => {
     tag: tagId,
     scanDateKey: dateKey,
     user: null,
-  }).populate("quote", "text category author image theme");
+  }).populate("quote", "text category author description image theme editorData isActive");
 };
 
 /**
- * Persist a public scan atomically. Uses $setOnInsert so the first writer
- * wins and concurrent writers are no-ops (guarded by the unique index on
- * { tag, scanDateKey, user:null }).
+ * Persist or update a public scan atomically.
  */
 const createPublicScan = async ({
   tag,
@@ -207,9 +205,28 @@ const createPublicScan = async ({
 }) => {
   return ScanHistory.findOneAndUpdate(
     { tag, scanDateKey, user: null },
-    { $setOnInsert: { quote, category, sourceType } },
+    { $set: { quote, category, sourceType } },
     { upsert: true, new: true }
   );
+};
+
+/**
+ * Invalidate public daily scan records for given tag ID(s).
+ */
+const invalidatePublicDailyScan = async (tagIds, dateKey = null) => {
+  if (!tagIds) return { deletedCount: 0 };
+  const ids = Array.isArray(tagIds) ? tagIds : [tagIds];
+  if (ids.length === 0) return { deletedCount: 0 };
+
+  const filter = {
+    tag: { $in: ids },
+    user: null,
+  };
+  if (dateKey) {
+    filter.scanDateKey = dateKey;
+  }
+
+  return ScanHistory.deleteMany(filter);
 };
 
 export default {
@@ -224,6 +241,7 @@ export default {
   getScanByTagAndDate,
   getPublicDailyScan,
   createPublicScan,
+  invalidatePublicDailyScan,
   getUserScanHistory,
   getUserScanStats,
   getUserScanCount,

@@ -14,11 +14,37 @@ const mediaSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const renderedImageSchema = new mongoose.Schema(
+  {
+    url: {
+      type: String,
+      default: null,
+    },
+    publicId: {
+      type: String,
+      default: null,
+    },
+    width: {
+      type: Number,
+      default: null,
+    },
+    height: {
+      type: Number,
+      default: null,
+    },
+    format: {
+      type: String,
+      default: "webp",
+    },
+  },
+  { _id: false }
+);
+
 const quoteSchema = new mongoose.Schema(
   {
     text: {
       type: String,
-      required: true,
+      default: "",
       trim: true,
     },
 
@@ -68,6 +94,17 @@ const quoteSchema = new mongoose.Schema(
     editorData: {
       type: mongoose.Schema.Types.Mixed,
       default: null,
+    },
+
+    renderedImages: {
+      desktop: {
+        type: renderedImageSchema,
+        default: null,
+      },
+      mobile: {
+        type: renderedImageSchema,
+        default: null,
+      },
     },
   },
   { timestamps: true }

@@ -132,6 +132,8 @@ const resolveTag = catchAsync(async (req, res) => {
           description: quote.description || null,
           image: quote.image || null,
           theme: quote.theme || null,
+          editorData: quote.editorData || null,
+          renderedImages: quote.renderedImages || null,
           allowReuse:
             typeof quote.allowReuse === "boolean" ? quote.allowReuse : true,
         }

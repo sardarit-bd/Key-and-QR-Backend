@@ -1,9 +1,7 @@
 import Joi from "joi";
 
 export const createQuoteValidation = Joi.object({
-  text: Joi.string().required().min(3).max(1000).messages({
-    "string.empty": "Quote text is required",
-    "string.min": "Quote must be at least 3 characters",
+  text: Joi.string().max(1000).allow("").optional().messages({
     "string.max": "Quote cannot exceed 1000 characters",
   }),
 
@@ -15,7 +13,7 @@ export const createQuoteValidation = Joi.object({
       "string.max": "Category cannot exceed 100 characters",
     }),
 
-  author: Joi.string().max(100).optional().messages({
+  author: Joi.string().max(100).optional().allow(null, "").messages({
     "string.max": "Author name cannot exceed 100 characters",
   }),
 
@@ -31,12 +29,13 @@ export const createQuoteValidation = Joi.object({
 
   editorData: Joi.object().optional().allow(null),
 
+  renderedImages: Joi.object().optional().allow(null),
+
   // image will come from file upload (multer), not body
 });
 
 export const updateQuoteValidation = Joi.object({
-  text: Joi.string().min(3).max(1000).messages({
-    "string.min": "Quote must be at least 3 characters",
+  text: Joi.string().max(1000).allow("").optional().messages({
     "string.max": "Quote cannot exceed 1000 characters",
   }),
 
@@ -44,7 +43,7 @@ export const updateQuoteValidation = Joi.object({
     "string.max": "Category cannot exceed 100 characters",
   }),
 
-  author: Joi.string().max(100).optional(),
+  author: Joi.string().max(100).optional().allow(null, ""),
 
   description: Joi.string().max(1000).optional().allow(null, ""),
 
@@ -55,4 +54,6 @@ export const updateQuoteValidation = Joi.object({
   isActive: Joi.boolean(),
 
   editorData: Joi.object().optional().allow(null),
+
+  renderedImages: Joi.object().optional().allow(null),
 });

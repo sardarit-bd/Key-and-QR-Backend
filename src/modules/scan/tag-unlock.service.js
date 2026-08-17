@@ -92,61 +92,89 @@ const publicUnlock = async (tagCode) => {
             quote: tag.personalMessage,
             category: "personal",
             author: null,
+            description: null,
             image: null,
             theme: null,
+            editorData: null,
+            allowReuse: true,
             isPersonalMessage: true,
             sourceType: "personal",
         };
     }
 
-    // ✅ 5. Daily quote (P0.1, P0.2, P0.4) — one persistent quote per tag per day,
-    // identical across all scans that day. Fast path: a scan was already recorded.
-    const existingScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
-    if (existingScan && existingScan.quote) {
-        const q = existingScan.quote;
+    // Helper to format consistent quote response
+    const formatQuotePayload = (q, srcType) => {
+        const imageUrl = q?.image?.url || (typeof q?.image === "string" ? q.image : null);
         return {
-            _id: q._id,
-            quote: q.text,
-            category: q.category,
-            author: q.author || null,
-            image: q.image?.url || null,
-            theme: q.theme || null,
-            sourceType: existingScan.sourceType || "random",
+            _id: q?._id,
+            quote: q?.text || "",
+            text: q?.text || "",
+            category: q?.category || "faith",
+            author: q?.author || null,
+            description: q?.description || null,
+            image: imageUrl,
+            theme: q?.theme || null,
+            editorData: q?.editorData || null,
+            allowReuse: typeof q?.allowReuse === "boolean" ? q.allowReuse : true,
+            sourceType: srcType,
             isPersonalMessage: false,
         };
-    }
+    };
 
-    // Slow path: assign a quote for today (tag assignment > user assignment > random).
-    let quote = null;
-    let sourceType = "random";
+    // ✅ 5. Priority 1 & 2: Check active Quote Assignment (Tag Assignment > User Assignment)
+    let assignedQuote = null;
+    let assignmentSourceType = null;
 
     try {
-        // Priority 1: Tag assignment
         const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
-        if (tagAssignment?.quote) {
-            quote = tagAssignment.quote;
-            sourceType = "tag_assignment";
-        }
-
-        // Priority 2: User assignment (if owner exists)
-        if (!quote && tag.owner) {
+        if (tagAssignment?.quote && tagAssignment.quote.isActive !== false) {
+            assignedQuote = tagAssignment.quote;
+            assignmentSourceType = "tag_assignment";
+        } else if (tag.owner) {
             const userAssignment = await quoteAssignmentService.getTopAssignmentByUser(tag.owner);
-            if (userAssignment?.quote) {
-                quote = userAssignment.quote;
-                sourceType = "user_assignment";
+            if (userAssignment?.quote && userAssignment.quote.isActive !== false) {
+                assignedQuote = userAssignment.quote;
+                assignmentSourceType = "user_assignment";
             }
         }
+    } catch (err) {
+        // Fallback gracefully on assignment lookup error
+    }
 
-        // Priority 3: Random fallback
-        if (!quote) {
-            const randomQuote = await Quote.aggregate([
-                { $match: { isActive: true } },
-                { $sample: { size: 1 } },
-            ]);
-            if (randomQuote.length > 0) {
-                quote = randomQuote[0];
-                sourceType = "random";
-            }
+    if (assignedQuote) {
+        // Save/update daily scan record so history reflects the active assignment
+        await scanRepository.createPublicScan({
+            tag: tag._id,
+            quote: assignedQuote._id,
+            category: assignedQuote.category,
+            scanDateKey: todayKey,
+            sourceType: assignmentSourceType,
+        });
+
+        return formatQuotePayload(assignedQuote, assignmentSourceType);
+    }
+
+    // ✅ 6. Priority 3: No explicit assignment exists -> Use daily random quote cache
+    // Only reuse existingScan if it was actually a random quote scan (not a stale, deleted assignment)
+    const existingScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    if (
+        existingScan &&
+        existingScan.quote &&
+        existingScan.quote.isActive !== false &&
+        existingScan.sourceType === "random"
+    ) {
+        return formatQuotePayload(existingScan.quote, "random");
+    }
+
+    // Pick new random quote for today
+    let quote = null;
+    try {
+        const randomQuotes = await Quote.aggregate([
+            { $match: { isActive: true } },
+            { $sample: { size: 1 } },
+        ]);
+        if (randomQuotes.length > 0) {
+            quote = randomQuotes[0];
         }
     } catch (err) {
         throw new AppError(
@@ -156,7 +184,6 @@ const publicUnlock = async (tagCode) => {
         );
     }
 
-    // ✅ 6. Validate Assigned Quote
     if (!quote) {
         throw new AppError(
             httpStatus.NOT_FOUND,
@@ -165,31 +192,15 @@ const publicUnlock = async (tagCode) => {
         );
     }
 
-    // ✅ 7. Persist atomically (P0.2) — upsert guarded by the unique index on
-    // { tag, scanDateKey, user:null }. The first writer inserts; concurrent
-    // writers are no-ops. Re-read returns the persisted (winning) quote so
-    // every scan that day displays and saves the SAME quote (P0.8).
     await scanRepository.createPublicScan({
         tag: tag._id,
         quote: quote._id,
         category: quote.category,
         scanDateKey: todayKey,
-        sourceType,
+        sourceType: "random",
     });
 
-    const persistedScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
-    const persistedQuote = persistedScan?.quote || quote;
-
-    return {
-        _id: persistedQuote._id,
-        quote: persistedQuote.text,
-        category: persistedQuote.category || quote.category,
-        author: persistedQuote.author || null,
-        image: persistedQuote.image?.url || null,
-        theme: persistedQuote.theme || null,
-        sourceType: persistedScan?.sourceType || sourceType,
-        isPersonalMessage: false,
-    };
+    return formatQuotePayload(quote, "random");
 };
 
 // ===============================

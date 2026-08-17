@@ -7,6 +7,8 @@ const createAssignment = (payload) => {
   return QuoteAssignment.create(payload);
 };
 
+const QUOTE_POPULATE_FIELDS = "text category author description image theme allowReuse editorData isActive";
+
 /**
  * Get all assignments (admin use)
  */
@@ -19,7 +21,9 @@ const getAllAssignments = async ({
   assignmentType,
   isActive,
 }) => {
-  const skip = (page - 1) * limit;
+  const parsedPage = parseInt(page) || 1;
+  const parsedLimit = parseInt(limit) || 10;
+  const skip = (parsedPage - 1) * parsedLimit;
 
   const filter = {};
 
@@ -45,22 +49,22 @@ const getAllAssignments = async ({
 
   const [data, total] = await Promise.all([
     QuoteAssignment.find(filter)
-      .populate("quote", "text category author image theme allowReuse isActive")
+      .populate("quote", QUOTE_POPULATE_FIELDS)
       .populate("tag", "tagCode isActive isActivated")
       .populate("user", "name email role")
       .sort({ priority: -1, createdAt: -1 })
       .skip(skip)
-      .limit(limit),
+      .limit(parsedLimit),
 
     QuoteAssignment.countDocuments(filter),
   ]);
 
   return {
     meta: {
-      page: parseInt(page),
-      limit: parseInt(limit),
+      page: parsedPage,
+      limit: parsedLimit,
       total,
-      totalPage: Math.ceil(total / limit),
+      totalPage: Math.ceil(total / parsedLimit),
     },
     data,
   };
@@ -105,7 +109,7 @@ const bulkDeleteAssignments = async (ids) => {
  */
 const findById = (id) => {
   return QuoteAssignment.findById(id)
-    .populate("quote", "text category author image theme allowReuse isActive")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .populate("tag", "tagCode isActive isActivated")
     .populate("user", "name email role");
 };
@@ -115,7 +119,7 @@ const findById = (id) => {
  */
 const updateAssignment = (id, payload) => {
   return QuoteAssignment.findByIdAndUpdate(id, payload, { new: true })
-    .populate("quote", "text category author image theme allowReuse isActive")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .populate("tag", "tagCode isActive isActivated")
     .populate("user", "name email role");
 };
@@ -136,7 +140,7 @@ const getActiveAssignmentsByTag = async (tagId) => {
     assignmentType: "tag",
     isActive: true,
   })
-    .populate("quote", "text category author image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .sort({ priority: -1, createdAt: -1 });
 };
 
@@ -149,7 +153,7 @@ const getActiveAssignmentsByUser = async (userId) => {
     assignmentType: "user",
     isActive: true,
   })
-    .populate("quote", "text category author image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .sort({ priority: -1, createdAt: -1 });
 };
 
@@ -162,7 +166,7 @@ const getTopAssignmentByTag = async (tagId) => {
     assignmentType: "tag",
     isActive: true,
   })
-    .populate("quote", "text category author image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .sort({ priority: -1, createdAt: -1 });
 };
 
@@ -175,7 +179,7 @@ const getTopAssignmentByUser = async (userId) => {
     assignmentType: "user",
     isActive: true,
   })
-    .populate("quote", "text category author image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .sort({ priority: -1, createdAt: -1 });
 };
 
@@ -185,7 +189,7 @@ const getAssignmentsByTag = async (tagId) => {
     assignmentType: "tag",
     isActive: true,
   })
-    .populate("quote", "text category author image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .sort({ priority: -1, createdAt: -1 });
 };
 

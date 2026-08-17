@@ -1,5 +1,7 @@
 import ReceivedQuote from "./receivedQuote.model.js";
 
+const QUOTE_POPULATE_FIELDS = "text category author description image theme allowReuse editorData renderedImages isActive";
+
 const createReceivedQuote = (payload) => {
   return ReceivedQuote.create(payload);
 };
@@ -9,14 +11,14 @@ const getReceivedQuoteById = async (id, userId = null) => {
   if (userId) filter.user = userId;
 
   return ReceivedQuote.findOne(filter)
-    .populate("quote", "text category author description image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .populate("category", "name slug icon color");
 };
 
 const getLatestReceivedQuote = async (userId) => {
   return ReceivedQuote.findOne({ user: userId })
     .sort({ receivedAt: -1 })
-    .populate("quote", "text category author description image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .populate("category", "name slug icon color");
 };
 
@@ -39,7 +41,7 @@ const getUserHistory = async ({
       .sort({ receivedAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("quote", "text category author description image theme allowReuse")
+      .populate("quote", QUOTE_POPULATE_FIELDS)
       .populate("category", "name slug icon color"),
     ReceivedQuote.countDocuments(filter),
   ]);
@@ -66,7 +68,7 @@ const getUserHistoryDates = async (userId) => {
 const getTodayReceivedQuotes = async (userId, dayKey) => {
   return ReceivedQuote.find({ user: userId, dayKey })
     .sort({ receivedAt: -1 })
-    .populate("quote", "text category author description image theme allowReuse")
+    .populate("quote", QUOTE_POPULATE_FIELDS)
     .populate("category", "name slug icon color");
 };
 
@@ -88,7 +90,7 @@ const getByCategory = async (userId, category, { page = 1, limit = 10 } = {}) =>
       .sort({ receivedAt: -1 })
       .skip(skip)
       .limit(limit)
-      .populate("quote", "text category author description image theme allowReuse"),
+      .populate("quote", QUOTE_POPULATE_FIELDS),
     ReceivedQuote.countDocuments(filter),
   ]);
 

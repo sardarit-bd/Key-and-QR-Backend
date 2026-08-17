@@ -1,8 +1,10 @@
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import quoteAssignmentRepository from "./quoteAssignment.repository.js";
+import QuoteAssignment from "./quoteAssignment.model.js";
 import quoteRepository from "../quote/quote.repository.js";
 import tagRepository from "../tag/tag.repository.js";
+import scanRepository from "../scan/scan.repository.js";
 import User from "../../models/user.model.js";
 import Tag from "../tag/tag.model.js";
 
@@ -32,8 +34,32 @@ const createAssignment = async (payload) => {
         }
     }
 
+    // Check for existing duplicate assignment
+    const existing = await QuoteAssignment.findOne({
+        quote: payload.quote,
+        tag: payload.tag || null,
+        user: payload.user || null,
+        assignmentType: payload.assignmentType,
+    });
+
+    if (existing) {
+        throw new AppError(
+            httpStatus.CONFLICT,
+            "This quote assignment already exists"
+        );
+    }
+
     try {
-        return await quoteAssignmentRepository.createAssignment(payload);
+        const result = await quoteAssignmentRepository.createAssignment(payload);
+        if (payload.tag) {
+            await scanRepository.invalidatePublicDailyScan(payload.tag);
+        } else if (payload.user) {
+            const userTags = await Tag.find({ owner: payload.user }, "_id");
+            if (userTags.length > 0) {
+                await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+            }
+        }
+        return result;
     } catch (error) {
         if (error.code === 11000) {
             throw new AppError(
@@ -118,6 +144,15 @@ const bulkAssign = async (payload) => {
 
     const created = await quoteAssignmentRepository.bulkCreateAssignments(newDocs);
 
+    if (assignmentType === "tag" && newTargetIds.length > 0) {
+        await scanRepository.invalidatePublicDailyScan(newTargetIds);
+    } else if (assignmentType === "user" && newTargetIds.length > 0) {
+        const userTags = await Tag.find({ owner: { $in: newTargetIds } }, "_id");
+        if (userTags.length > 0) {
+            await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+        }
+    }
+
     return {
         summary: {
             total: targetIds.length,
@@ -133,7 +168,24 @@ const bulkAssign = async (payload) => {
  * Bulk delete assignments
  */
 const bulkDelete = async (ids) => {
-    return quoteAssignmentRepository.bulkDeleteAssignments(ids);
+    // Find assignments to get affected tag IDs and user IDs before deleting
+    const existing = await QuoteAssignment.find({ _id: { $in: ids } }, "tag user assignmentType");
+    const tagIds = existing.map((a) => a.tag).filter(Boolean);
+    const userIds = existing.map((a) => a.user).filter(Boolean);
+
+    const result = await quoteAssignmentRepository.bulkDeleteAssignments(ids);
+
+    if (tagIds.length > 0) {
+        await scanRepository.invalidatePublicDailyScan(tagIds);
+    }
+    if (userIds.length > 0) {
+        const userTags = await Tag.find({ owner: { $in: userIds } }, "_id");
+        if (userTags.length > 0) {
+            await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+        }
+    }
+
+    return result;
 };
 
 /**
@@ -213,6 +265,18 @@ const updateAssignment = async (id, payload) => {
             throw new AppError(httpStatus.NOT_FOUND, "Quote assignment not found");
         }
 
+        const affectedTagId = updated.tag?._id || updated.tag;
+        const affectedUserId = updated.user?._id || updated.user;
+        if (affectedTagId) {
+            await scanRepository.invalidatePublicDailyScan(affectedTagId);
+        }
+        if (affectedUserId) {
+            const userTags = await Tag.find({ owner: affectedUserId }, "_id");
+            if (userTags.length > 0) {
+                await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+            }
+        }
+
         return updated;
     } catch (error) {
         if (error.code === 11000) {
@@ -235,7 +299,21 @@ const deleteAssignment = async (id) => {
         throw new AppError(httpStatus.NOT_FOUND, "Quote assignment not found");
     }
 
-    return quoteAssignmentRepository.deleteAssignment(id);
+    const tagId = assignment.tag?._id || assignment.tag;
+    const userId = assignment.user?._id || assignment.user;
+    const result = await quoteAssignmentRepository.deleteAssignment(id);
+
+    if (tagId) {
+        await scanRepository.invalidatePublicDailyScan(tagId);
+    }
+    if (userId) {
+        const userTags = await Tag.find({ owner: userId }, "_id");
+        if (userTags.length > 0) {
+            await scanRepository.invalidatePublicDailyScan(userTags.map((t) => t._id));
+        }
+    }
+
+    return result;
 };
 
 /**

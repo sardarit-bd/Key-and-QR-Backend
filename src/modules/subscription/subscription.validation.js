@@ -1,10 +1,11 @@
 import Joi from "joi";
 
 export const createCheckoutValidation = Joi.object({
-  tagCode: Joi.string().trim().required(),
+  tagCode: Joi.string().trim().optional().allow(null, ""),
   preferredCategory: Joi.string()
     .valid("love", "strength", "healing", "faith", "gratitude")
-    .optional(),
+    .optional()
+    .allow(null, ""),
 });
 
 export const cancelSubscriptionValidation = Joi.object({

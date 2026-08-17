@@ -38,6 +38,8 @@ const getAllTags = async (query = {}) => {
   if (unused === "true") {
     const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
     filter.owner = null;
+    filter.isActivated = false;
+    filter.assignedOrderId = null;
     filter.isActive = true;
     filter._id = { $nin: assignedTagIds };
   }
@@ -46,10 +48,11 @@ const getAllTags = async (query = {}) => {
     if (status === "unused") {
       const assignedTagIds = await getAssignedTagIdsFromActiveOrders();
       filter.owner = null;
+      filter.isActivated = false;
+      filter.assignedOrderId = null;
       filter.isActive = true;
       filter._id = { $nin: assignedTagIds };
     } else if (status === "assigned") {
-      filter.owner = null;
       filter.isActive = true;
       filter.assignedOrderId = { $ne: null };
     } else if (status === "activated") {
