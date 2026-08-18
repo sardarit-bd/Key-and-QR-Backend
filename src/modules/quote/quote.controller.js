@@ -58,6 +58,17 @@ const getQuoteById = catchAsync(async (req, res) => {
   });
 });
 
+const getPublicQuoteById = catchAsync(async (req, res) => {
+  const result = await quoteService.getPublicQuoteById(req.params.id);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Public quote fetched successfully",
+    data: result,
+  });
+});
+
 const updateQuote = catchAsync(async (req, res) => {
   const image = req.file || null;
 
@@ -159,6 +170,7 @@ export default {
   createQuote,
   getAllQuotes,
   getQuoteById,
+  getPublicQuoteById,
   updateQuote,
   deleteQuote,
   toggleQuoteActive,

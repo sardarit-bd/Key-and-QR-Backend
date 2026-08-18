@@ -203,15 +203,26 @@ const isTagAssignedToActiveOrder = async (tagId) => {
  * ATOMIC TAG ASSIGNMENT - Race Condition Fix
  * Find and assign multiple tags atomically using findOneAndUpdate
  */
-const findAndAssignMultipleTags = async (limit = 10, userId, orderId, session = null) => {
+const findAndAssignMultipleTags = async (limit = 10, userId, orderId, session = null, personalMessage = null) => {
   if (limit <= 0) return [];
 
   const assignedTagIds = await getAssignedTagIdsFromActiveOrders(session);
   const assignedTags = [];
 
+  const updateFields = {
+    owner: userId,
+    isActivated: true,
+    activatedAt: new Date(),
+    assignedOrderId: orderId,
+  };
+
+  if (personalMessage && typeof personalMessage === "string" && personalMessage.trim() !== "") {
+    updateFields.personalMessage = personalMessage.trim();
+  }
+
   for (let i = 0; i < limit; i++) {
     const options = {
-      new: true,
+      returnDocument: "after",
       sort: { createdAt: 1 }, // FIFO — oldest tags first
     };
     if (session) options.session = session;
@@ -223,12 +234,7 @@ const findAndAssignMultipleTags = async (limit = 10, userId, orderId, session = 
         isActivated: false,
         _id: { $nin: assignedTagIds.concat(assignedTags) },
       },
-      {
-        owner: userId,
-        isActivated: true,
-        activatedAt: new Date(),
-        assignedOrderId: orderId,
-      },
+      updateFields,
       options,
     );
 
@@ -390,7 +396,18 @@ const activateTagIfNotActivated = async (tagCode) => {
   );
 };
 
-const assignTagAtomically = async (tagId, orderId, ownerId = null) => {
+const assignTagAtomically = async (tagId, orderId, ownerId = null, personalMessage = null) => {
+  const updateFields = {
+    owner: ownerId,
+    isActivated: true,
+    activatedAt: new Date(),
+    assignedOrderId: orderId,
+  };
+
+  if (personalMessage && typeof personalMessage === "string" && personalMessage.trim() !== "") {
+    updateFields.personalMessage = personalMessage.trim();
+  }
+
   return Tag.findOneAndUpdate(
     {
       _id: tagId,
@@ -400,13 +417,8 @@ const assignTagAtomically = async (tagId, orderId, ownerId = null) => {
         { assignedOrderId: orderId }
       ]
     },
-    {
-      owner: ownerId,
-      isActivated: true,
-      activatedAt: new Date(),
-      assignedOrderId: orderId,
-    },
-    { new: true }
+    updateFields,
+    { returnDocument: "after" }
   );
 };
 

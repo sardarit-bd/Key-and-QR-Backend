@@ -16,6 +16,9 @@ import { uploadImageBuffer } from './../../utils/cloudinary.util.js';
 import guestClaimService from "./guestClaim.service.js";
 import logger from "../../utils/logger.js";
 import RefreshToken from "../../models/refreshToken.model.js";
+import User from "../../models/user.model.js";
+import roles from "../../constants/roles.js";
+import { NAME_CHANGE_COOLDOWN_MS } from "../../constants/user.constants.js";
 import { hashToken } from "../../utils/tokenHash.js";
 
 // ===============================
@@ -90,6 +93,7 @@ const buildAuthResponse = (user) => {
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
       stripeCustomerId: user.stripeCustomerId || null,
+      nameChangedAt: user.nameChangedAt || null,
     },
   };
 };
@@ -338,6 +342,7 @@ const getMe = async (userId) => {
     updatedAt: user.updatedAt,
     stripeCustomerId: user.stripeCustomerId || null,
     isDeleted: user.isDeleted,
+    nameChangedAt: user.nameChangedAt || null,
   };
 };
 
@@ -601,10 +606,115 @@ const changePassword = async (userId, oldPassword, newPassword) => {
 
 /**
  * Update Profile
- * Updates user profile information
+ * Updates user profile information with 30-day name change restriction
  */
-const updateProfile = async (userId, updateData) => {
-  const user = await authRepository.updateUser(userId, updateData);
+const updateProfile = async (userId, updateData, authUser = null) => {
+  const currentUser = await authRepository.findUserById(userId);
+  if (!currentUser) {
+    throw new AppError(httpStatus.NOT_FOUND, "User not found");
+  }
+
+  const payload = { ...updateData };
+  const userRole = authUser?.role || currentUser.role;
+  const canOverride = userRole === roles.ADMIN || userRole === roles.MODERATOR;
+
+  let isNameChanged = false;
+  let trimmedNewName = null;
+
+  if (payload.name !== undefined && payload.name !== null) {
+    trimmedNewName = String(payload.name).trim();
+    const currentTrimmedName = (currentUser.name || "").trim();
+    isNameChanged = trimmedNewName !== currentTrimmedName;
+  }
+
+  let user = null;
+
+  if (isNameChanged) {
+    const now = new Date();
+
+    if (!canOverride && currentUser.nameChangedAt) {
+      const lastChangedTime = new Date(currentUser.nameChangedAt).getTime();
+      const nextAllowedTime = lastChangedTime + NAME_CHANGE_COOLDOWN_MS;
+
+      if (now.getTime() < nextAllowedTime) {
+        const remainingMs = nextAllowedTime - now.getTime();
+        const remainingDays = Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+        const nextAllowedAt = new Date(nextAllowedTime).toISOString();
+
+        const err = new AppError(
+          httpStatus.BAD_REQUEST,
+          `You can change your name again in ${remainingDays} ${remainingDays === 1 ? "day" : "days"}.`,
+          "NAME_CHANGE_COOLDOWN"
+        );
+        err.nextAllowedAt = nextAllowedAt;
+        err.remainingDays = remainingDays;
+        throw err;
+      }
+    }
+
+    if (!canOverride) {
+      // Atomic conditional update to guard against concurrent requests
+      const cooldownCutoff = new Date(now.getTime() - NAME_CHANGE_COOLDOWN_MS);
+      const updateFields = {
+        ...payload,
+        name: trimmedNewName,
+        nameChangedAt: now,
+      };
+
+      user = await User.findOneAndUpdate(
+        {
+          _id: userId,
+          isDeleted: false,
+          $or: [
+            { nameChangedAt: null },
+            { nameChangedAt: { $exists: false } },
+            { nameChangedAt: { $lte: cooldownCutoff } },
+          ],
+        },
+        { $set: updateFields },
+        { returnDocument: 'after' }
+      );
+
+      if (!user) {
+        // Condition failed due to concurrent update or user deletion
+        const recheckUser = await authRepository.findUserById(userId);
+        if (!recheckUser) {
+          throw new AppError(httpStatus.NOT_FOUND, "User not found");
+        }
+        if (recheckUser.nameChangedAt) {
+          const nextAllowedTime = new Date(recheckUser.nameChangedAt).getTime() + NAME_CHANGE_COOLDOWN_MS;
+          const remainingMs = Math.max(0, nextAllowedTime - Date.now());
+          const remainingDays = Math.max(1, Math.ceil(remainingMs / (24 * 60 * 60 * 1000)));
+          const err = new AppError(
+            httpStatus.BAD_REQUEST,
+            `You can change your name again in ${remainingDays} ${remainingDays === 1 ? "day" : "days"}.`,
+            "NAME_CHANGE_COOLDOWN"
+          );
+          err.nextAllowedAt = new Date(nextAllowedTime).toISOString();
+          err.remainingDays = remainingDays;
+          throw err;
+        }
+        throw new AppError(httpStatus.BAD_REQUEST, "Failed to update name");
+      }
+    } else {
+      // Admin / Support override
+      const updateFields = {
+        ...payload,
+        name: trimmedNewName,
+        nameChangedAt: now,
+      };
+      user = await authRepository.updateUser(userId, updateFields);
+    }
+  } else {
+    // Name is not changed (only other fields like profileImage or submitted name is identical)
+    // Do NOT update nameChangedAt
+    const updateFields = { ...payload };
+    if (trimmedNewName) {
+      updateFields.name = trimmedNewName;
+    }
+    user = await authRepository.updateUser(userId, updateFields);
+  }
+
   if (!user) {
     throw new AppError(httpStatus.NOT_FOUND, "User not found");
   }
@@ -621,6 +731,7 @@ const updateProfile = async (userId, updateData) => {
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     stripeCustomerId: user.stripeCustomerId || null,
+    nameChangedAt: user.nameChangedAt || null,
   };
 };
 

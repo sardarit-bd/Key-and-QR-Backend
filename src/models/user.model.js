@@ -112,6 +112,12 @@ const userSchema = new mongoose.Schema(
       default: null,
       select: false,
     },
+
+    // 30-day name change restriction timestamp
+    nameChangedAt: {
+      type: Date,
+      default: null,
+    },
   },
   {
     timestamps: true,
