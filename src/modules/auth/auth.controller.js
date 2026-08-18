@@ -194,7 +194,7 @@ const googleCallback = catchAsync(async (req, res, next) => {
 
 // Update profile
 const updateProfile = catchAsync(async (req, res) => {
-  const result = await authService.updateProfile(req.user.userId, req.body);
+  const result = await authService.updateProfile(req.user.userId, req.body, req.user);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,

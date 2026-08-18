@@ -26,7 +26,9 @@ const globalErrorHandler = (error, req, res, next) => {
   res.status(statusCode).json({
     success: false,
     message,
-    code: error.errorCode || undefined,
+    code: error.errorCode || error.code || undefined,
+    nextAllowedAt: error.nextAllowedAt || undefined,
+    remainingDays: error.remainingDays || undefined,
     error: env.nodeEnv === "development" ? error.stack : undefined,
     data: null,
   });
