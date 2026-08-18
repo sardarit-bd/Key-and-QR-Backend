@@ -3,6 +3,7 @@ import AppError from "../../utils/AppError.js";
 import tagRepository from "../tag/tag.repository.js";
 import scanRepository from "./scan.repository.js";
 import Quote from "../quote/quote.model.js";
+import Order from "../order/order.model.js";
 import subscriptionService from "../subscription/subscription.service.js";
 import quoteAssignmentService from "../quoteAssignment/quoteAssignment.service.js";
 
@@ -85,6 +86,24 @@ const publicUnlock = async (tagCode) => {
         }
     }
 
+    // Resolve minimal safe gift claim metadata (no buyer/sensitive info leaked)
+    let giftInfo = null;
+    if (tag.assignedOrderId) {
+        try {
+            const order = await Order.findById(tag.assignedOrderId).select("purchaseType giftStatus paymentStatus");
+            if (order && order.purchaseType === "gift") {
+                giftInfo = {
+                    isGift: true,
+                    orderId: order._id.toString(),
+                    giftStatus: order.giftStatus || "pending_claim",
+                    isClaimable: !tag.owner && order.giftStatus !== "claimed" && order.paymentStatus === "paid",
+                };
+            }
+        } catch (e) {
+            // non-fatal
+        }
+    }
+
     // ✅ 4. Check Personal Message (Public)
     if (tag.personalMessage && tag.personalMessage.trim() !== "") {
         return {
@@ -99,6 +118,10 @@ const publicUnlock = async (tagCode) => {
             allowReuse: true,
             isPersonalMessage: true,
             sourceType: "personal",
+            gift: giftInfo,
+            isGift: !!giftInfo?.isGift,
+            giftOrderId: giftInfo?.orderId || null,
+            isClaimable: !!giftInfo?.isClaimable,
         };
     }
 
@@ -118,6 +141,10 @@ const publicUnlock = async (tagCode) => {
             allowReuse: typeof q?.allowReuse === "boolean" ? q.allowReuse : true,
             sourceType: srcType,
             isPersonalMessage: false,
+            gift: giftInfo,
+            isGift: !!giftInfo?.isGift,
+            giftOrderId: giftInfo?.orderId || null,
+            isClaimable: !!giftInfo?.isClaimable,
         };
     };
 

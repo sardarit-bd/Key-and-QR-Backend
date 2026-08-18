@@ -452,28 +452,58 @@ orderSchema.virtual('itemCount').get(function() {
     return 1;
 });
 
-// NEW: Method to get all tags from order
-orderSchema.methods.getAllTags = function() {
+// Method to get all tags from order
+orderSchema.methods.getAllTags = async function() {
     const tags = [];
     const seenIds = new Set();
 
-    // Get from items
+    // 1. Get from items
     if (this.items && this.items.length > 0) {
         for (const item of this.items) {
             if (item.assignedTags && item.assignedTags.length > 0) {
                 for (const tagId of item.assignedTags) {
-                    if (!seenIds.has(tagId.toString())) {
-                        seenIds.add(tagId.toString());
-                        tags.push(tagId);
+                    const idStr = tagId?._id?.toString() || tagId?.toString();
+                    if (idStr && !seenIds.has(idStr)) {
+                        seenIds.add(idStr);
+                        tags.push(tagId?._id || tagId);
                     }
                 }
             }
         }
     }
 
-    // Legacy: assignedTag
-    if (this.assignedTag && !seenIds.has(this.assignedTag.toString())) {
-        tags.push(this.assignedTag);
+    // 2. Get from top-level assignedTags array
+    if (this.assignedTags && this.assignedTags.length > 0) {
+        for (const item of this.assignedTags) {
+            const tagRef = item?.tag?._id || item?.tag || item;
+            const idStr = tagRef?.toString();
+            if (idStr && !seenIds.has(idStr)) {
+                seenIds.add(idStr);
+                tags.push(tagRef);
+            }
+        }
+    }
+
+    // 3. Legacy: single assignedTag
+    if (this.assignedTag) {
+        const idStr = this.assignedTag?._id?.toString() || this.assignedTag?.toString();
+        if (idStr && !seenIds.has(idStr)) {
+            seenIds.add(idStr);
+            tags.push(this.assignedTag);
+        }
+    }
+
+    // 4. Fallback: Find tags where assignedOrderId points to this order
+    if (tags.length === 0) {
+        const Tag = mongoose.model("Tag");
+        const foundTags = await Tag.find({ assignedOrderId: this._id, isActive: true });
+        for (const t of foundTags) {
+            const idStr = t._id.toString();
+            if (!seenIds.has(idStr)) {
+                seenIds.add(idStr);
+                tags.push(t._id);
+            }
+        }
     }
 
     return tags;

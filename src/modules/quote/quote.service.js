@@ -73,6 +73,29 @@ const getQuoteById = async (id) => {
 };
 
 /**
+ * Get sanitized public quote by ID (no auth required)
+ */
+const getPublicQuoteById = async (id) => {
+  const quote = await quoteRepository.findById(id);
+
+  if (!quote || quote.isActive === false) {
+    throw new AppError(httpStatus.NOT_FOUND, "Quote not found or inactive");
+  }
+
+  return {
+    _id: quote._id,
+    text: quote.text || "",
+    author: quote.author || "MyInspireTag",
+    category: quote.category || "faith",
+    description: quote.description || null,
+    renderedImages: quote.renderedImages || null,
+    image: quote.image?.url || (typeof quote.image === "string" ? quote.image : null),
+    theme: quote.theme || null,
+    editorData: quote.editorData || null,
+  };
+};
+
+/**
  * Update Quote
  */
 const updateQuote = async (id, payload, imageFile) => {
@@ -222,6 +245,7 @@ export default {
   createQuote,
   getAllQuotes,
   getQuoteById,
+  getPublicQuoteById,
   updateQuote,
   deleteQuote,
   toggleQuoteActive,

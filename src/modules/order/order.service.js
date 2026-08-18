@@ -6,6 +6,7 @@ import productRepository from "../product/product.repository.js";
 import stripe from "../../config/stripe.js";
 import env from "../../config/env.js";
 import Order from "./order.model.js";
+import Tag from "../tag/tag.model.js";
 import mongoose from "mongoose";
 import pendingQuoteRepository from "../pendingQuote/pendingQuote.repository.js";
 import PAYMENT_CONFIG from "../../config/payment.config.js";
@@ -840,6 +841,10 @@ const confirmPaymentAndAssignTag = async (
 
       // ✅ 6. ATOMIC TAG ASSIGNMENT (best-effort — payment never fails)
       const assignedTags = [];
+      const giftMessageToSync =
+        order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== ""
+          ? order.giftMessage.trim()
+          : null;
 
       if (requiredQty > 0) {
         const found = await tagRepository.findAndAssignMultipleTags(
@@ -847,6 +852,7 @@ const confirmPaymentAndAssignTag = async (
           order.user || null,
           orderId,
           session,
+          giftMessageToSync,
         );
 
         if (found.length > 0) {
@@ -926,62 +932,79 @@ const confirmPaymentAndAssignTag = async (
  * Claim Gift Order
  */
 const claimGiftOrder = async (orderId, userId) => {
-  const order = await orderRepository.findById(orderId);
-  if (!order) {
-    throw new AppError(httpStatus.NOT_FOUND, "Order not found");
-  }
+  const session = await mongoose.startSession();
+  try {
+    return await session.withTransaction(async () => {
+      const order = await Order.findById(orderId).session(session);
+      if (!order) {
+        throw new AppError(httpStatus.NOT_FOUND, "Order not found");
+      }
 
-  if (order.purchaseType !== "gift") {
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      "This order is not a gift order",
-    );
-  }
+      if (order.purchaseType !== "gift") {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "This order is not a gift order",
+        );
+      }
 
-  if (order.paymentStatus !== "paid") {
-    throw new AppError(httpStatus.BAD_REQUEST, "Gift order is not paid yet");
-  }
+      if (order.paymentStatus !== "paid") {
+        throw new AppError(httpStatus.BAD_REQUEST, "Gift order is not paid yet");
+      }
 
-  // ✅ Get all tags from order
-  const allTags = await order.getAllTags();
-  if (!allTags || allTags.length === 0) {
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      "No tags assigned to this gift order",
-    );
-  }
+      if (order.giftStatus === "claimed") {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "This gift has already been claimed",
+        );
+      }
 
-  if (order.giftStatus === "claimed") {
-    throw new AppError(
-      httpStatus.BAD_REQUEST,
-      "This gift has already been claimed",
-    );
-  }
+      // ✅ Get all tags from order
+      const allTags = await order.getAllTags();
+      if (!allTags || allTags.length === 0) {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          "No tags assigned to this gift order",
+        );
+      }
 
-  // ✅ Claim all tags
-  for (const tagId of allTags) {
-    const tag = await tagRepository.findById(tagId);
-    if (!tag) {
-      throw new AppError(httpStatus.NOT_FOUND, `Tag ${tagId} not found`);
-    }
-    if (tag.owner) {
-      throw new AppError(
-        httpStatus.BAD_REQUEST,
-        `Tag ${tag.tagCode} is already owned by someone`,
+      // ✅ Claim all tags
+      for (const tagId of allTags) {
+        const tag = await Tag.findById(tagId).session(session);
+        if (!tag) {
+          throw new AppError(httpStatus.NOT_FOUND, `Tag ${tagId} not found`);
+        }
+        if (tag.owner && tag.owner.toString() !== userId.toString()) {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Tag ${tag.tagCode} is already owned by someone`,
+          );
+        }
+        await Tag.findByIdAndUpdate(
+          tag._id,
+          {
+            owner: userId,
+            isActivated: true,
+            activatedAt: new Date(),
+          },
+          { session, returnDocument: "after" },
+        );
+      }
+
+      const updatedOrder = await Order.findByIdAndUpdate(
+        orderId,
+        {
+          giftStatus: "claimed",
+          giftClaimedBy: userId,
+          giftClaimedAt: new Date(),
+        },
+        { session, returnDocument: "after" },
       );
-    }
-    await tagRepository.updateTag(tag._id, {
-      owner: userId,
-      isActivated: true,
-      activatedAt: new Date(),
-    });
-  }
 
-  return orderRepository.updateOrder(orderId, {
-    giftStatus: "claimed",
-    giftClaimedBy: userId,
-    giftClaimedAt: new Date(),
-  });
+      return updatedOrder;
+    });
+  } finally {
+    session.endSession();
+  }
 };
 
 /**
@@ -1424,16 +1447,20 @@ const updateOrder = async (id, payload, session = null, user = null) => {
       );
     }
 
-    // Update tag ownership
+    // Update tag ownership & gift message synchronization
     const updateOptions = session ? { session } : {};
+    const tagUpdateFields = {
+      owner: order.user,
+      isActivated: true,
+      activatedAt: new Date(),
+      assignedOrderId: id,
+    };
+    if (order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== "") {
+      tagUpdateFields.personalMessage = order.giftMessage.trim();
+    }
     await tagRepository.updateTag(
       tag._id,
-      {
-        owner: order.user,
-        isActivated: true,
-        activatedAt: new Date(),
-        assignedOrderId: id,
-      },
+      tagUpdateFields,
       updateOptions,
     );
 
@@ -2185,7 +2212,12 @@ const addTagToOrder = async (orderId, tagId) => {
 
   await ensureTagAvailableForOrder(tagId, orderId, order.user);
 
-  const tag = await tagRepository.assignTagAtomically(tagId, orderId, order.user);
+  const giftMessageToSync =
+    order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== ""
+      ? order.giftMessage.trim()
+      : null;
+
+  const tag = await tagRepository.assignTagAtomically(tagId, orderId, order.user, giftMessageToSync);
 
   if (!tag) {
     throw new AppError(400, "Tag is not available or has already been assigned to another order");
@@ -2360,7 +2392,12 @@ const replaceOrderTag = async (orderId, oldTagId, newTagId) => {
 
   await tagRepository.resetTag(targetOldTagId);
 
-  const newTag = await tagRepository.assignTagAtomically(targetNewTagId, orderId, order.user);
+  const giftMessageToSync =
+    order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== ""
+      ? order.giftMessage.trim()
+      : null;
+
+  const newTag = await tagRepository.assignTagAtomically(targetNewTagId, orderId, order.user, giftMessageToSync);
 
   if (!newTag) {
     throw new AppError(400, "New tag is not available or has already been assigned to another order");
