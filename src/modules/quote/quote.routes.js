@@ -13,6 +13,7 @@ import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 const router = express.Router();
 
 router.get("/random", quoteController.getRandomQuote);
+router.get("/explore", quoteController.getExploreQuotes);
 router.get("/public/:id", quoteController.getPublicQuoteById);
 
 // Admin & Moderator routes

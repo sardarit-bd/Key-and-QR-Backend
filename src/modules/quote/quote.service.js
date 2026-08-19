@@ -96,6 +96,44 @@ const getPublicQuoteById = async (id) => {
 };
 
 /**
+ * Get sanitized quotes for public/consumer inspiration exploration
+ */
+const getExploreQuotes = async ({ page = 1, limit = 12, search = "", category = null, sort = "newest" }) => {
+  const result = await quoteRepository.getAllQuotes({
+    page,
+    limit,
+    search,
+    category,
+    isActive: true,
+  });
+
+  let quotes = result.data.map((quote) => ({
+    _id: quote._id,
+    text: quote.text || "",
+    author: quote.author || "MyInspireTag",
+    category: quote.category || "motivation",
+    description: quote.description || null,
+    renderedImages: quote.renderedImages || null,
+    image: quote.image?.url || (typeof quote.image === "string" ? quote.image : null),
+    theme: quote.theme || null,
+    editorData: quote.editorData || null,
+    allowReuse: quote.allowReuse,
+    createdAt: quote.createdAt,
+  }));
+
+  if (sort === "oldest") {
+    quotes.sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt));
+  } else if (sort === "alphabetical") {
+    quotes.sort((a, b) => (a.text || "").localeCompare(b.text || ""));
+  }
+
+  return {
+    meta: result.meta,
+    data: quotes,
+  };
+};
+
+/**
  * Update Quote
  */
 const updateQuote = async (id, payload, imageFile) => {
@@ -246,6 +284,7 @@ export default {
   getAllQuotes,
   getQuoteById,
   getPublicQuoteById,
+  getExploreQuotes,
   updateQuote,
   deleteQuote,
   toggleQuoteActive,

@@ -1,4 +1,5 @@
 import Category from "./category.model.js";
+import Quote from "../quote/quote.model.js";
 
 const createCategory = (payload) => {
   return Category.create(payload);
@@ -36,17 +37,41 @@ const getAllCategories = async ({
   }
 
   if (search) {
+    const searchRegex = { $regex: search, $options: "i" };
     filter.$or = [
-      { name: { $regex: search, $options: "i" } },
-      { slug: { $regex: search, $options: "i" } },
-      { description: { $regex: search, $options: "i" } },
+      { name: searchRegex },
+      { slug: searchRegex },
+      { description: searchRegex },
     ];
   }
 
-  const [data, total] = await Promise.all([
-    Category.find(filter).sort({ sortOrder: 1, name: 1 }).skip(skip).limit(limit),
+  const [data, total, quoteCounts] = await Promise.all([
+    Category.find(filter).sort({ sortOrder: 1, name: 1 }).skip(skip).limit(limit).lean(),
     Category.countDocuments(filter),
+    Quote.aggregate([
+      { $match: { isActive: true } },
+      { $group: { _id: { $toLower: "$category" }, count: { $sum: 1 } } },
+    ]).catch(() => []),
   ]);
+
+  const countMap = {};
+  if (Array.isArray(quoteCounts)) {
+    for (const item of quoteCounts) {
+      if (item._id) {
+        countMap[item._id] = item.count;
+      }
+    }
+  }
+
+  const enhancedData = data.map((cat) => {
+    const slugKey = (cat.slug || "").toLowerCase();
+    const nameKey = (cat.name || "").toLowerCase();
+    const count = countMap[slugKey] || countMap[nameKey] || 0;
+    return {
+      ...cat,
+      quoteCount: count,
+    };
+  });
 
   return {
     meta: {
@@ -55,7 +80,7 @@ const getAllCategories = async ({
       total,
       totalPage: Math.ceil(total / limit),
     },
-    data,
+    data: enhancedData,
   };
 };
 

@@ -69,6 +69,30 @@ const getPublicQuoteById = catchAsync(async (req, res) => {
   });
 });
 
+const getExploreQuotes = catchAsync(async (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 12;
+  const search = req.query.search || "";
+  const category = req.query.category || null;
+  const sort = req.query.sort || "newest";
+
+  const result = await quoteService.getExploreQuotes({
+    page,
+    limit,
+    search,
+    category,
+    sort,
+  });
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Explore quotes fetched successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
 const updateQuote = catchAsync(async (req, res) => {
   const image = req.file || null;
 
@@ -171,6 +195,7 @@ export default {
   getAllQuotes,
   getQuoteById,
   getPublicQuoteById,
+  getExploreQuotes,
   updateQuote,
   deleteQuote,
   toggleQuoteActive,
