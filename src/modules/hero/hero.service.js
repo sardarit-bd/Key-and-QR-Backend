@@ -1,19 +1,33 @@
 import AppError from "../../utils/AppError.js";
 import httpStatus from "../../constants/httpStatus.js";
 import heroRepository from "./hero.repository.js";
+import cloudinary from "../../config/cloudinary.js";
 
 const getHeroContent = async () => {
-  return await heroRepository.getHeroContent();
+  return await heroRepository.getHero();
 };
 
-const updateHeroContent = async (id, payload, userId) => {
-  const hero = await heroRepository.getHeroContent();
-  
-  if (!hero) {
-    throw new AppError(httpStatus.NOT_FOUND, "Hero content not found");
+const updateHeroContent = async (payload, userId) => {
+  const current = await heroRepository.getHero();
+
+  // If the hero image is being replaced with a different Cloudinary asset,
+  // clean up the old asset (fire-and-forget; never block the save on it).
+  const nextImageUrl = payload?.heroImage?.url;
+  const currentImage = current?.heroImage;
+
+  if (
+    currentImage?.publicId &&
+    nextImageUrl &&
+    nextImageUrl !== currentImage.url &&
+    currentImage.url?.includes("cloudinary.com")
+  ) {
+    const oldPublicId = currentImage.publicId;
+    cloudinary.uploader
+      .destroy(oldPublicId)
+      .catch(() => {});
   }
-  
-  return await heroRepository.updateHeroContent(id, payload, userId);
+
+  return await heroRepository.updateHero(payload, userId);
 };
 
 export default {
