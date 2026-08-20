@@ -2093,8 +2093,16 @@ const updateShippingAddress = async (orderId, userId, shippingAddress) => {
     throw new AppError(httpStatus.NOT_FOUND, "Order not found");
   }
 
-  // Check if user owns the order
-  if (order.user.toString() !== userId) {
+  // Guest orders cannot be edited via this endpoint
+  if (!order.user) {
+    throw new AppError(
+      httpStatus.FORBIDDEN,
+      "Guest order addresses cannot be updated via this endpoint",
+    );
+  }
+
+  // Check if user owns the order (robust toString on both sides)
+  if (order.user.toString() !== userId.toString()) {
     throw new AppError(
       httpStatus.FORBIDDEN,
       "You don't have permission to update this order",
@@ -2110,16 +2118,17 @@ const updateShippingAddress = async (orderId, userId, shippingAddress) => {
     );
   }
 
-  // Update shipping address
+  // Update shipping address (allow all provided fields; fall back to existing)
   const updatedOrder = await orderRepository.updateOrder(orderId, {
     shippingAddress: {
-      fullName: shippingAddress.fullName || order.shippingAddress?.fullName,
-      phone: shippingAddress.phone || order.shippingAddress?.phone,
-      address: shippingAddress.address || order.shippingAddress?.address,
-      city: shippingAddress.city || order.shippingAddress?.city,
-      postalCode:
-        shippingAddress.postalCode || order.shippingAddress?.postalCode,
-      country: shippingAddress.country || order.shippingAddress?.country,
+      fullName: shippingAddress.fullName ?? order.shippingAddress?.fullName,
+      email: shippingAddress.email ?? order.shippingAddress?.email,
+      phone: shippingAddress.phone ?? order.shippingAddress?.phone,
+      address: shippingAddress.address ?? order.shippingAddress?.address,
+      city: shippingAddress.city ?? order.shippingAddress?.city,
+      state: shippingAddress.state ?? order.shippingAddress?.state,
+      postalCode: shippingAddress.postalCode ?? order.shippingAddress?.postalCode,
+      country: shippingAddress.country ?? order.shippingAddress?.country,
     },
   });
 
