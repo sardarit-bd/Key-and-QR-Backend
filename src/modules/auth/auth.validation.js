@@ -81,5 +81,8 @@ export const updateProfileValidationSchema = Joi.object({
     "string.min": "Name must be at least 2 characters",
     "string.max": "Name cannot exceed 50 characters",
   }),
+  email: Joi.string().trim().email().optional().messages({
+    "string.email": "Valid email is required",
+  }),
   profileImage: Joi.any().allow(null).optional(),
 }).options({ stripUnknown: true });

@@ -32,6 +32,7 @@ router.use("/pending-quotes", pendingQuoteRoutes);
 router.use("/favorites", favoriteRoutes);
 router.use("/subscriptions", subscriptionRoutes);
 router.use("/hero", heroRoutes);
+router.use("/content", heroRoutes);
 router.use("/quote-assignments", quoteAssignmentRoutes);
 router.use("/received-quotes", receivedQuoteRoutes);
 router.use("/upload", uploadRoutes);

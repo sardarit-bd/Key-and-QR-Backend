@@ -163,8 +163,43 @@ const findByTagCodeWithOwner = async (tagCode) => {
 };
 
 const findTagsByOwner = async (ownerId) => {
-  return Tag.find({ owner: ownerId })
+  const Order = mongoose.model("Order");
+  const userOrders = await Order.find({ user: ownerId }).select("_id items.assignedTags assignedTags.tag assignedTag");
+  const orderIds = userOrders.map((o) => o._id);
+  const tagIdsFromOrders = [];
+  userOrders.forEach((o) => {
+    if (o.assignedTag) tagIdsFromOrders.push(o.assignedTag);
+    if (o.assignedTags && o.assignedTags.length > 0) {
+      o.assignedTags.forEach((at) => {
+        if (at.tag) tagIdsFromOrders.push(at.tag);
+      });
+    }
+    if (o.items && o.items.length > 0) {
+      o.items.forEach((it) => {
+        if (it.assignedTags && it.assignedTags.length > 0) {
+          it.assignedTags.forEach((t) => tagIdsFromOrders.push(t));
+        }
+      });
+    }
+  });
+
+  return Tag.find({
+    $or: [
+      { owner: ownerId },
+      { assignedOrderId: { $in: orderIds } },
+      { _id: { $in: tagIdsFromOrders } },
+    ],
+    isActive: true,
+  })
     .populate("owner", "name email")
+    .populate({
+      path: "assignedOrderId",
+      select: "_id grandTotal createdAt fulfillmentStatus paymentStatus items shippingAddress",
+      populate: {
+        path: "items.product",
+        select: "name title images image price",
+      },
+    })
     .sort({ createdAt: -1 });
 };
 

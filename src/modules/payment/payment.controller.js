@@ -4,6 +4,7 @@ import AppError from "../../utils/AppError.js";
 import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import paymentService from "./payment.service.js";
+import orderService from "../order/order.service.js";
 
 /**
  * Create Stripe Checkout Session
@@ -17,12 +18,15 @@ const createCheckoutSession = catchAsync(async (req, res) => {
         throw new AppError(httpStatus.BAD_REQUEST, "Order ID is required");
     }
 
-    // Get order to verify ownership
-    const order = await paymentService.getOrderById(orderId);
+    // Get order to verify ownership — use orderService (paymentService has no getOrderById)
+    const order = await orderService.getOrderById(orderId);
 
     // Verify ownership
     if (!isGuest) {
-        if (order.user?.toString() !== userId?.toString()) {
+        if (!userId) {
+            throw new AppError(httpStatus.UNAUTHORIZED, "Authentication required");
+        }
+        if (order.user?.toString() !== userId.toString()) {
             throw new AppError(httpStatus.FORBIDDEN, "You don't own this order");
         }
     } else {
@@ -35,6 +39,15 @@ const createCheckoutSession = catchAsync(async (req, res) => {
     // Check if already paid
     if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
         throw new AppError(httpStatus.BAD_REQUEST, "Order is already paid");
+    }
+
+    // Check if order is in a non-payable fulfillment state
+    const nonPayableStatuses = ["cancelled", "returned", "delivered"];
+    if (nonPayableStatuses.includes(order.fulfillmentStatus)) {
+        throw new AppError(
+            httpStatus.BAD_REQUEST,
+            `Order cannot be paid in its current state: ${order.fulfillmentStatus}`
+        );
     }
 
     // Build metadata

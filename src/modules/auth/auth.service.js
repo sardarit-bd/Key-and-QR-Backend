@@ -627,6 +627,29 @@ const updateProfile = async (userId, updateData, authUser = null) => {
     isNameChanged = trimmedNewName !== currentTrimmedName;
   }
 
+  if (payload.email !== undefined && payload.email !== null) {
+    const newEmail = String(payload.email).trim().toLowerCase();
+    const currentEmail = (currentUser.email || "").trim().toLowerCase();
+    const isEmailChanged = newEmail !== currentEmail;
+
+    if (isEmailChanged) {
+      if (currentUser.provider && currentUser.provider !== "local") {
+        throw new AppError(
+          httpStatus.BAD_REQUEST,
+          `Email cannot be modified for accounts authenticated via ${currentUser.provider}`
+        );
+      }
+
+      const existingUser = await authRepository.findUserByEmail(newEmail);
+      if (existingUser && existingUser._id.toString() !== userId.toString()) {
+        throw new AppError(httpStatus.CONFLICT, "Email is already in use by another account");
+      }
+      payload.email = newEmail;
+    } else {
+      delete payload.email;
+    }
+  }
+
   let user = null;
 
   if (isNameChanged) {

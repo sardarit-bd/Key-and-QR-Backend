@@ -3,9 +3,10 @@ import sendResponse from "../../utils/sendResponse.js";
 import httpStatus from "../../constants/httpStatus.js";
 import heroService from "./hero.service.js";
 
+// Public: anyone can read the hero content
 const getHeroContent = catchAsync(async (req, res) => {
   const result = await heroService.getHeroContent();
-  
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -14,10 +15,10 @@ const getHeroContent = catchAsync(async (req, res) => {
   });
 });
 
+// Admin only: update the hero content (body is validated by middleware)
 const updateHeroContent = catchAsync(async (req, res) => {
-  const { id } = req.params;
-  const result = await heroService.updateHeroContent(id, req.body, req.user.userId);
-  
+  const result = await heroService.updateHeroContent(req.body, req.user.userId);
+
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
@@ -26,7 +27,33 @@ const updateHeroContent = catchAsync(async (req, res) => {
   });
 });
 
+// Public: get shop hero image data
+const getShopHeroContent = catchAsync(async (req, res) => {
+  const result = await heroService.getShopHeroContent();
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Shop hero content fetched successfully",
+    data: result,
+  });
+});
+
+// Admin only: update shop hero image data
+const updateShopHeroContent = catchAsync(async (req, res) => {
+  const result = await heroService.updateShopHeroContent(req.body, req.user.userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Shop hero image updated successfully",
+    data: result,
+  });
+});
+
 export default {
   getHeroContent,
   updateHeroContent,
+  getShopHeroContent,
+  updateShopHeroContent,
 };

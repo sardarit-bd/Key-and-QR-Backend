@@ -125,6 +125,17 @@ const countPendingQuotes = async () => {
   return PendingQuote.countDocuments({ status: "pending" });
 };
 
+/**
+ * Get the most recent successful community submission for a user.
+ * Used as the cooldown anchor. Only "community" submissions count
+ * (gift-message submissions attached to orders are a separate flow).
+ */
+const getLatestCommunitySubmission = async (userId) => {
+  return PendingQuote.findOne({ user: userId, type: "community" })
+    .sort({ submittedAt: -1 })
+    .select("submittedAt createdAt status text");
+};
+
 
 export default {
   createPendingQuote,
@@ -135,4 +146,5 @@ export default {
   deletePendingQuote,
   getMyQuotes,
   countPendingQuotes,
+  getLatestCommunitySubmission,
 };
