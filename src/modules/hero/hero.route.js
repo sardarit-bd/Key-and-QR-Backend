@@ -6,14 +6,18 @@ import validateRequest from "../../middlewares/validate.middleware.js";
 import { uploadSingleImage } from "../../middlewares/upload.middleware.js";
 import heroController from "./hero.controller.js";
 import { uploadHeroImage } from "./heroUpload.controller.js";
-import { updateHeroValidation } from "./hero.validation.js";
+import { updateHeroValidation, updateShopHeroValidation } from "./hero.validation.js";
 
 const router = express.Router();
 
-// Public route — get hero content (singleton)
+// Public routes — get hero content (singleton)
 router.get("/", heroController.getHeroContent);
+router.get("/homepage-hero", heroController.getHeroContent);
 
-// Admin only — upload a new hero image to Cloudinary
+// Public route — get shop hero image content
+router.get("/shop-hero", heroController.getShopHeroContent);
+
+// Admin only — upload a new hero / shop-hero image to Cloudinary
 router.post(
   "/upload-image",
   auth(roles.ADMIN),
@@ -22,13 +26,30 @@ router.post(
   uploadHeroImage
 );
 
-// Admin only — update hero content
+// Admin only — update homepage hero content
 router.put(
   "/",
   auth(roles.ADMIN),
   roleMiddleware(roles.ADMIN),
   validateRequest(updateHeroValidation),
   heroController.updateHeroContent
+);
+
+router.put(
+  "/homepage-hero",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(updateHeroValidation),
+  heroController.updateHeroContent
+);
+
+// Admin only — update shop hero image
+router.put(
+  "/shop-hero",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(updateShopHeroValidation),
+  heroController.updateShopHeroContent
 );
 
 // Backward-compatible legacy route (used by the frozen legacy admin page):

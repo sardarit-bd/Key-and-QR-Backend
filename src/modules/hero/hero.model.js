@@ -59,6 +59,17 @@ const heroSectionSchema = new mongoose.Schema(
       ],
     },
 
+    shopHero: {
+      type: new mongoose.Schema(
+        {
+          imageUrl: { type: String, default: "", trim: true },
+          publicId: { type: String, default: "", trim: true },
+        },
+        { _id: false }
+      ),
+      default: () => ({ imageUrl: "", publicId: "" }),
+    },
+
     enabled: { type: Boolean, default: true },
 
     // Legacy fields retained for the frozen legacy admin page

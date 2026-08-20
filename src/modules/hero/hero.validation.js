@@ -85,3 +85,12 @@ export const updateHeroValidation = Joi.object({
   isActive: Joi.boolean().optional(),
   steps: Joi.array().max(10).optional(),
 });
+
+export const updateShopHeroValidation = Joi.object({
+  imageUrl: Joi.string().max(500).allow("").messages({
+    "string.max": "Image URL cannot exceed 500 characters",
+  }),
+  publicId: Joi.string().max(500).allow("").messages({
+    "string.max": "Image public ID cannot exceed 500 characters",
+  }),
+});

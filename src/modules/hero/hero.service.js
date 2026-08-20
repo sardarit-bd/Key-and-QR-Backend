@@ -30,7 +30,35 @@ const updateHeroContent = async (payload, userId) => {
   return await heroRepository.updateHero(payload, userId);
 };
 
+const getShopHeroContent = async () => {
+  return await heroRepository.getShopHero();
+};
+
+const updateShopHeroContent = async (payload, userId) => {
+  const current = await heroRepository.getShopHero();
+
+  // Clean up old Cloudinary asset if replaced
+  const nextImageUrl = payload?.imageUrl;
+  const currentImageUrl = current?.imageUrl;
+  const currentPublicId = current?.publicId;
+
+  if (
+    currentPublicId &&
+    nextImageUrl &&
+    nextImageUrl !== currentImageUrl &&
+    currentImageUrl?.includes("cloudinary.com")
+  ) {
+    cloudinary.uploader
+      .destroy(currentPublicId)
+      .catch(() => {});
+  }
+
+  return await heroRepository.updateShopHero(payload, userId);
+};
+
 export default {
   getHeroContent,
   updateHeroContent,
+  getShopHeroContent,
+  updateShopHeroContent,
 };

@@ -32,7 +32,43 @@ const updateHero = async (payload, userId) => {
   ).populate("updatedBy", "name email");
 };
 
+/**
+ * Get the Shop Hero data from the singleton hero document.
+ */
+const getShopHero = async () => {
+  const hero = await getHero();
+  return (
+    hero.shopHero || {
+      imageUrl: hero.imageUrl || "",
+      publicId: "",
+    }
+  );
+};
+
+/**
+ * Update the Shop Hero data on the singleton hero document.
+ */
+const updateShopHero = async (payload, userId) => {
+  const existing = await getHero();
+
+  return Hero.findByIdAndUpdate(
+    existing._id,
+    {
+      shopHero: {
+        imageUrl: payload.imageUrl || "",
+        publicId: payload.publicId || "",
+      },
+      // Keep legacy imageUrl synced for backward compatibility
+      imageUrl: payload.imageUrl || "",
+      updatedBy: userId,
+    },
+    { new: true, runValidators: true }
+  ).populate("updatedBy", "name email");
+};
+
 export default {
   getHero,
   updateHero,
+  getShopHero,
+  updateShopHero,
 };
