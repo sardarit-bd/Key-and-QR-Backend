@@ -48,6 +48,13 @@ router.post(
   pendingQuoteController.submitQuote
 );
 
+// User route - current submission eligibility (cooldown status)
+router.get(
+  "/status",
+  auth(),
+  pendingQuoteController.getSubmissionStatus
+);
+
 // Admin & Moderator routes
 router.get(
   "/",

@@ -563,6 +563,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
       text: payload.giftMessage,
       user: userId,
       order: order._id,
+      type: "gift",
       status: "pending",
       category: "other",
     });

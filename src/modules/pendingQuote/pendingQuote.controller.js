@@ -15,6 +15,18 @@ const submitQuote = catchAsync(async (req, res) => {
   });
 });
 
+// User's current submission eligibility (cooldown state)
+const getSubmissionStatus = catchAsync(async (req, res) => {
+  const result = await pendingQuoteService.getSubmissionStatus(req.user.userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Submission status fetched successfully",
+    data: result,
+  });
+});
+
 // Admin gets all pending quotes
 const getPendingQuotes = catchAsync(async (req, res) => {
   const page = parseInt(req.query.page) || 1;
@@ -101,6 +113,7 @@ const getMyQuotes = catchAsync(async (req, res) => {
 
 export default {
   submitQuote,
+  getSubmissionStatus,
   getPendingQuotes,
   approveQuote,
   rejectQuote,
