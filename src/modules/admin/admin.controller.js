@@ -72,41 +72,8 @@ const updateAdminProfile = catchAsync(async (req, res) => {
 });
 
 const getDashboardOverview = catchAsync(async (req, res) => {
-    const [usersStats, orderStats, pendingQuotesCount] =
-        await Promise.all([
-            adminRepository.getUsersStats(),
-            orderService.getOrderStats(),
-            (await import("../pendingQuote/pendingQuote.repository.js")).default.countPendingQuotes(),
-        ]);
-
-    const productCount = await productRepository.countProducts({});
-    const unassignedTagCount = await tagRepository.countUnassignedTags();
-
-    const overview = {
-        stats: {
-            totalUsers: usersStats.totalUsers,
-            totalOrders: orderStats.total,
-            totalProducts: productCount,
-            totalRevenue: 0,
-            activeTags: 0,
-            pendingTags: unassignedTagCount,
-            totalQuotes: 0,
-            totalPendingQuotes: pendingQuotesCount || 0,
-        },
-        ordersByStatus: {
-            pending: orderStats.pending,
-            assigned: orderStats.assigned,
-            shipped: orderStats.shipped,
-            delivered: orderStats.delivered,
-            cancelled: orderStats.cancelled,
-            returned: orderStats.returned,
-        },
-        revenueByDate: [],
-        userGrowth: [],
-        recentOrders: [],
-        recentUsers: [],
-        recentActivity: [],
-    };
+    const { range, startDate, endDate } = req.query;
+    const overview = await adminService.getDashboardOverview({ range, startDate, endDate });
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

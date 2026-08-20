@@ -96,6 +96,10 @@ const updateUser = async (id, updates) => {
     return user;
 };
 
+const getDashboardOverview = async ({ range, startDate, endDate } = {}) => {
+    return adminRepository.getDashboardAnalytics({ range, startDate, endDate });
+};
+
 export default {
     createAdmin,
     getAllUsers,
@@ -106,4 +110,5 @@ export default {
     suspendUser,
     activateUser,
     updateUser,
+    getDashboardOverview,
 };
