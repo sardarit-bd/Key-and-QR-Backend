@@ -131,7 +131,7 @@ const getUserScanHistory = async ({
   const [data, total] = await Promise.all([
     ScanHistory.find(filter)
       .populate("tag", "tagCode")
-      .populate("quote", "text category")
+      .populate("quote", "text category author description image theme editorData renderedImages")
       .sort({ createdAt: sortDir })
       .skip(skip)
       .limit(limit),

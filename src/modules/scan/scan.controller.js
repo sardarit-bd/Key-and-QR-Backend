@@ -21,8 +21,8 @@ import scanRepository from "./scan.repository.js";
 const publicScan = catchAsync(async (req, res) => {
     const { tagCode } = req.params;
     
-    // Use public service method
-    const result = await scanService.publicUnlock(tagCode);
+    // Use public service method with optional authenticated user
+    const result = await scanService.publicUnlock(tagCode, req.user);
 
     // Send sanitized public response
     sendResponse(res, {

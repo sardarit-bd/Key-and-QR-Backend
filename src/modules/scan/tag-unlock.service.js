@@ -22,7 +22,7 @@ const getTodayKey = () => {
  * No authentication required
  * No scan history recorded (privacy)
  */
-const publicUnlock = async (tagCode) => {
+const publicUnlock = async (tagCode, user = null) => {
     // ✅ 0. Validate QR Code format (basic input guard)
     if (!tagCode || typeof tagCode !== "string" || !tagCode.trim()) {
         throw new AppError(
@@ -106,6 +106,21 @@ const publicUnlock = async (tagCode) => {
 
     // ✅ 4. Check Personal Message (Public)
     if (tag.personalMessage && tag.personalMessage.trim() !== "") {
+        if (user?.userId) {
+            try {
+                await scanRepository.createScan({
+                    tag: tag._id,
+                    user: user.userId,
+                    quote: null,
+                    category: "personal",
+                    scanDateKey: todayKey,
+                    sourceType: "personal",
+                });
+            } catch (err) {
+                // Non-fatal if scan history fails
+            }
+        }
+
         return {
             _id: null,
             quote: tag.personalMessage,
@@ -138,6 +153,7 @@ const publicUnlock = async (tagCode) => {
             image: imageUrl,
             theme: q?.theme || null,
             editorData: q?.editorData || null,
+            renderedImages: q?.renderedImages || null,
             allowReuse: typeof q?.allowReuse === "boolean" ? q.allowReuse : true,
             sourceType: srcType,
             isPersonalMessage: false,
@@ -178,6 +194,21 @@ const publicUnlock = async (tagCode) => {
             sourceType: assignmentSourceType,
         });
 
+        if (user?.userId) {
+            try {
+                await scanRepository.createScan({
+                    tag: tag._id,
+                    user: user.userId,
+                    quote: assignedQuote._id,
+                    category: assignedQuote.category,
+                    scanDateKey: todayKey,
+                    sourceType: assignmentSourceType,
+                });
+            } catch (err) {
+                // Non-fatal if scan history fails
+            }
+        }
+
         return formatQuotePayload(assignedQuote, assignmentSourceType);
     }
 
@@ -190,6 +221,21 @@ const publicUnlock = async (tagCode) => {
         existingScan.quote.isActive !== false &&
         existingScan.sourceType === "random"
     ) {
+        if (user?.userId) {
+            try {
+                await scanRepository.createScan({
+                    tag: tag._id,
+                    user: user.userId,
+                    quote: existingScan.quote._id,
+                    category: existingScan.quote.category,
+                    scanDateKey: todayKey,
+                    sourceType: "random",
+                });
+            } catch (err) {
+                // Non-fatal if scan history fails
+            }
+        }
+
         return formatQuotePayload(existingScan.quote, "random");
     }
 
@@ -226,6 +272,21 @@ const publicUnlock = async (tagCode) => {
         scanDateKey: todayKey,
         sourceType: "random",
     });
+
+    if (user?.userId) {
+        try {
+            await scanRepository.createScan({
+                tag: tag._id,
+                user: user.userId,
+                quote: quote._id,
+                category: quote.category,
+                scanDateKey: todayKey,
+                sourceType: "random",
+            });
+        } catch (err) {
+            // Non-fatal if scan history fails
+        }
+    }
 
     return formatQuotePayload(quote, "random");
 };
