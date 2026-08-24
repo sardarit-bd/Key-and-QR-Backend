@@ -7,6 +7,10 @@ const findUserByEmail = async (email, includePassword = false) => {
   return User.findOne({ email, isDeleted: false });
 };
 
+const findUserByEmailAnyStatus = async (email) => {
+  return User.findOne({ email });
+};
+
 const findUserById = async (id) => {
   return User.findOne({ _id: id, isDeleted: false });
 };
@@ -17,6 +21,10 @@ const findUserByIdWithPassword = async (id) => {
 
 const findUserByGoogleId = async (googleId) => {
   return User.findOne({ googleId, isDeleted: false });
+};
+
+const findUserByGoogleIdAnyStatus = async (googleId) => {
+  return User.findOne({ googleId });
 };
 
 const findUserByAppleId = async (appleId) => {
@@ -136,9 +144,11 @@ const getUserWithSubscriptions = async (userId) => {
 
 export default {
   findUserByEmail,
+  findUserByEmailAnyStatus,
   findUserById,
   findUserByIdWithPassword,
   findUserByGoogleId,
+  findUserByGoogleIdAnyStatus,
   findUserByAppleId,
   findUserByStripeCustomerId,
   createUser,
