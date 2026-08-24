@@ -18,7 +18,7 @@ const validateRequest = (schemas) => {
       if (error) {
         return res.status(400).json({
           success: false,
-          message: "Validation failed",
+          message: error.details?.[0]?.message || "Validation failed",
           data: error.details.map((detail) => detail.message),
         });
       }
@@ -35,7 +35,7 @@ const validateRequest = (schemas) => {
         stripUnknown: true,
       });
       if (error) {
-        errors.push(...error.details.map((d) => `[body] ${d.message}`));
+        errors.push(...error.details.map((d) => d.message));
       } else {
         req.body = value;
       }
@@ -47,7 +47,7 @@ const validateRequest = (schemas) => {
         stripUnknown: true,
       });
       if (error) {
-        errors.push(...error.details.map((d) => `[query] ${d.message}`));
+        errors.push(...error.details.map((d) => d.message));
       } else {
         // Express 5 exposes req.query as a read-only getter — store the
         // sanitized result on a dedicated property instead of reassigning.
@@ -61,7 +61,7 @@ const validateRequest = (schemas) => {
         stripUnknown: false, // params are part of the URL, don't strip
       });
       if (error) {
-        errors.push(...error.details.map((d) => `[params] ${d.message}`));
+        errors.push(...error.details.map((d) => d.message));
       } else {
         req.params = value;
       }
@@ -70,7 +70,7 @@ const validateRequest = (schemas) => {
     if (errors.length > 0) {
       return res.status(400).json({
         success: false,
-        message: "Validation failed",
+        message: errors[0] || "Validation failed",
         data: errors,
       });
     }

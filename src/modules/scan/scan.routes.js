@@ -21,6 +21,7 @@ const router = express.Router();
 router.get(
     "/public/:tagCode",
     publicScanLimiter, 
+    optionalAuth(),
     scanController.publicScan
 );
 

@@ -155,7 +155,7 @@ const registerUser = async (payload, metadata = {}) => {
   const existingUser = await authRepository.findUserByEmail(payload.email);
 
   if (existingUser) {
-    throw new AppError(httpStatus.CONFLICT, "User already exists with this email");
+    throw new AppError(httpStatus.CONFLICT, "This email is already registered. Please log in.");
   }
 
   // 2. Hash password
