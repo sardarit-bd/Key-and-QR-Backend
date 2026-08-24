@@ -254,70 +254,137 @@ const loginUser = async (payload, metadata = {}) => {
 const handleSocialLogin = async (profile, provider, metadata = {}) => {
   let user = null;
 
-  // 1. Find existing social user
-  if (provider === "google") {
-    user = await authRepository.findUserByGoogleId(profile.id);
-  } else if (provider === "apple") {
-    user = await authRepository.findUserByAppleId(profile.id);
+  // 1. Extract social profile attributes with multi-format normalization
+  const socialId = profile.id || profile.sub || profile._json?.sub || null;
+  const rawEmail = profile.email || profile.emails?.[0]?.value || profile._json?.email || null;
+  const email = rawEmail ? rawEmail.toLowerCase().trim() : null;
+
+  // Extract avatar URL
+  const avatarUrl = profile.photos?.[0]?.value || profile.avatar || profile.picture || profile._json?.picture || null;
+
+  // Extract name with multi-level fallback chain
+  const givenName = profile.name?.givenName || profile.name?.firstName || profile._json?.given_name || "";
+  const familyName = profile.name?.familyName || profile.name?.lastName || profile._json?.family_name || "";
+  const fullName = `${givenName} ${familyName}`.trim();
+
+  const userName =
+    profile.displayName ||
+    profile._json?.name ||
+    (fullName.length > 0 ? fullName : null) ||
+    (email ? email.split("@")[0] : null) ||
+    `${provider === "google" ? "Google" : "Apple"} User`;
+
+  // 2. Check by social ID (Google / Apple ID)
+  if (provider === "google" && socialId) {
+    user = await authRepository.findUserByGoogleIdAnyStatus(socialId);
+  } else if (provider === "apple" && socialId) {
+    user = await authRepository.findUserByAppleId(socialId);
   }
 
-  // 2. If not found by social ID, check by email
-  if (!user && profile.email) {
-    user = await authRepository.findUserByEmail(profile.email);
+  if (user) {
+    // If account was soft-deleted, reactivate it upon social login
+    const updates = {};
+    if (user.isDeleted) updates.isDeleted = false;
+    if (!user.isEmailVerified) updates.isEmailVerified = true;
+    if ((!user.name || user.name.trim().length === 0) && userName) updates.name = userName;
+    if (!user.profileImage?.url && avatarUrl) updates.profileImage = { url: avatarUrl };
+
+    if (Object.keys(updates).length > 0) {
+      user = await authRepository.updateUser(user._id, updates);
+    }
+  }
+
+  // 3. Check by Email (Link Existing Account)
+  if (!user && email) {
+    user = await authRepository.findUserByEmailAnyStatus(email);
 
     if (user) {
-      // Update existing user with social credentials
       const updateData = {
-        provider: provider,
         isEmailVerified: true,
       };
 
-      if (provider === "google") {
-        updateData.googleId = profile.id;
-      } else if (provider === "apple") {
-        updateData.appleId = profile.id;
+      if (user.isDeleted) updateData.isDeleted = false;
+
+      if (provider === "google" && socialId) {
+        updateData.googleId = socialId;
+        if (!user.provider || user.provider === "local") {
+          updateData.provider = "google";
+        }
+      } else if (provider === "apple" && socialId) {
+        updateData.appleId = socialId;
+        if (!user.provider || user.provider === "local") {
+          updateData.provider = "apple";
+        }
+      }
+
+      if ((!user.name || user.name.trim().length === 0) && userName) {
+        updateData.name = userName;
+      }
+
+      if (!user.profileImage?.url && avatarUrl) {
+        updateData.profileImage = { url: avatarUrl };
       }
 
       user = await authRepository.updateUser(user._id, updateData);
     }
   }
 
-  // 3. Create new user if not found
+  // 4. Create New User if Not Found
   if (!user) {
-    // Robust name extraction with fallbacks for all social providers
-    const userName =
-      profile.displayName ||
-      `${profile.name?.givenName || profile.name?.firstName || ""} ${profile.name?.familyName || profile.name?.lastName || ""}`.trim() ||
-      (profile.email ? profile.email.split("@")[0] : null) ||
-      `${provider} User`;
+    if (!email) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Email is required for social registration");
+    }
 
     const userData = {
       name: userName,
-      email: profile.email,
+      email: email,
       provider: provider,
       isEmailVerified: true,
+      isDeleted: false,
       password: null,
     };
 
-    if (provider === "google") {
-      userData.googleId = profile.id;
-    } else if (provider === "apple") {
-      userData.appleId = profile.id;
+    if (avatarUrl) {
+      userData.profileImage = { url: avatarUrl };
     }
 
-    user = await authRepository.createUser(userData);
+    if (provider === "google" && socialId) {
+      userData.googleId = socialId;
+    } else if (provider === "apple" && socialId) {
+      userData.appleId = socialId;
+    }
+
+    try {
+      user = await authRepository.createUser(userData);
+    } catch (createErr) {
+      // Race condition safety: catch MongoDB E11000 duplicate key error and link existing user
+      if (createErr.code === 11000 || createErr.name === "MongoServerError") {
+        user = await authRepository.findUserByEmailAnyStatus(email);
+        if (user) {
+          const updateData = { isEmailVerified: true, isDeleted: false };
+          if (provider === "google" && socialId) updateData.googleId = socialId;
+          if (provider === "apple" && socialId) updateData.appleId = socialId;
+          if (!user.profileImage?.url && avatarUrl) updateData.profileImage = { url: avatarUrl };
+          user = await authRepository.updateUser(user._id, updateData);
+        } else {
+          throw createErr;
+        }
+      } else {
+        throw createErr;
+      }
+    }
   }
 
-  // 4. Build auth response (generates tokens)
+  // 5. Build auth response (generates JWT tokens)
   const authResponse = buildAuthResponse(user);
 
-  // 5. Store refresh token
+  // 6. Store refresh token
   await storeRefreshToken(user._id, authResponse.refreshToken, metadata);
 
-  // 6. Claim guest resources (non-blocking)
+  // 7. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(user._id, user.email);
 
-  // 7. Return auth response
+  // 8. Return auth response
   return authResponse;
 };
 

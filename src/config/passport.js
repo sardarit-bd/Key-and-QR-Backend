@@ -17,39 +17,10 @@ if (env.googleClientId && env.googleClientSecret) {
       },
       async (req, accessToken, refreshToken, profile, done) => {
         try {
-          const email = profile.emails[0]?.value;
-
-          if (!email) {
-            return done(new Error("No email found in Google profile"), null);
+          if (!profile) {
+            return done(new Error("No profile returned from Google"), null);
           }
-
-          let user = await User.findOne({ email });
-
-          if (user) {
-            if (!user.googleId) {
-              user.googleId = profile.id;
-              user.provider = "google";
-              user.isEmailVerified = true;
-              await user.save();
-            }
-          } else {
-            // Robust name extraction with fallbacks
-            const userName =
-              profile.displayName ||
-              `${profile.name?.givenName || ""} ${profile.name?.familyName || ""}`.trim() ||
-              email.split("@")[0] ||
-              "User";
-
-            user = await User.create({
-              name: userName,
-              email,
-              provider: "google",
-              googleId: profile.id,
-              isEmailVerified: true,
-            });
-          }
-
-          return done(null, user);
+          return done(null, profile);
         } catch (error) {
           console.error("Google Strategy Error:", error);
           return done(error, null);
