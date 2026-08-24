@@ -16,6 +16,13 @@ const globalErrorHandler = (error, req, res, next) => {
     message = "Token expired";
   }
 
+  if (error.name === "MulterError" || error.code === "LIMIT_FILE_SIZE") {
+    statusCode = httpStatus.BAD_REQUEST;
+    if (error.code === "LIMIT_FILE_SIZE") {
+      message = "File is too large. Maximum allowed size is 10 MB.";
+    }
+  }
+
   if (error.code === 11000) {
     statusCode = httpStatus.CONFLICT;
     message = "Duplicate field value entered";
