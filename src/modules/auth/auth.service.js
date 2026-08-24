@@ -284,9 +284,12 @@ const handleSocialLogin = async (profile, provider, metadata = {}) => {
 
   // 3. Create new user if not found
   if (!user) {
-    const userName = provider === "google"
-      ? profile.displayName
-      : profile.name?.firstName + " " + profile.name?.lastName || `${provider} User`;
+    // Robust name extraction with fallbacks for all social providers
+    const userName =
+      profile.displayName ||
+      `${profile.name?.givenName || profile.name?.firstName || ""} ${profile.name?.familyName || profile.name?.lastName || ""}`.trim() ||
+      (profile.email ? profile.email.split("@")[0] : null) ||
+      `${provider} User`;
 
     const userData = {
       name: userName,
