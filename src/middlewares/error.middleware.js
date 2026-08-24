@@ -24,8 +24,12 @@ const globalErrorHandler = (error, req, res, next) => {
   }
 
   if (error.code === 11000) {
-    statusCode = httpStatus.CONFLICT;
-    message = "Duplicate field value entered";
+    statusCode = httpStatus.BAD_REQUEST;
+    if (error.keyPattern?.email || (typeof error.message === "string" && error.message.includes("email"))) {
+      message = "This email is already registered. Please log in.";
+    } else {
+      message = "This record already exists.";
+    }
   }
 
   logger.error(message);

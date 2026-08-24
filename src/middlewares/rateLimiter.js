@@ -84,7 +84,7 @@ export const registerLimiter = rateLimit({
     legacyHeaders: false,
     message: {
         success: false,
-        message: "Too many registration attempts. Please try again in 15 minutes.",
+        message: "Too many registration attempts. Please try again after 15 minutes.",
         data: null,
     },
 });
