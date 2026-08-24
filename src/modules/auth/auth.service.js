@@ -416,7 +416,7 @@ const getMe = async (userId) => {
   };
 };
 
-const ROTATION_GRACE_PERIOD_MS = 30 * 1000; // 30 seconds grace period for concurrent requests
+const ROTATION_GRACE_PERIOD_MS = 90 * 1000; // 90 seconds grace period for concurrent requests (multi-tab safety)
 
 /**
  * Refresh Access Token with Atomic Token Rotation and Grace Period
