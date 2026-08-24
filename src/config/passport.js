@@ -33,8 +33,15 @@ if (env.googleClientId && env.googleClientSecret) {
               await user.save();
             }
           } else {
+            // Robust name extraction with fallbacks
+            const userName =
+              profile.displayName ||
+              `${profile.name?.givenName || ""} ${profile.name?.familyName || ""}`.trim() ||
+              email.split("@")[0] ||
+              "User";
+
             user = await User.create({
-              name: profile.displayName,
+              name: userName,
               email,
               provider: "google",
               googleId: profile.id,
