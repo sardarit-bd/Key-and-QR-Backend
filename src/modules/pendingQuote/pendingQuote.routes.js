@@ -20,7 +20,7 @@ const PENDING_QUOTE_CATEGORIES = [
 
 const submitQuoteValidation = Joi.object({
   text: Joi.string().required().min(3).max(500),
-  category: Joi.string().valid(...PENDING_QUOTE_CATEGORIES),
+  category: Joi.string().trim().lowercase().max(50).optional().allow("", null),
   author: Joi.string().trim().max(100).optional().allow("", null),
   type: Joi.string().valid("community", "gift").optional(),
   orderId: Joi.string().optional(),
@@ -30,7 +30,7 @@ const myQuotesQueryValidation = Joi.object({
   page: Joi.number().integer().min(1).optional(),
   limit: Joi.number().integer().min(1).max(100).optional(),
   search: Joi.string().trim().max(100).optional().allow(""),
-  category: Joi.string().valid(...PENDING_QUOTE_CATEGORIES, "all").optional().allow(""),
+  category: Joi.string().trim().lowercase().max(50).optional().allow(""),
   status: Joi.string().valid("pending", "approved", "rejected", "all").optional().allow(""),
   sortBy: Joi.string().valid("newest", "oldest").optional(),
 });
