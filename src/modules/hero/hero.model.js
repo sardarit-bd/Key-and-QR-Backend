@@ -70,6 +70,54 @@ const heroSectionSchema = new mongoose.Schema(
       default: () => ({ imageUrl: "", publicId: "" }),
     },
 
+    announcementBanner: {
+      type: new mongoose.Schema(
+        {
+          isEnabled: { type: Boolean, default: true },
+          backgroundColor: { type: String, default: "#000000", trim: true },
+          textColor: { type: String, default: "#ffffff", trim: true },
+          isDismissible: { type: Boolean, default: true },
+          rotationSpeed: { type: Number, default: 5, min: 2, max: 30 },
+          messages: {
+            type: [
+              new mongoose.Schema(
+                {
+                  text: { type: String, required: true, trim: true },
+                  icon: { type: String, default: "Sparkles", trim: true },
+                  linkUrl: { type: String, default: "", trim: true },
+                  enabled: { type: Boolean, default: true },
+                },
+                { _id: true }
+              ),
+            ],
+            default: () => [
+              { text: "FREE SHIPPING ON ORDERS OVER $50", icon: "Truck", linkUrl: "/shop", enabled: true },
+              { text: "GET 10% OFF YOUR FIRST ORDER", icon: "Gift", linkUrl: "/shop", enabled: true },
+              { text: "24/7 CUSTOMER SUPPORT", icon: "Clock", linkUrl: "/how-it-works", enabled: true },
+            ],
+          },
+          // Legacy fields for backward compatibility
+          text: { type: String, default: "FREE SHIPPING ON ORDERS OVER $50", trim: true },
+          linkUrl: { type: String, default: "", trim: true },
+        },
+        { _id: false }
+      ),
+      default: () => ({
+        isEnabled: true,
+        backgroundColor: "#000000",
+        textColor: "#ffffff",
+        isDismissible: true,
+        rotationSpeed: 5,
+        messages: [
+          { text: "FREE SHIPPING ON ORDERS OVER $50", icon: "Truck", linkUrl: "/shop", enabled: true },
+          { text: "GET 10% OFF YOUR FIRST ORDER", icon: "Gift", linkUrl: "/shop", enabled: true },
+          { text: "24/7 CUSTOMER SUPPORT", icon: "Clock", linkUrl: "/how-it-works", enabled: true },
+        ],
+        text: "FREE SHIPPING ON ORDERS OVER $50",
+        linkUrl: "",
+      }),
+    },
+
     enabled: { type: Boolean, default: true },
 
     // Legacy fields retained for the frozen legacy admin page

@@ -56,9 +56,20 @@ const updateShopHeroContent = async (payload, userId) => {
   return await heroRepository.updateShopHero(payload, userId);
 };
 
+const getAnnouncementBanner = async () => {
+  return await heroRepository.getAnnouncementBanner();
+ };
+
+const updateAnnouncementBanner = async (payload, userId) => {
+  return await heroRepository.updateAnnouncementBanner(payload, userId);
+};
+
 export default {
   getHeroContent,
   updateHeroContent,
   getShopHeroContent,
   updateShopHeroContent,
+  getAnnouncementBanner,
+  updateAnnouncementBanner,
 };
+
