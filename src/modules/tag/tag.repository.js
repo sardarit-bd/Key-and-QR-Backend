@@ -457,6 +457,12 @@ const assignTagAtomically = async (tagId, orderId, ownerId = null, personalMessa
   );
 };
 
+const deleteTagById = async (id, session = null) => {
+  const options = {};
+  if (session) options.session = session;
+  return Tag.findByIdAndDelete(id, options);
+};
+
 export default {
   // Existing functions
   createTag,
@@ -464,6 +470,7 @@ export default {
   getAllTags,
   findById,
   updateTag,
+  deleteTagById,
   findUnusedTag,
   findUnusedTagStrict,
   resetTag,

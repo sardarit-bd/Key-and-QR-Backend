@@ -72,6 +72,14 @@ router.patch(
   tagController.updateTag
 );
 
+// Delete tag (Permanent delete for unassigned tags)
+router.delete(
+  "/:id",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.deleteTag
+);
+
 // ==================== DYNAMIC ROUTES LAST ====================
 
 // Get tag info by code
