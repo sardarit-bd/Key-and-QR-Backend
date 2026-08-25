@@ -1,7 +1,10 @@
 import express from "express";
 import auth from "../../middlewares/auth.middleware.js";
 import roles from "../../constants/roles.js";
+import validateRequest from "../../middlewares/validate.middleware.js";
 import adminController from "./admin.controller.js";
+import heroController from "../hero/hero.controller.js";
+import { updateAnnouncementBannerValidation } from "../hero/hero.validation.js";
 import { uploadProductImages, uploadSingleImage } from "../../middlewares/upload.middleware.js";
 
 const router = express.Router();
@@ -74,4 +77,18 @@ router.patch(
   adminController.updateUser
 );
 
-export default router;
+// Content Management subroutes under /api/v1/admin/content/*
+router.get(
+  "/content/announcement-banner",
+  auth(roles.ADMIN),
+  heroController.getAnnouncementBanner
+);
+
+router.put(
+  "/content/announcement-banner",
+  auth(roles.ADMIN),
+  validateRequest(updateAnnouncementBannerValidation),
+  heroController.updateAnnouncementBanner
+);
+
+export default router;

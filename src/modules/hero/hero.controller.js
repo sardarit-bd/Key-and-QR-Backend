@@ -51,9 +51,36 @@ const updateShopHeroContent = catchAsync(async (req, res) => {
   });
 });
 
+// Public: get announcement banner data
+const getAnnouncementBanner = catchAsync(async (req, res) => {
+  const result = await heroService.getAnnouncementBanner();
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Announcement banner fetched successfully",
+    data: result,
+  });
+});
+
+// Admin only: update announcement banner data
+const updateAnnouncementBanner = catchAsync(async (req, res) => {
+  const result = await heroService.updateAnnouncementBanner(req.body, req.user.userId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Announcement banner updated successfully",
+    data: result,
+  });
+});
+
 export default {
   getHeroContent,
   updateHeroContent,
   getShopHeroContent,
   updateShopHeroContent,
+  getAnnouncementBanner,
+  updateAnnouncementBanner,
 };
+

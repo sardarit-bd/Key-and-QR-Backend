@@ -54,6 +54,32 @@ const updateTag = async (id, payload) => {
   return tagRepository.updateTag(id, payload);
 };
 
+const deleteTag = async (id) => {
+  const tag = await tagRepository.findById(id);
+
+  if (!tag) {
+    throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
+  }
+
+  // Guardrail: Assigned or activated tags cannot be hard-deleted to preserve relational integrity
+  if (tag.isActivated || tag.owner || tag.assignedOrderId) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "Assigned or activated tags cannot be deleted. You can disable them instead."
+    );
+  }
+
+  const isAssigned = await tagRepository.isTagAssignedToActiveOrder(tag._id);
+  if (isAssigned) {
+    throw new AppError(
+      httpStatus.BAD_REQUEST,
+      "This tag is linked to an active order and cannot be deleted. You can disable it instead."
+    );
+  }
+
+  return tagRepository.deleteTagById(id);
+};
+
 const activateTag = async (tagCode, userId) => {
   const tag = await tagRepository.findByTagCode(tagCode);
 
@@ -286,6 +312,7 @@ export default {
   getAllTags,
   getTagByCode,
   updateTag,
+  deleteTag,
   activateTag,
   getUnusedTag,
   setPersonalMessage,

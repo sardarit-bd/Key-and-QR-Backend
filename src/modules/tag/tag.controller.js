@@ -39,13 +39,23 @@ const getTagByCode = catchAsync(async (req, res) => {
 });
 
 const updateTag = catchAsync(async (req, res) => {
-
   const result = await tagService.updateTag(req.params.id, req.body);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
     success: true,
     message: "Tag updated successfully",
+    data: result,
+  });
+});
+
+const deleteTag = catchAsync(async (req, res) => {
+  const result = await tagService.deleteTag(req.params.id);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Tag permanently deleted successfully",
     data: result,
   });
 });
@@ -200,6 +210,7 @@ export default {
   getAllTags,
   getTagByCode,
   updateTag,
+  deleteTag,
   activateTag,
   resolveTag,
   setPersonalMessage,

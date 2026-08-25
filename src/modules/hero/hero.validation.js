@@ -94,3 +94,32 @@ export const updateShopHeroValidation = Joi.object({
     "string.max": "Image public ID cannot exceed 500 characters",
   }),
 });
+
+const bannerMessageValidation = Joi.object({
+  _id: Joi.string().allow("").optional(),
+  id: Joi.string().allow("").optional(),
+  text: Joi.string().max(300).required().messages({
+    "string.empty": "Message text is required",
+    "string.max": "Message text cannot exceed 300 characters",
+    "any.required": "Message text is required",
+  }),
+  icon: Joi.string().max(100).allow("").default("Sparkles"),
+  linkUrl: Joi.string().max(500).allow("").default(""),
+  enabled: Joi.boolean().default(true),
+});
+
+export const updateAnnouncementBannerValidation = Joi.object({
+  isEnabled: Joi.boolean().default(true),
+  backgroundColor: Joi.string().max(50).allow("").default("#000000"),
+  textColor: Joi.string().max(50).allow("").default("#ffffff"),
+  isDismissible: Joi.boolean().default(true),
+  rotationSpeed: Joi.number().integer().min(2).max(30).default(5),
+  messages: Joi.array().items(bannerMessageValidation).max(10).messages({
+    "array.max": "A maximum of 10 messages is allowed",
+  }),
+  // Optional legacy single-text fields for backwards compatibility
+  text: Joi.string().max(300).allow("").optional(),
+  linkUrl: Joi.string().max(500).allow("").optional(),
+});
+
+
