@@ -140,8 +140,8 @@ const publicUnlock = async (tagCode, user = null) => {
         };
     }
 
-    // Helper to format consistent quote response
-    const formatQuotePayload = (q, srcType) => {
+    // Helper to format consistent quote response with audit status flags
+    const formatQuotePayload = (q, srcType, { isNewQuote = true, isAlreadyUnlocked = false, statusMessage = null } = {}) => {
         const imageUrl = q?.image?.url || (typeof q?.image === "string" ? q.image : null);
         return {
             _id: q?._id,
@@ -157,12 +157,26 @@ const publicUnlock = async (tagCode, user = null) => {
             allowReuse: typeof q?.allowReuse === "boolean" ? q.allowReuse : true,
             sourceType: srcType,
             isPersonalMessage: false,
+            isNewQuoteToday: isNewQuote,
+            isAlreadyUnlockedToday: isAlreadyUnlocked,
+            message: statusMessage,
             gift: giftInfo,
             isGift: !!giftInfo?.isGift,
             giftOrderId: giftInfo?.orderId || null,
             isClaimable: !!giftInfo?.isClaimable,
         };
     };
+
+    // Check existing scans for today (User-specific and Public)
+    let userTodayScan = null;
+    if (user?.userId) {
+        try {
+            userTodayScan = await scanRepository.getTodayScanByUser(tag._id, user.userId, todayKey);
+        } catch (err) {
+            // Non-fatal
+        }
+    }
+    const existingPublicScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
 
     // ✅ 5. Priority 1 & 2: Check active Quote Assignment (Tag Assignment > User Assignment)
     let assignedQuote = null;
@@ -185,6 +199,8 @@ const publicUnlock = async (tagCode, user = null) => {
     }
 
     if (assignedQuote) {
+        const isRepeatScan = Boolean((user?.userId && userTodayScan) || (!user?.userId && existingPublicScan));
+
         // Save/update daily scan record so history reflects the active assignment
         await scanRepository.createPublicScan({
             tag: tag._id,
@@ -194,7 +210,7 @@ const publicUnlock = async (tagCode, user = null) => {
             sourceType: assignmentSourceType,
         });
 
-        if (user?.userId) {
+        if (user?.userId && !userTodayScan) {
             try {
                 await scanRepository.createScan({
                     tag: tag._id,
@@ -209,25 +225,30 @@ const publicUnlock = async (tagCode, user = null) => {
             }
         }
 
-        return formatQuotePayload(assignedQuote, assignmentSourceType);
+        return formatQuotePayload(assignedQuote, assignmentSourceType, {
+            isNewQuote: !isRepeatScan,
+            isAlreadyUnlocked: isRepeatScan,
+            statusMessage: isRepeatScan
+                ? "Today's quote has already been unlocked. Come back tomorrow for a new one!"
+                : null,
+        });
     }
 
     // ✅ 6. Priority 3: No explicit assignment exists -> Use daily random quote cache
     // Only reuse existingScan if it was actually a random quote scan (not a stale, deleted assignment)
-    const existingScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
     if (
-        existingScan &&
-        existingScan.quote &&
-        existingScan.quote.isActive !== false &&
-        existingScan.sourceType === "random"
+        existingPublicScan &&
+        existingPublicScan.quote &&
+        existingPublicScan.quote.isActive !== false &&
+        existingPublicScan.sourceType === "random"
     ) {
-        if (user?.userId) {
+        if (user?.userId && !userTodayScan) {
             try {
                 await scanRepository.createScan({
                     tag: tag._id,
                     user: user.userId,
-                    quote: existingScan.quote._id,
-                    category: existingScan.quote.category,
+                    quote: existingPublicScan.quote._id,
+                    category: existingPublicScan.quote.category,
                     scanDateKey: todayKey,
                     sourceType: "random",
                 });
@@ -236,10 +257,18 @@ const publicUnlock = async (tagCode, user = null) => {
             }
         }
 
-        return formatQuotePayload(existingScan.quote, "random");
+        const isRepeat = Boolean((user?.userId && userTodayScan) || (!user?.userId && existingPublicScan));
+
+        return formatQuotePayload(existingPublicScan.quote, "random", {
+            isNewQuote: !isRepeat,
+            isAlreadyUnlocked: isRepeat,
+            statusMessage: isRepeat
+                ? "Today's quote has already been unlocked. Come back tomorrow for a new one!"
+                : null,
+        });
     }
 
-    // Pick new random quote for today
+    // Pick new random quote for today (First scan of the day)
     let quote = null;
     try {
         const randomQuotes = await Quote.aggregate([
@@ -273,7 +302,7 @@ const publicUnlock = async (tagCode, user = null) => {
         sourceType: "random",
     });
 
-    if (user?.userId) {
+    if (user?.userId && !userTodayScan) {
         try {
             await scanRepository.createScan({
                 tag: tag._id,
@@ -288,7 +317,11 @@ const publicUnlock = async (tagCode, user = null) => {
         }
     }
 
-    return formatQuotePayload(quote, "random");
+    return formatQuotePayload(quote, "random", {
+        isNewQuote: true,
+        isAlreadyUnlocked: false,
+        statusMessage: null,
+    });
 };
 
 // ===============================

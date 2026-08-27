@@ -190,7 +190,7 @@ const getPublicDailyScan = async (tagId, dateKey) => {
     tag: tagId,
     scanDateKey: dateKey,
     user: null,
-  }).populate("quote", "text category author description image theme editorData isActive");
+  }).populate("quote", "text category author description image theme editorData renderedImages isActive");
 };
 
 /**
