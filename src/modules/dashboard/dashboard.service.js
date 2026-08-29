@@ -142,6 +142,18 @@ class DashboardService {
                 ? favoriteMap.has(quote._id.toString())
                 : false;
 
+            const quoteCat = quote?.category;
+            const categoryDoc = latestReceivedQuote.category;
+            const isGenericPool = !categoryDoc || categoryDoc.slug === "inspire" || latestReceivedQuote.categorySlug === "inspire";
+
+            let resolvedCategoryName = categoryDoc?.name || latestReceivedQuote.categorySlug || "Inspire";
+            let resolvedCategorySlug = categoryDoc?.slug || latestReceivedQuote.categorySlug || "inspire";
+
+            if (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire") {
+                resolvedCategoryName = quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1);
+                resolvedCategorySlug = quoteCat.toLowerCase();
+            }
+
             latestInspiration = {
                 hasReceivedQuote: true,
                 latestQuote: {
@@ -154,21 +166,14 @@ class DashboardService {
                     image: quote?.image || null,
                     theme: quote?.theme || null,
                     editorData: quote?.editorData || null,
-                    category: latestReceivedQuote.category
-                        ? {
-                              id: latestReceivedQuote.category._id,
-                              name: latestReceivedQuote.category.name,
-                              slug: latestReceivedQuote.category.slug,
-                              icon: latestReceivedQuote.category.icon,
-                              color: latestReceivedQuote.category.color,
-                          }
-                        : {
-                              id: null,
-                              name: latestReceivedQuote.categorySlug || "inspire",
-                              slug: latestReceivedQuote.categorySlug || "inspire",
-                              icon: null,
-                              color: null,
-                          },
+                    renderedImages: quote?.renderedImages || null,
+                    category: {
+                        id: categoryDoc?._id || null,
+                        name: resolvedCategoryName,
+                        slug: resolvedCategorySlug,
+                        icon: categoryDoc?.icon || null,
+                        color: categoryDoc?.color || null,
+                    },
                     receivedAt: latestReceivedQuote.receivedAt,
                     favorite: isFavorite,
                     favoriteId: favoriteMap.get(quote?._id.toString()) || null,
