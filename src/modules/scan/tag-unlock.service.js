@@ -199,8 +199,6 @@ const publicUnlock = async (tagCode, user = null) => {
     }
 
     if (assignedQuote) {
-        const isRepeatScan = Boolean((user?.userId && userTodayScan) || (!user?.userId && existingPublicScan));
-
         // Save/update daily scan record so history reflects the active assignment
         await scanRepository.createPublicScan({
             tag: tag._id,
@@ -226,11 +224,9 @@ const publicUnlock = async (tagCode, user = null) => {
         }
 
         return formatQuotePayload(assignedQuote, assignmentSourceType, {
-            isNewQuote: !isRepeatScan,
-            isAlreadyUnlocked: isRepeatScan,
-            statusMessage: isRepeatScan
-                ? "Today's quote has already been unlocked. Come back tomorrow for a new one!"
-                : null,
+            isNewQuote: true,
+            isAlreadyUnlocked: false,
+            statusMessage: null,
         });
     }
 
@@ -257,7 +253,7 @@ const publicUnlock = async (tagCode, user = null) => {
             }
         }
 
-        const isRepeat = Boolean((user?.userId && userTodayScan) || (!user?.userId && existingPublicScan));
+        const isRepeat = Boolean(user?.userId && userTodayScan);
 
         return formatQuotePayload(existingPublicScan.quote, "random", {
             isNewQuote: !isRepeat,
