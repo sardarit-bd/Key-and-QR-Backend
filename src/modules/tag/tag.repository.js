@@ -65,7 +65,7 @@ const getAllTags = async (query = {}) => {
 
   const skip = (parseInt(page) - 1) * parseInt(limit);
 
-  const [data, total] = await Promise.all([
+  const [rawTags, total] = await Promise.all([
     Tag.find(filter)
       .populate("owner", "name email")
       .populate({
@@ -81,6 +81,70 @@ const getAllTags = async (query = {}) => {
       .limit(parseInt(limit)),
     Tag.countDocuments(filter),
   ]);
+
+  const tagIds = rawTags.map((t) => t._id);
+  const ownerIds = rawTags.map((t) => t.owner?._id || t.owner).filter(Boolean);
+
+  let tagAssignments = [];
+  let userAssignments = [];
+
+  try {
+    const QuoteAssignment = mongoose.model("QuoteAssignment");
+    [tagAssignments, userAssignments] = await Promise.all([
+      QuoteAssignment.find({
+        tag: { $in: tagIds },
+        assignmentType: "tag",
+        isActive: true,
+      })
+        .populate("quote", "text category author image renderedImages editorData")
+        .sort({ priority: -1, createdAt: -1 })
+        .lean(),
+      ownerIds.length > 0
+        ? QuoteAssignment.find({
+            user: { $in: ownerIds },
+            assignmentType: "user",
+            isActive: true,
+          })
+            .populate("quote", "text category author image renderedImages editorData")
+            .sort({ priority: -1, createdAt: -1 })
+            .lean()
+        : [],
+    ]);
+  } catch (err) {
+    logger.warn("Failed to fetch quote assignments for tags:", err?.message || err);
+  }
+
+  const tagAssignmentMap = new Map();
+  tagAssignments.forEach((a) => {
+    const tId = a.tag?.toString();
+    if (tId && !tagAssignmentMap.has(tId)) {
+      tagAssignmentMap.set(tId, a);
+    }
+  });
+
+  const userAssignmentMap = new Map();
+  userAssignments.forEach((a) => {
+    const uId = a.user?.toString();
+    if (uId && !userAssignmentMap.has(uId)) {
+      userAssignmentMap.set(uId, a);
+    }
+  });
+
+  const data = rawTags.map((tag) => {
+    const tagObj = tag.toObject ? tag.toObject() : { ...tag };
+    const directAssignment = tagAssignmentMap.get(tag._id.toString());
+    const ownerId = (tag.owner?._id || tag.owner)?.toString();
+    const fallbackUserAssignment = ownerId ? userAssignmentMap.get(ownerId) : null;
+    const activeAssignment = directAssignment || fallbackUserAssignment || null;
+
+    return {
+      ...tagObj,
+      assignedQuote: activeAssignment?.quote || null,
+      assignmentType: directAssignment ? "tag" : fallbackUserAssignment ? "user" : null,
+      assignmentPriority: activeAssignment?.priority ?? 0,
+      assignmentId: activeAssignment?._id || null,
+    };
+  });
 
   return {
     meta: {

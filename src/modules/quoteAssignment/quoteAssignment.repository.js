@@ -7,7 +7,7 @@ const createAssignment = (payload) => {
   return QuoteAssignment.create(payload);
 };
 
-const QUOTE_POPULATE_FIELDS = "text category author description image theme allowReuse editorData isActive";
+const QUOTE_POPULATE_FIELDS = "text category author description image theme allowReuse editorData renderedImages isActive";
 
 /**
  * Get all assignments (admin use)
