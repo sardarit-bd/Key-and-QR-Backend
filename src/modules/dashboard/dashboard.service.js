@@ -91,6 +91,7 @@ class DashboardService {
             user,
             scanStats,
             giftedCount,
+            ownedTagCount,
             subscription,
         ] = await Promise.all([
             receivedQuoteRepository.getLatestReceivedQuote(userId),
@@ -104,6 +105,9 @@ class DashboardService {
             Tag.countDocuments({
                 owner: userId,
                 personalMessage: { $ne: null, $ne: "" },
+            }),
+            Tag.countDocuments({
+                owner: userId,
             }),
             Subscription.findOne({
                 user: userId,
@@ -220,7 +224,9 @@ class DashboardService {
                 scans: scanStats?.totalScans || 0,
                 giftedMessages: giftedCount || 0,
                 // Alias consumed by the existing dashboard mapper (dashboard.utils.js).
-                tags: giftedCount || 0,
+                tags: ownedTagCount || 0,
+                assignedTagsCount: ownedTagCount || 0,
+                hasAssignedTags: (ownedTagCount || 0) > 0,
             },
         };
     }
