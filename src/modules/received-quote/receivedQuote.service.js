@@ -43,9 +43,24 @@ const annotateFavorites = async (receivedQuotes, userId) => {
 
   return receivedQuotes.map((rq) => {
     const rqObj = rq.toObject ? rq.toObject() : rq;
-    const quoteId = rqObj.quote?._id?.toString();
+    const quote = rqObj.quote;
+    const quoteId = quote?._id?.toString();
+    const quoteCat = quote?.category;
+    const category = rqObj.category;
+    const isGenericPool = !category || category.slug === "inspire" || rqObj.categorySlug === "inspire";
+
+    let resolvedCategory = category;
+    if (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire") {
+      resolvedCategory = {
+        ...(category && typeof category === 'object' ? (category.toObject ? category.toObject() : category) : {}),
+        name: quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1),
+        slug: quoteCat.toLowerCase(),
+      };
+    }
+
     return {
       ...rqObj,
+      category: resolvedCategory,
       favorite: quoteId ? favoriteMap.has(quoteId) : false,
     };
   });
@@ -171,6 +186,16 @@ const readAgain = async (receivedQuoteId, userId) => {
 
   const quote = receivedQuote.quote;
   const category = receivedQuote.category;
+  const quoteCat = quote?.category;
+  const isGenericPool = !category || category.slug === "inspire" || receivedQuote.categorySlug === "inspire";
+
+  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+    ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
+    : (category?.name || receivedQuote.categorySlug || "Inspire");
+
+  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+    ? quoteCat.toLowerCase()
+    : (category?.slug || receivedQuote.categorySlug || "inspire");
 
   return {
     receivedQuoteId: receivedQuote._id,
@@ -184,21 +209,13 @@ const readAgain = async (receivedQuoteId, userId) => {
       editorData: quote.editorData || null,
       renderedImages: quote.renderedImages || null,
     },
-    category: category
-      ? {
-          id: category._id,
-          name: category.name,
-          slug: category.slug,
-          icon: category.icon,
-          color: category.color,
-        }
-      : {
-          id: null,
-          name: receivedQuote.categorySlug || "inspire",
-          slug: receivedQuote.categorySlug || "inspire",
-          icon: null,
-          color: null,
-        },
+    category: {
+      id: category?._id || null,
+      name: resolvedCategoryName,
+      slug: resolvedCategorySlug,
+      icon: category?.icon || null,
+      color: category?.color || null,
+    },
     receivedAt: receivedQuote.receivedAt,
     favorite: !!favoriteId,
     favoriteId,
@@ -403,6 +420,17 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
 
   const remainingToday = dailyLimit - (todayCount + 1);
 
+  const quoteCat = selection.quote?.category;
+  const isGenericPool = slug === "inspire" || !category || category.slug === "inspire";
+
+  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+    ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
+    : category.name;
+
+  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+    ? quoteCat.toLowerCase()
+    : category.slug;
+
   return {
     _id: receivedQuote._id,
     quote: {
@@ -417,8 +445,8 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
     },
     category: {
       _id: category._id,
-      name: category.name,
-      slug: category.slug,
+      name: resolvedCategoryName,
+      slug: resolvedCategorySlug,
       icon: category.icon,
       color: category.color,
     },
