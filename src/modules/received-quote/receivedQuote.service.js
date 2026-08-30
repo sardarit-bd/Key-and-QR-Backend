@@ -6,6 +6,7 @@ import quoteRepository from "../quote/quote.repository.js";
 import subscriptionRepository from "../subscription/subscription.repository.js";
 import streakService from "../streak/streak.service.js";
 import favoriteRepository from "../favorite/favorite.repository.js";
+import ScanHistory from "../scan/scan.model.js";
 
 // Daily limits for the new dashboard quote engine.
 // Kept here (not in subscription.config.js) so the existing ScanHistory
@@ -350,6 +351,93 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
       "You've reached your daily quote limit. Come back tomorrow!",
       "DAILY_LIMIT_REACHED"
     );
+  }
+
+  // 2.1. Check if user already scanned a tag today without a ReceivedQuote (Fail-safe bridge)
+  if (todayCount === 0) {
+    try {
+      const todayScan = await ScanHistory.findOne({
+        user: userId,
+        scanDateKey: dayKey,
+        quote: { $ne: null },
+      }).populate("quote").sort({ createdAt: -1 });
+
+      if (todayScan?.quote && todayScan.quote.isActive !== false) {
+        const scanQuote = todayScan.quote;
+        const categoryId = category._id;
+        const currentCycle = await receivedQuoteRepository.getCurrentCycle(userId, categoryId);
+
+        const receivedQuote = await receivedQuoteRepository.createReceivedQuote({
+          user: userId,
+          quote: scanQuote._id,
+          category: categoryId,
+          categorySlug: category.slug,
+          receivedAt: new Date(),
+          source: "scan",
+          dayKey,
+          isRead: true,
+          isFavoriteSnapshot: false,
+          cycle: currentCycle || 1,
+          metadata: {
+            plan,
+            categorySlug: category.slug,
+            quoteCategory: quoteCategory || "inspire",
+            fromScanBridge: true,
+          },
+        });
+
+        const streak = await streakService.updateStreakAfterReceive(
+          userId,
+          receivedQuote.receivedAt
+        );
+
+        const remainingToday = dailyLimit - 1;
+        const quoteCat = scanQuote.category;
+        const isGenericPool = slug === "inspire" || !category || category.slug === "inspire";
+
+        const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+          ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
+          : category.name;
+
+        const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+          ? quoteCat.toLowerCase()
+          : category.slug;
+
+        return {
+          _id: receivedQuote._id,
+          quote: {
+            _id: scanQuote._id,
+            text: scanQuote.text,
+            author: scanQuote.author || "InspireTag",
+            description: scanQuote.description || null,
+            image: scanQuote.image || null,
+            theme: scanQuote.theme || null,
+            editorData: scanQuote.editorData || null,
+            renderedImages: scanQuote.renderedImages || null,
+          },
+          category: {
+            _id: category._id,
+            name: resolvedCategoryName,
+            slug: resolvedCategorySlug,
+            icon: category.icon,
+            color: category.color,
+          },
+          receivedAt: receivedQuote.receivedAt,
+          remainingToday,
+          dailyLimit,
+          streak: streak
+            ? {
+                current: streak.current,
+                longest: streak.longest,
+                lastReceivedDate: streak.lastReceivedDate,
+                todayCounted: streak.lastReceivedDate === dayKey,
+              }
+            : null,
+        };
+      }
+    } catch (bridgeErr) {
+      // Fall through to normal quote selection if bridge fails
+    }
   }
 
   // 3. No-repeat selection (per category; Inspire pools all active quotes)
