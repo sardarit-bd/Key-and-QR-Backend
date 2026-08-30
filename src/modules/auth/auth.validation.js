@@ -21,7 +21,8 @@ export const registerValidationSchema = Joi.object({
     "string.empty": "Password is required",
     "any.required": "Password is required",
   }),
-});
+  tagCode: Joi.string().trim().allow("", null).optional(),
+}).options({ stripUnknown: true });
 
 export const loginValidationSchema = Joi.object({
   email: Joi.string().trim().email().required().messages({
