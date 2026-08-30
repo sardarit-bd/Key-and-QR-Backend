@@ -20,6 +20,13 @@ import User from "../../models/user.model.js";
 import roles from "../../constants/roles.js";
 import { NAME_CHANGE_COOLDOWN_MS } from "../../constants/user.constants.js";
 import { hashToken } from "../../utils/tokenHash.js";
+import Tag from "../tag/tag.model.js";
+import Category from "../category/category.model.js";
+import Quote from "../quote/quote.model.js";
+import quoteAssignmentService from "../quoteAssignment/quoteAssignment.service.js";
+import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
+import ScanHistory from "../scan/scan.model.js";
+import scanRepository from "../scan/scan.repository.js";
 
 // ===============================
 // PRIVATE HELPER FUNCTIONS
@@ -135,35 +142,187 @@ const claimGuestResourcesIfExists = async (userId, email) => {
   }
 };
 
+/**
+ * Claim an unassigned/scanned tag directly to the newly registered user and
+ * persist today's unlocked quote in ReceivedQuote for immediate dashboard availability.
+ * Non-blocking: failures are logged but don't prevent user registration.
+ */
+const claimScannedTagIfExists = async (userId, tagCode) => {
+  if (!tagCode || typeof tagCode !== "string" || !tagCode.trim()) {
+    return null;
+  }
+
+  const normalizedCode = tagCode.trim();
+  const todayKey = new Date().toISOString().split("T")[0];
+
+  try {
+    const tag = await Tag.findOne({ tagCode: normalizedCode });
+    if (!tag) {
+      logger.warn(`Tag ${normalizedCode} not found during registration claim.`);
+      return null;
+    }
+
+    // Only claim if unowned or already belonging to this user
+    if (tag.owner && tag.owner.toString() !== userId.toString()) {
+      logger.warn(`Tag ${normalizedCode} is already owned by another user (${tag.owner}).`);
+      return null;
+    }
+
+    // 1. Update Tag ownership & activation
+    tag.owner = userId;
+    tag.isActivated = true;
+    tag.isActive = true;
+    if (!tag.activatedAt) {
+      tag.activatedAt = new Date();
+    }
+    await tag.save();
+
+    logger.info(`✅ Successfully claimed tag ${normalizedCode} for user ${userId}`);
+
+    // 2. Find today's quote for this tag (from Tag assignment, anonymous ScanHistory, or random)
+    let activeQuote = null;
+    let quoteSource = "scan";
+
+    // Priority A: Tag assignment
+    try {
+      const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
+      if (tagAssignment?.quote && tagAssignment.quote.isActive !== false) {
+        activeQuote = tagAssignment.quote;
+        quoteSource = "assignment";
+      }
+    } catch (err) {
+      // non-fatal
+    }
+
+    // Priority B: Anonymous public scan from today
+    if (!activeQuote) {
+      const todayScan = await ScanHistory.findOne({
+        tag: tag._id,
+        scanDateKey: todayKey,
+        quote: { $ne: null },
+      }).populate("quote").sort({ createdAt: -1 });
+
+      if (todayScan?.quote && todayScan.quote.isActive !== false) {
+        activeQuote = todayScan.quote;
+      }
+    }
+
+    // Priority C: Any latest scan for this tag
+    if (!activeQuote) {
+      const latestScan = await ScanHistory.findOne({
+        tag: tag._id,
+        quote: { $ne: null },
+      }).populate("quote").sort({ createdAt: -1 });
+
+      if (latestScan?.quote && latestScan.quote.isActive !== false) {
+        activeQuote = latestScan.quote;
+      }
+    }
+
+    // Priority D: Fallback to active random quote if none found yet
+    if (!activeQuote) {
+      const randomQuotes = await Quote.aggregate([
+        { $match: { isActive: true } },
+        { $sample: { size: 1 } },
+      ]);
+      if (randomQuotes.length > 0) {
+        activeQuote = randomQuotes[0];
+      }
+    }
+
+    // 3. Create ReceivedQuote if activeQuote found and not already exists for today
+    if (activeQuote && activeQuote._id) {
+      const alreadyHasQuoteToday = await receivedQuoteRepository.existsForToday(userId, todayKey);
+      if (!alreadyHasQuoteToday) {
+        let categoryDoc = null;
+        if (activeQuote.category) {
+          categoryDoc = await Category.findOne({
+            $or: [
+              { slug: activeQuote.category.toString().toLowerCase() },
+              { name: new RegExp(`^${activeQuote.category}$`, "i") },
+            ],
+          });
+        }
+
+        await receivedQuoteRepository.createReceivedQuote({
+          user: userId,
+          quote: activeQuote._id,
+          category: categoryDoc?._id || null,
+          categorySlug: categoryDoc?.slug || (activeQuote.category ? activeQuote.category.toString().toLowerCase() : "inspire"),
+          receivedAt: new Date(),
+          source: quoteSource,
+          dayKey: todayKey,
+          isRead: true,
+          metadata: {
+            tagCode: tag.tagCode,
+            tagId: tag._id,
+          },
+        });
+
+        logger.info(`✅ Created initial ReceivedQuote for user ${userId} from claimed tag ${normalizedCode}`);
+      }
+
+      // 4. Backfill user scan record
+      try {
+        await scanRepository.createScan({
+          tag: tag._id,
+          user: userId,
+          quote: activeQuote._id,
+          category: activeQuote.category || "faith",
+          scanDateKey: todayKey,
+          sourceType: quoteSource,
+        });
+      } catch (scanErr) {
+        // Non-fatal if scan history already exists or fails
+      }
+    }
+
+    return {
+      claimedTag: normalizedCode,
+      tagId: tag._id,
+    };
+  } catch (error) {
+    logger.error(`❌ Failed to claim scanned tag ${normalizedCode} for user ${userId}:`, {
+      userId,
+      error: error.message,
+      stack: error.stack,
+    });
+    return null;
+  }
+};
+
 // ===============================
 // PUBLIC SERVICE FUNCTIONS
 // ===============================
 
 /**
- * Register User with Guest Claim Support
+ * Register User with Guest & Tag Claim Support
  * 
  * Flow:
  * 1. Validate email not already registered
  * 2. Hash password
  * 3. Create user account
  * 4. Store refresh token
- * 5. Attempt to claim guest resources
- * 6. Return auth response
+ * 5. Attempt to claim scanned tag directly if tagCode provided
+ * 6. Attempt to claim guest resources
+ * 7. Return auth response
  */
 const registerUser = async (payload, metadata = {}) => {
+  const { tagCode, ...userFields } = payload;
+
   // 1. Check for existing user
-  const existingUser = await authRepository.findUserByEmail(payload.email);
+  const existingUser = await authRepository.findUserByEmail(userFields.email);
 
   if (existingUser) {
     throw new AppError(httpStatus.CONFLICT, "This email is already registered. Please log in.");
   }
 
   // 2. Hash password
-  const hashedPassword = await bcrypt.hash(payload.password, env.bcryptSaltRounds);
+  const hashedPassword = await bcrypt.hash(userFields.password, env.bcryptSaltRounds);
 
   // 3. Create user
   const createdUser = await authRepository.createUser({
-    ...payload,
+    ...userFields,
     password: hashedPassword,
     provider: "local",
     isEmailVerified: false,
@@ -175,10 +334,15 @@ const registerUser = async (payload, metadata = {}) => {
   // 5. Store refresh token
   await storeRefreshToken(createdUser._id, authResponse.refreshToken, metadata);
 
-  // 6. Claim guest resources (non-blocking)
+  // 6. Claim scanned tag directly if tagCode was provided (non-blocking)
+  if (tagCode) {
+    await claimScannedTagIfExists(createdUser._id, tagCode);
+  }
+
+  // 7. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(createdUser._id, createdUser.email);
 
-  // 7. Return auth response
+  // 8. Return auth response
   return authResponse;
 };
 
