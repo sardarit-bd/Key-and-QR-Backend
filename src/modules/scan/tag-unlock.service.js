@@ -7,8 +7,48 @@ import Order from "../order/order.model.js";
 import subscriptionService from "../subscription/subscription.service.js";
 import quoteAssignmentService from "../quoteAssignment/quoteAssignment.service.js";
 
+import Category from "../category/category.model.js";
+import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
+
 const getTodayKey = () => {
     return new Date().toISOString().split("T")[0];
+};
+
+const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag) => {
+    if (!targetUserId || !quoteDoc?._id) return;
+    try {
+        const todayKey = getTodayKey();
+        const alreadyExists = await receivedQuoteRepository.existsForToday(targetUserId, todayKey);
+        if (!alreadyExists) {
+            let categoryDoc = null;
+            if (quoteDoc.category) {
+                categoryDoc = await Category.findOne({
+                    $or: [
+                        { slug: quoteDoc.category.toString().toLowerCase() },
+                        { name: new RegExp(`^${quoteDoc.category}$`, "i") },
+                    ],
+                });
+            }
+
+            await receivedQuoteRepository.createReceivedQuote({
+                user: targetUserId,
+                quote: quoteDoc._id,
+                category: categoryDoc?._id || null,
+                categorySlug: categoryDoc?.slug || (quoteDoc.category ? quoteDoc.category.toString().toLowerCase() : "inspire"),
+                receivedAt: new Date(),
+                source: "scan",
+                dayKey: todayKey,
+                isRead: true,
+                metadata: {
+                    tagCode: tag?.tagCode,
+                    tagId: tag?._id,
+                    sourceType: quoteSource,
+                },
+            });
+        }
+    } catch (err) {
+        // Non-fatal
+    }
 };
 
 // ===============================
@@ -223,6 +263,11 @@ const publicUnlock = async (tagCode, user = null) => {
             }
         }
 
+        const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
+        if (targetUserId) {
+            await syncReceivedQuoteForUser(targetUserId, assignedQuote, assignmentSourceType, tag);
+        }
+
         return formatQuotePayload(assignedQuote, assignmentSourceType, {
             isNewQuote: true,
             isAlreadyUnlocked: false,
@@ -251,6 +296,11 @@ const publicUnlock = async (tagCode, user = null) => {
             } catch (err) {
                 // Non-fatal if scan history fails
             }
+        }
+
+        const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
+        if (targetUserId) {
+            await syncReceivedQuoteForUser(targetUserId, existingPublicScan.quote, "random", tag);
         }
 
         const isRepeat = Boolean(user?.userId && userTodayScan);
@@ -311,6 +361,11 @@ const publicUnlock = async (tagCode, user = null) => {
         } catch (err) {
             // Non-fatal if scan history fails
         }
+    }
+
+    const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
+    if (targetUserId) {
+        await syncReceivedQuoteForUser(targetUserId, quote, "random", tag);
     }
 
     return formatQuotePayload(quote, "random", {
@@ -468,6 +523,7 @@ const unlockTag = async (tagCode, user, category) => {
                 category: selectedQuote.category,
                 scanDateKey: todayKey,
             });
+            await syncReceivedQuoteForUser(user.userId, selectedQuote, assigned.source, tag);
         }
 
         return {
@@ -522,6 +578,7 @@ const unlockTag = async (tagCode, user, category) => {
             category: selectedQuote.category,
             scanDateKey: todayKey,
         });
+        await syncReceivedQuoteForUser(user.userId, selectedQuote, "random", tag);
     }
 
     const remaining = user?.userId && rules.dailyLimit
