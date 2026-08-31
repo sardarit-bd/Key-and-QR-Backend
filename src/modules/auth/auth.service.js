@@ -162,9 +162,9 @@ const claimScannedTagIfExists = async (userId, tagCode) => {
       return null;
     }
 
-    // Only claim if unowned or already belonging to this user
+    // Strict Ownership Guard: Never reassign an already-owned tag or steal ownership
     if (tag.owner && tag.owner.toString() !== userId.toString()) {
-      logger.warn(`Tag ${normalizedCode} is already owned by another user (${tag.owner}).`);
+      logger.warn(`Tag ${normalizedCode} is already owned by another user (${tag.owner}). Aborting tag claim.`);
       return null;
     }
 
@@ -548,7 +548,12 @@ const handleSocialLogin = async (profile, provider, metadata = {}) => {
   // 7. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(user._id, user.email);
 
-  // 8. Return auth response
+  // 8. Claim scanned tag if metadata.tagCode was provided (non-blocking)
+  if (metadata?.tagCode) {
+    await claimScannedTagIfExists(user._id, metadata.tagCode);
+  }
+
+  // 9. Return auth response
   return authResponse;
 };
 
