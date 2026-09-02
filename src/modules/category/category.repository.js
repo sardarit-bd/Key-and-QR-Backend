@@ -49,8 +49,12 @@ const getAllCategories = async ({
     Category.find(filter).sort({ sortOrder: 1, name: 1 }).skip(skip).limit(limit).lean(),
     Category.countDocuments(filter),
     Quote.aggregate([
-      { $match: { isActive: true } },
-      { $group: { _id: { $toLower: "$category" }, count: { $sum: 1 } } },
+      {
+        $group: {
+          _id: { $toLower: { $toString: "$category" } },
+          count: { $sum: 1 },
+        },
+      },
     ]).catch(() => []),
   ]);
 
@@ -66,10 +70,12 @@ const getAllCategories = async ({
   const enhancedData = data.map((cat) => {
     const slugKey = (cat.slug || "").toLowerCase();
     const nameKey = (cat.name || "").toLowerCase();
-    const count = countMap[slugKey] || countMap[nameKey] || 0;
+    const idKey = (cat._id || "").toString().toLowerCase();
+    const count = countMap[slugKey] ?? countMap[nameKey] ?? countMap[idKey] ?? 0;
     return {
       ...cat,
       quoteCount: count,
+      quotesCount: count,
     };
   });
 
