@@ -2,15 +2,12 @@ import mongoose from "mongoose";
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import Streak from "./streak.model.js";
-
-const getDayKey = (date = new Date()) => {
-  return date.toISOString().split("T")[0];
-};
+import { getDayKey } from "../../utils/dateUtils.js";
 
 const addDays = (dateKey, days) => {
   const date = new Date(`${dateKey}T00:00:00Z`);
   date.setUTCDate(date.getUTCDate() + days);
-  return getDayKey(date);
+  return date.toISOString().split("T")[0];
 };
 
 const getStreak = async (userId) => {
@@ -60,8 +57,8 @@ const resetIfNeeded = (streak, todayKey) => {
  * Called by the Quote Receive Engine AFTER the ReceivedQuote is persisted.
  * Idempotent per day: a second quote on the same day does NOT re-increment.
  */
-const updateStreakAfterReceive = async (userId, receivedAt = new Date()) => {
-  const todayKey = getDayKey(receivedAt);
+const updateStreakAfterReceive = async (userId, receivedAt = new Date(), tz = null) => {
+  const todayKey = getDayKey(tz, receivedAt);
   const session = await mongoose.startSession();
   let result;
 
@@ -105,10 +102,10 @@ const updateStreakAfterReceive = async (userId, receivedAt = new Date()) => {
 
 // Recompute current streak from the ReceivedQuote history (source of truth).
 // Used only when a streak record is missing (e.g. legacy users).
-const computeStreakFromHistory = async (userId, history) => {
+const computeStreakFromHistory = async (userId, history, tz = null) => {
   const dates = [
     ...new Set(
-      history.map((r) => getDayKey(new Date(r.receivedAt)))
+      history.map((r) => getDayKey(tz, new Date(r.receivedAt)))
     ),
   ].sort();
 
@@ -116,7 +113,7 @@ const computeStreakFromHistory = async (userId, history) => {
     return { current: 0, longest: 0, lastReceivedDate: null, weekActivity: [] };
   }
 
-  const todayKey = getDayKey();
+  const todayKey = getDayKey(tz);
   const yesterday = addDays(todayKey, -1);
 
   let current = 0;
@@ -163,18 +160,19 @@ const computeStreakFromHistory = async (userId, history) => {
  * Prefers the stored Streak doc; if absent, derives from ReceivedQuote history
  * (the single source of truth) and persists it.
  */
-const getCurrentStreak = async (userId, history = []) => {
+const getCurrentStreak = async (userId, history = [], tz = null) => {
   let streak = await getStreak(userId);
+  const todayKey = getDayKey(tz);
 
   if (!streak) {
-    const computed = await computeStreakFromHistory(userId, history);
+    const computed = await computeStreakFromHistory(userId, history, tz);
     streak = await Streak.create({
       user: userId,
       ...computed,
-      lastResetDate: getDayKey(),
+      lastResetDate: todayKey,
     });
   } else {
-    resetIfNeeded(streak, getDayKey());
+    resetIfNeeded(streak, todayKey);
     if (streak.isModified() || streak.isNew) await streak.save();
   }
 
@@ -186,9 +184,9 @@ const getLongestStreak = async (userId) => {
   return streak?.longest || 0;
 };
 
-const getStreakForDashboard = async (userId, history = []) => {
-  const streak = await getCurrentStreak(userId, history);
-  const todayKey = getDayKey();
+const getStreakForDashboard = async (userId, history = [], tz = null) => {
+  const streak = await getCurrentStreak(userId, history, tz);
+  const todayKey = getDayKey(tz);
 
   return {
     current: streak.current || 0,

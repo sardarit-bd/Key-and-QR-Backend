@@ -88,7 +88,7 @@ const getRecentActivity = catchAsync(async (req, res) => {
  */
 const getHome = catchAsync(async (req, res) => {
     const userId = req.user.userId;
-    const homeData = await dashboardService.getHomeData(userId);
+    const homeData = await dashboardService.getHomeData(userId, req);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

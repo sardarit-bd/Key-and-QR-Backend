@@ -21,8 +21,8 @@ import scanRepository from "./scan.repository.js";
 const publicScan = catchAsync(async (req, res) => {
     const { tagCode } = req.params;
     
-    // Use public service method with optional authenticated user
-    const result = await scanService.publicUnlock(tagCode, req.user);
+    // Use public service method with optional authenticated user and timezone context
+    const result = await scanService.publicUnlock(tagCode, req.user, req);
 
     // Send sanitized public response
     sendResponse(res, {
@@ -42,7 +42,7 @@ const unlockTag = catchAsync(async (req, res) => {
     const { tagCode } = req.params;
     const { category } = req.body || {};
 
-    const result = await scanService.unlockTag(tagCode, req.user, category);
+    const result = await scanService.unlockTag(tagCode, req.user, category, req);
 
     sendResponse(res, {
         statusCode: httpStatus.OK,

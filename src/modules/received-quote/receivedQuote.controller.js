@@ -30,7 +30,7 @@ const getLatest = catchAsync(async (req, res) => {
 });
 
 const getToday = catchAsync(async (req, res) => {
-  const result = await receivedQuoteService.getTodayHistory(req.user.userId);
+  const result = await receivedQuoteService.getTodayHistory(req.user.userId, req);
 
   sendResponse(res, {
     statusCode: httpStatus.OK,
@@ -68,7 +68,8 @@ const getById = catchAsync(async (req, res) => {
 const receive = catchAsync(async (req, res) => {
   const result = await receivedQuoteService.receiveDashboardQuote(
     req.user.userId,
-    req.body.categorySlug
+    req.body.categorySlug,
+    req
   );
 
   sendResponse(res, {
