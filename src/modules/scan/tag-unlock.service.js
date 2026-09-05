@@ -7,7 +7,9 @@ import Order from "../order/order.model.js";
 import subscriptionService from "../subscription/subscription.service.js";
 import quoteAssignmentService from "../quoteAssignment/quoteAssignment.service.js";
 
+import mongoose from "mongoose";
 import Category from "../category/category.model.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
 import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
 import streakService from "../streak/streak.service.js";
 import { getDayKey } from "../../utils/dateUtils.js";
@@ -246,6 +248,7 @@ const publicUnlock = async (tagCode, user = null, tz = null) => {
 
     // If an assigned quote exists, check if it was already delivered to this user on a prior calendar day.
     // If so, do NOT trap the user on the same static assignment indefinitely — allow daily rotation.
+    let bypassedAssignedQuoteId = null;
     if (assignedQuote && targetUserId) {
         try {
             const alreadyReceivedOnPriorDay = await receivedQuoteRepository.hasReceivedQuoteOnPriorDay(
@@ -264,6 +267,7 @@ const publicUnlock = async (tagCode, user = null, tz = null) => {
 
                 if (!unlockedTodayWithThisQuote) {
                     // It was consumed on a prior day and not unlocked today -> bypass static assignment
+                    bypassedAssignedQuoteId = assignedQuote._id;
                     assignedQuote = null;
                     assignmentSourceType = null;
                 }
@@ -354,10 +358,56 @@ const publicUnlock = async (tagCode, user = null, tz = null) => {
     // Pick new random quote for today (First scan of the day)
     let quote = null;
     try {
-        const randomQuotes = await Quote.aggregate([
-            { $match: { isActive: true } },
+        const excludeIds = [];
+        if (bypassedAssignedQuoteId) {
+            try {
+                excludeIds.push(new mongoose.Types.ObjectId(bypassedAssignedQuoteId));
+            } catch {
+                excludeIds.push(bypassedAssignedQuoteId);
+            }
+        }
+        if (targetUserId) {
+            try {
+                const receivedQuoteIds = await ReceivedQuote.find({ user: targetUserId }).distinct("quote");
+                if (Array.isArray(receivedQuoteIds) && receivedQuoteIds.length > 0) {
+                    for (const rid of receivedQuoteIds) {
+                        if (rid) excludeIds.push(rid);
+                    }
+                }
+            } catch {
+                // Non-fatal
+            }
+        }
+
+        const matchFilter = { isActive: true };
+        if (excludeIds.length > 0) {
+            matchFilter._id = { $nin: excludeIds };
+        }
+
+        let randomQuotes = await Quote.aggregate([
+            { $match: matchFilter },
             { $sample: { size: 1 } },
         ]);
+
+        if (!randomQuotes || randomQuotes.length === 0) {
+            // Fallback: exclude at least the bypassed assigned quote
+            const fallbackFilter = { isActive: true };
+            if (bypassedAssignedQuoteId) {
+                fallbackFilter._id = { $ne: bypassedAssignedQuoteId };
+            }
+            randomQuotes = await Quote.aggregate([
+                { $match: fallbackFilter },
+                { $sample: { size: 1 } },
+            ]);
+        }
+
+        if (!randomQuotes || randomQuotes.length === 0) {
+            randomQuotes = await Quote.aggregate([
+                { $match: { isActive: true } },
+                { $sample: { size: 1 } },
+            ]);
+        }
+
         if (randomQuotes.length > 0) {
             quote = randomQuotes[0];
         }
