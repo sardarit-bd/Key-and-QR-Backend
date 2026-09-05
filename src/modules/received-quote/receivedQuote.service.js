@@ -7,6 +7,7 @@ import subscriptionRepository from "../subscription/subscription.repository.js";
 import streakService from "../streak/streak.service.js";
 import favoriteRepository from "../favorite/favorite.repository.js";
 import ScanHistory from "../scan/scan.model.js";
+import { getDayKey, getNextAvailableAt } from "../../utils/dateUtils.js";
 
 // Daily limits for the new dashboard quote engine.
 // Kept here (not in subscription.config.js) so the existing ScanHistory
@@ -14,18 +15,6 @@ import ScanHistory from "../scan/scan.model.js";
 const DASHBOARD_DAILY_LIMITS = {
   free: 1,
   subscriber: 3,
-};
-
-const getDayKey = () => {
-  return new Date().toISOString().split("T")[0];
-};
-
-// UTC midnight following the current instant — when the daily limit resets.
-const getNextAvailableAt = () => {
-  const now = new Date();
-  const next = new Date(now);
-  next.setUTCHours(24, 0, 0, 0);
-  return next.toISOString();
 };
 
 // Resolve the CURRENT favorite state for a batch of received quotes using a
@@ -124,8 +113,8 @@ const getHistory = async (query, userId) => {
   return result;
 };
 
-const getTodayHistory = async (userId) => {
-  const dayKey = getDayKey();
+const getTodayHistory = async (userId, tz = null) => {
+  const dayKey = getDayKey(tz);
   const result = await receivedQuoteRepository.getTodayReceivedQuotes(
     userId,
     dayKey
@@ -226,10 +215,10 @@ const readAgain = async (receivedQuoteId, userId) => {
 
 // Shared daily-usage resolution used by BOTH the receive engine and the
 // dashboard home API, so the limits stay consistent in one place.
-const getDailyUsage = async (userId) => {
+const getDailyUsage = async (userId, tz = null) => {
   const plan = await resolvePlan(userId);
   const dailyLimit = DASHBOARD_DAILY_LIMITS[plan];
-  const dayKey = getDayKey();
+  const dayKey = getDayKey(tz);
 
   const usedToday = await receivedQuoteRepository.countToday(userId, dayKey);
   const remainingToday = Math.max(dailyLimit - usedToday, 0);
@@ -241,7 +230,7 @@ const getDailyUsage = async (userId) => {
     usedToday,
     remainingToday,
     isLimitReached,
-    nextAvailableAt: isLimitReached ? getNextAvailableAt() : null,
+    nextAvailableAt: isLimitReached ? getNextAvailableAt(tz) : null,
   };
 };
 
@@ -314,11 +303,11 @@ const selectQuoteFromPool = async (userId, categoryId, quoteCategory, cycle) => 
   return { quote: null, cycle: cycle + 1 };
 };
 
-const receiveDashboardQuote = async (userId, categorySlug) => {
+const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
   const plan = await resolvePlan(userId);
   const isPremium = plan === "subscriber";
   const dailyLimit = DASHBOARD_DAILY_LIMITS[plan];
-  const dayKey = getDayKey();
+  const dayKey = getDayKey(tz);
 
   // 1. Category lookup
   const slug = categorySlug || "inspire";
@@ -388,7 +377,8 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
 
         const streak = await streakService.updateStreakAfterReceive(
           userId,
-          receivedQuote.receivedAt
+          receivedQuote.receivedAt,
+          tz
         );
 
         const remainingToday = dailyLimit - 1;
@@ -503,7 +493,8 @@ const receiveDashboardQuote = async (userId, categorySlug) => {
   // Increases once per day, driven exclusively by new dashboard receives.
   const streak = await streakService.updateStreakAfterReceive(
     userId,
-    receivedQuote.receivedAt
+    receivedQuote.receivedAt,
+    tz
   );
 
   const remainingToday = dailyLimit - (todayCount + 1);

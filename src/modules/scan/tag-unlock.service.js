@@ -7,17 +7,17 @@ import Order from "../order/order.model.js";
 import subscriptionService from "../subscription/subscription.service.js";
 import quoteAssignmentService from "../quoteAssignment/quoteAssignment.service.js";
 
+import mongoose from "mongoose";
 import Category from "../category/category.model.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
 import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
+import streakService from "../streak/streak.service.js";
+import { getDayKey } from "../../utils/dateUtils.js";
 
-const getTodayKey = () => {
-    return new Date().toISOString().split("T")[0];
-};
-
-const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag) => {
+const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag, explicitTodayKey = null, tz = null) => {
     if (!targetUserId || !quoteDoc?._id) return;
     try {
-        const todayKey = getTodayKey();
+        const todayKey = explicitTodayKey || getDayKey(tz);
         const alreadyExists = await receivedQuoteRepository.existsForToday(targetUserId, todayKey);
         if (!alreadyExists) {
             let categoryDoc = null;
@@ -30,7 +30,7 @@ const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag
                 });
             }
 
-            await receivedQuoteRepository.createReceivedQuote({
+            const created = await receivedQuoteRepository.createReceivedQuote({
                 user: targetUserId,
                 quote: quoteDoc._id,
                 category: categoryDoc?._id || null,
@@ -45,6 +45,12 @@ const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag
                     sourceType: quoteSource,
                 },
             });
+
+            try {
+                await streakService.updateStreakAfterReceive(targetUserId, created.receivedAt, tz || todayKey);
+            } catch (streakErr) {
+                // Non-fatal
+            }
         }
     } catch (err) {
         // Non-fatal
@@ -62,7 +68,7 @@ const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag
  * No authentication required
  * No scan history recorded (privacy)
  */
-const publicUnlock = async (tagCode, user = null) => {
+const publicUnlock = async (tagCode, user = null, tz = null) => {
     // ✅ 0. Validate QR Code format (basic input guard)
     if (!tagCode || typeof tagCode !== "string" || !tagCode.trim()) {
         throw new AppError(
@@ -72,7 +78,7 @@ const publicUnlock = async (tagCode, user = null) => {
         );
     }
 
-    const todayKey = getTodayKey();
+    const todayKey = getDayKey(tz);
 
     let tag;
     try {
@@ -238,6 +244,39 @@ const publicUnlock = async (tagCode, user = null) => {
         // Fallback gracefully on assignment lookup error
     }
 
+    const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
+
+    // If an assigned quote exists, check if it was already delivered to this user on a prior calendar day.
+    // If so, do NOT trap the user on the same static assignment indefinitely — allow daily rotation.
+    let bypassedAssignedQuoteId = null;
+    if (assignedQuote && targetUserId) {
+        try {
+            const alreadyReceivedOnPriorDay = await receivedQuoteRepository.hasReceivedQuoteOnPriorDay(
+                targetUserId,
+                assignedQuote._id,
+                todayKey
+            );
+
+            if (alreadyReceivedOnPriorDay) {
+                // Check if this assigned quote was already unlocked today (e.g. repeat scan today)
+                const unlockedTodayWithThisQuote = await receivedQuoteRepository.hasReceivedQuoteToday(
+                    targetUserId,
+                    assignedQuote._id,
+                    todayKey
+                );
+
+                if (!unlockedTodayWithThisQuote) {
+                    // It was consumed on a prior day and not unlocked today -> bypass static assignment
+                    bypassedAssignedQuoteId = assignedQuote._id;
+                    assignedQuote = null;
+                    assignmentSourceType = null;
+                }
+            }
+        } catch (err) {
+            // Non-fatal, continue with normal assignment check
+        }
+    }
+
     if (assignedQuote) {
         // Save/update daily scan record so history reflects the active assignment
         await scanRepository.createPublicScan({
@@ -263,15 +302,18 @@ const publicUnlock = async (tagCode, user = null) => {
             }
         }
 
-        const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
         if (targetUserId) {
-            await syncReceivedQuoteForUser(targetUserId, assignedQuote, assignmentSourceType, tag);
+            await syncReceivedQuoteForUser(targetUserId, assignedQuote, assignmentSourceType, tag, todayKey);
         }
 
+        const isRepeat = Boolean(user?.userId && userTodayScan);
+
         return formatQuotePayload(assignedQuote, assignmentSourceType, {
-            isNewQuote: true,
-            isAlreadyUnlocked: false,
-            statusMessage: null,
+            isNewQuote: !isRepeat,
+            isAlreadyUnlocked: isRepeat,
+            statusMessage: isRepeat
+                ? "Today's quote has already been unlocked. Come back tomorrow for a new one!"
+                : null,
         });
     }
 
@@ -298,9 +340,8 @@ const publicUnlock = async (tagCode, user = null) => {
             }
         }
 
-        const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
         if (targetUserId) {
-            await syncReceivedQuoteForUser(targetUserId, existingPublicScan.quote, "random", tag);
+            await syncReceivedQuoteForUser(targetUserId, existingPublicScan.quote, "random", tag, todayKey);
         }
 
         const isRepeat = Boolean(user?.userId && userTodayScan);
@@ -317,10 +358,56 @@ const publicUnlock = async (tagCode, user = null) => {
     // Pick new random quote for today (First scan of the day)
     let quote = null;
     try {
-        const randomQuotes = await Quote.aggregate([
-            { $match: { isActive: true } },
+        const excludeIds = [];
+        if (bypassedAssignedQuoteId) {
+            try {
+                excludeIds.push(new mongoose.Types.ObjectId(bypassedAssignedQuoteId));
+            } catch {
+                excludeIds.push(bypassedAssignedQuoteId);
+            }
+        }
+        if (targetUserId) {
+            try {
+                const receivedQuoteIds = await ReceivedQuote.find({ user: targetUserId }).distinct("quote");
+                if (Array.isArray(receivedQuoteIds) && receivedQuoteIds.length > 0) {
+                    for (const rid of receivedQuoteIds) {
+                        if (rid) excludeIds.push(rid);
+                    }
+                }
+            } catch {
+                // Non-fatal
+            }
+        }
+
+        const matchFilter = { isActive: true };
+        if (excludeIds.length > 0) {
+            matchFilter._id = { $nin: excludeIds };
+        }
+
+        let randomQuotes = await Quote.aggregate([
+            { $match: matchFilter },
             { $sample: { size: 1 } },
         ]);
+
+        if (!randomQuotes || randomQuotes.length === 0) {
+            // Fallback: exclude at least the bypassed assigned quote
+            const fallbackFilter = { isActive: true };
+            if (bypassedAssignedQuoteId) {
+                fallbackFilter._id = { $ne: bypassedAssignedQuoteId };
+            }
+            randomQuotes = await Quote.aggregate([
+                { $match: fallbackFilter },
+                { $sample: { size: 1 } },
+            ]);
+        }
+
+        if (!randomQuotes || randomQuotes.length === 0) {
+            randomQuotes = await Quote.aggregate([
+                { $match: { isActive: true } },
+                { $sample: { size: 1 } },
+            ]);
+        }
+
         if (randomQuotes.length > 0) {
             quote = randomQuotes[0];
         }
@@ -363,9 +450,8 @@ const publicUnlock = async (tagCode, user = null) => {
         }
     }
 
-    const targetUserId = user?.userId || (tag.owner ? tag.owner.toString() : null);
     if (targetUserId) {
-        await syncReceivedQuoteForUser(targetUserId, quote, "random", tag);
+        await syncReceivedQuoteForUser(targetUserId, quote, "random", tag, todayKey);
     }
 
     return formatQuotePayload(quote, "random", {
@@ -410,7 +496,7 @@ const getAssignedQuote = async (tagId, usedQuoteIds = []) => {
 /**
  * Unlock tag (existing - for authenticated/optional auth)
  */
-const unlockTag = async (tagCode, user, category) => {
+const unlockTag = async (tagCode, user, category, tz = null) => {
     const tag = await tagRepository.findByTagCode(tagCode);
 
     if (!tag) {
@@ -421,7 +507,7 @@ const unlockTag = async (tagCode, user, category) => {
         throw new AppError(httpStatus.BAD_REQUEST, "Tag is disabled");
     }
 
-    const todayKey = getTodayKey();
+    const todayKey = getDayKey(tz);
 
     // 1. Personal message
     if (tag.personalMessage && tag.personalMessage.trim() !== "") {
@@ -523,7 +609,7 @@ const unlockTag = async (tagCode, user, category) => {
                 category: selectedQuote.category,
                 scanDateKey: todayKey,
             });
-            await syncReceivedQuoteForUser(user.userId, selectedQuote, assigned.source, tag);
+            await syncReceivedQuoteForUser(user.userId, selectedQuote, assigned.source, tag, todayKey);
         }
 
         return {
@@ -578,7 +664,7 @@ const unlockTag = async (tagCode, user, category) => {
             category: selectedQuote.category,
             scanDateKey: todayKey,
         });
-        await syncReceivedQuoteForUser(user.userId, selectedQuote, "random", tag);
+        await syncReceivedQuoteForUser(user.userId, selectedQuote, "random", tag, todayKey);
     }
 
     const remaining = user?.userId && rules.dailyLimit

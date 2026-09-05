@@ -80,7 +80,7 @@ class DashboardService {
      * NEW dashboard home — SINGLE aggregated endpoint.
      * GET /api/v1/dashboard/home
      */
-    async getHomeData(userId) {
+    async getHomeData(userId, tz = null) {
         const [
             latestReceivedQuote,
             dailyUsage,
@@ -95,7 +95,7 @@ class DashboardService {
             subscription,
         ] = await Promise.all([
             receivedQuoteRepository.getLatestReceivedQuote(userId),
-            receivedQuoteService.getDailyUsage(userId),
+            receivedQuoteService.getDailyUsage(userId, tz),
             receivedQuoteRepository.getStatistics(userId),
             favoriteRepository.getFavoriteCountByType(userId, "quote"),
             categoryRepository.getAllCategories({ page: 1, limit: 100, includeInactive: false }),
@@ -123,7 +123,8 @@ class DashboardService {
         // ---- Streak (source of truth: ReceivedQuote) ----
         const streak = await streakService.getStreakForDashboard(
             userId,
-            historyDates || []
+            historyDates || [],
+            tz
         );
 
         // ---- Latest Inspiration ----

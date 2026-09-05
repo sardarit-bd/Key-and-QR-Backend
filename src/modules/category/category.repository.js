@@ -45,39 +45,54 @@ const getAllCategories = async ({
     ];
   }
 
-  const [data, total, quoteCounts] = await Promise.all([
-    Category.find(filter).sort({ sortOrder: 1, name: 1 }).skip(skip).limit(limit).lean(),
-    Category.countDocuments(filter),
-    Quote.aggregate([
+  const [categories, total, totalQuotesCount] = await Promise.all([
+    Category.aggregate([
+      { $match: filter },
+      { $sort: { sortOrder: 1, name: 1 } },
+      { $skip: skip },
+      { $limit: limit },
       {
-        $group: {
-          _id: { $toLower: { $toString: "$category" } },
-          count: { $sum: 1 },
+        $lookup: {
+          from: "quotes",
+          let: {
+            catId: "$_id",
+            catIdStr: { $toString: "$_id" },
+            catSlug: { $toLower: "$slug" },
+            catName: { $toLower: "$name" },
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $or: [
+                    { $eq: ["$categoryId", "$$catId"] },
+                    { $eq: [{ $toString: "$categoryId" }, "$$catIdStr"] },
+                    { $eq: [{ $toLower: { $toString: "$category" } }, "$$catSlug"] },
+                    { $eq: [{ $toLower: { $toString: "$category" } }, "$$catName"] },
+                    { $eq: [{ $toLower: { $toString: "$category" } }, "$$catIdStr"] },
+                  ],
+                },
+              },
+            },
+          ],
+          as: "quotesData",
         },
       },
-    ]).catch(() => []),
+      {
+        $addFields: {
+          quotesCount: { $size: "$quotesData" },
+          quoteCount: { $size: "$quotesData" },
+        },
+      },
+      {
+        $project: {
+          quotesData: 0,
+        },
+      },
+    ]),
+    Category.countDocuments(filter),
+    Quote.countDocuments({}),
   ]);
-
-  const countMap = {};
-  if (Array.isArray(quoteCounts)) {
-    for (const item of quoteCounts) {
-      if (item._id) {
-        countMap[item._id] = item.count;
-      }
-    }
-  }
-
-  const enhancedData = data.map((cat) => {
-    const slugKey = (cat.slug || "").toLowerCase();
-    const nameKey = (cat.name || "").toLowerCase();
-    const idKey = (cat._id || "").toString().toLowerCase();
-    const count = countMap[slugKey] ?? countMap[nameKey] ?? countMap[idKey] ?? 0;
-    return {
-      ...cat,
-      quoteCount: count,
-      quotesCount: count,
-    };
-  });
 
   return {
     meta: {
@@ -85,8 +100,9 @@ const getAllCategories = async ({
       limit: parseInt(limit),
       total,
       totalPage: Math.ceil(total / limit),
+      totalQuotes: totalQuotesCount || 0,
     },
-    data: enhancedData,
+    data: categories,
   };
 };
 

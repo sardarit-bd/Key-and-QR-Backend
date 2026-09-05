@@ -2,6 +2,7 @@ import express from "express";
 import tagController from "./tag.controller.js";
 import validateRequest from "../../middlewares/validate.middleware.js";
 import auth from "../../middlewares/auth.middleware.js";
+import optionalAuth from "../../middlewares/optionalAuth.middleware.js";
 import roleMiddleware from "../../middlewares/role.middleware.js";
 import roles from "../../constants/roles.js";
 import {
@@ -14,8 +15,8 @@ const router = express.Router();
 
 // ==================== PUBLIC ROUTES ====================
 
-// Tag resolution for QR scan
-router.get("/resolve/:tagCode", tagController.resolveTag);
+// Tag resolution for QR scan (optional auth to identify owner)
+router.get("/resolve/:tagCode", optionalAuth(), tagController.resolveTag);
 
 // Get personal message
 router.get("/:tagCode/personal-message", tagController.getPersonalMessage);

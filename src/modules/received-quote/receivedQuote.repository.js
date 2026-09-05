@@ -76,6 +76,22 @@ const existsForToday = async (userId, dayKey) => {
   return ReceivedQuote.exists({ user: userId, dayKey });
 };
 
+const hasReceivedQuoteOnPriorDay = async (userId, quoteId, todayKey) => {
+  return ReceivedQuote.exists({
+    user: userId,
+    quote: quoteId,
+    dayKey: { $ne: todayKey },
+  });
+};
+
+const hasReceivedQuoteToday = async (userId, quoteId, todayKey) => {
+  return ReceivedQuote.exists({
+    user: userId,
+    quote: quoteId,
+    dayKey: todayKey,
+  });
+};
+
 const countToday = async (userId, dayKey) => {
   return ReceivedQuote.countDocuments({ user: userId, dayKey });
 };
@@ -190,6 +206,8 @@ export default {
   getUserHistoryDates,
   getTodayReceivedQuotes,
   existsForToday,
+  hasReceivedQuoteOnPriorDay,
+  hasReceivedQuoteToday,
   countToday,
   getByCategory,
   getStatistics,
