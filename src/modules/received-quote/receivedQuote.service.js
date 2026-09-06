@@ -137,10 +137,18 @@ const getStatistics = async (userId) => {
  * consume daily usage, or advance the category cycle.
  */
 const readAgain = async (receivedQuoteId, userId) => {
-  const receivedQuote = await receivedQuoteRepository.getReceivedQuoteById(
+  let receivedQuote = await receivedQuoteRepository.getReceivedQuoteById(
     receivedQuoteId,
     userId
   );
+
+  // Defensive fallback: if receivedQuoteId is a Quote._id, lookup user's received quote by quote
+  if (!receivedQuote) {
+    receivedQuote = await receivedQuoteRepository.getReceivedQuoteByQuoteId(
+      receivedQuoteId,
+      userId
+    );
+  }
 
   if (!receivedQuote) {
     throw new AppError(
