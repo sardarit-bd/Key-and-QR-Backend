@@ -15,6 +15,16 @@ const getReceivedQuoteById = async (id, userId = null) => {
     .populate("category", "name slug icon color");
 };
 
+const getReceivedQuoteByQuoteId = async (quoteId, userId = null) => {
+  const filter = { quote: quoteId };
+  if (userId) filter.user = userId;
+
+  return ReceivedQuote.findOne(filter)
+    .sort({ receivedAt: -1 })
+    .populate("quote", QUOTE_POPULATE_FIELDS)
+    .populate("category", "name slug icon color");
+};
+
 const getLatestReceivedQuote = async (userId) => {
   return ReceivedQuote.findOne({ user: userId })
     .sort({ receivedAt: -1 })
@@ -201,6 +211,7 @@ const updateFavoriteSnapshot = async (id, isFavorite, userId = null) => {
 export default {
   createReceivedQuote,
   getReceivedQuoteById,
+  getReceivedQuoteByQuoteId,
   getLatestReceivedQuote,
   getUserHistory,
   getUserHistoryDates,
