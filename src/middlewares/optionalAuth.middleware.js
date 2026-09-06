@@ -11,6 +11,10 @@ const optionalAuth = () => {
         token = authorization.split(" ")[1];
       }
 
+      if (!token && req.cookies?.accessToken) {
+        token = req.cookies.accessToken;
+      }
+
       if (!token) {
         req.user = null;
         return next();

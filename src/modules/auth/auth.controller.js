@@ -156,17 +156,23 @@ const changePassword = catchAsync(async (req, res) => {
 });
 
 // Google Login
-const googleLogin = passport.authenticate("google", {
-  scope: ["profile", "email"],
-  session: false,
-});
-
+const googleLogin = (req, res, next) => {
+  const state = req.query.redirect || "";
+  passport.authenticate("google", {
+    scope: ["profile", "email"],
+    session: false,
+    state,
+  })(req, res, next);
+};
 
 const googleCallback = catchAsync(async (req, res, next) => {
   passport.authenticate("google", { session: false }, async (err, profile) => {
+    const state = req.query.state || "";
+    const redirectParam = state ? `&redirect=${encodeURIComponent(state)}` : "";
+
     if (err || !profile) {
       console.error("Google auth error:", err);
-      return res.redirect(`${env.clientUrl}/login?error=google_auth_failed`);
+      return res.redirect(`${env.clientUrl}/login?error=google_auth_failed${redirectParam}`);
     }
 
     try {
@@ -180,14 +186,14 @@ const googleCallback = catchAsync(async (req, res, next) => {
       // Encode user data properly
       const encodedUser = encodeURIComponent(JSON.stringify(result.user));
 
-      const redirectUrl = `${env.clientUrl}/callback?success=true&accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&user=${encodedUser}`;
+      const redirectUrl = `${env.clientUrl}/callback?success=true&accessToken=${result.accessToken}&refreshToken=${result.refreshToken}&user=${encodedUser}${redirectParam}`;
 
       console.log("Redirecting to:", redirectUrl.substring(0, 200) + "...");
 
       return res.redirect(redirectUrl);
     } catch (error) {
       console.error("Social login error:", error);
-      return res.redirect(`${env.clientUrl}/login?error=social_login_failed`);
+      return res.redirect(`${env.clientUrl}/login?error=social_login_failed${redirectParam}`);
     }
   })(req, res, next);
 });

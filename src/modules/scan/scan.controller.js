@@ -37,6 +37,21 @@ const publicScan = catchAsync(async (req, res) => {
 // EXISTING CONTROLLER FUNCTIONS
 // ===============================
 
+// Explicit Reveal (Consumes quota and persists ReceivedQuote)
+const revealTag = catchAsync(async (req, res) => {
+    const { tagCode } = req.params;
+    const { category } = req.body || {};
+
+    const result = await scanService.revealQuote(tagCode, req.user, category, req);
+
+    sendResponse(res, {
+        statusCode: httpStatus.OK,
+        success: true,
+        message: "Quote revealed successfully",
+        data: result,
+    });
+});
+
 // Unlock tag (existing - kept for backward compatibility)
 const unlockTag = catchAsync(async (req, res) => {
     const { tagCode } = req.params;
@@ -119,6 +134,7 @@ const getUserScanStats = catchAsync(async (req, res) => {
 
 export default {
     publicScan,
+    revealTag,
     unlockTag,
     getLastUnlock,
     getUserScanHistory,
