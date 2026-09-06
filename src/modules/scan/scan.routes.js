@@ -25,6 +25,14 @@ router.get(
     scanController.publicScan
 );
 
+// Explicit Quote Reveal (Consumes quota and persists ReceivedQuote)
+router.post(
+    "/reveal/:tagCode",
+    publicScanLimiter,
+    optionalAuth(),
+    scanController.revealTag
+);
+
 // ===============================
 // EXISTING ROUTES (Maintained)
 // ===============================
