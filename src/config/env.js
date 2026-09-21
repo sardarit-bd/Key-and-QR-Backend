@@ -34,14 +34,16 @@ const env = {
 
   // URLs - Dynamic based on environment
   clientUrl: getEnv("CLIENT_URL",
-    process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000"
+    process.env.FRONTEND_URL
+      ? process.env.FRONTEND_URL
+      : "https://myinspiretag-frontend.vercel.app"
   ),
   apiUrl: getEnv("API_URL",
-    process.env.VERCEL_URL && process.env.BACKEND_URL
+    process.env.BACKEND_URL
       ? process.env.BACKEND_URL
-      : `http://localhost:5000`
+      : process.env.VERCEL_URL
+      ? `https://${process.env.VERCEL_URL}`
+      : "http://localhost:5001"
   ),
 
   // Admin

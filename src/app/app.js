@@ -20,6 +20,9 @@ const getAllowedOrigins = () => {
     "http://localhost:3000",
     "http://localhost:5000",
     "http://localhost:3001",
+    "https://myinspiretag-frontend.vercel.app",
+    "https://myinspiretag.com",
+    "https://www.myinspiretag.com",
     env.clientUrl,
     process.env.FRONTEND_URL,
   ].filter(Boolean);
