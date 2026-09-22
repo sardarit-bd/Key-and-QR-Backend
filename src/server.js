@@ -5,6 +5,7 @@ import env from "./config/env.js";
 import { startMediaCleanupJob } from "./jobs/mediaCleanup.job.js";
 import createAdmin from "./seeders/createAdmin.js";
 import seedCategories from "./seeders/seedCategories.js";
+import seedProductCategories from "./seeders/seedProductCategories.js";
 import logger from "./utils/logger.js";
 
 const startServer = async () => {
@@ -25,6 +26,7 @@ const startServer = async () => {
 
     if (process.env.SEED_CATEGORIES === "true") {
       await seedCategories();
+      await seedProductCategories();
     }
 
     app.listen(env.port, () => {

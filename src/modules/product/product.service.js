@@ -5,6 +5,7 @@ import {
   uploadImageBuffer,
 } from "../../utils/cloudinary.util.js";
 import productRepository from "./product.repository.js";
+import productCategoryRepository from "../productCategory/productCategory.repository.js";
 import mediaCleanupService from "../media-cleanup/mediaCleanup.service.js";
 
 const parseRemoveGallery = (value) => {
@@ -69,9 +70,11 @@ const getAllProducts = async (query) => {
   const limit = Number(query.limit) || 10;
   const search = query.search || "";
   const isTrash = String(query.trash).toLowerCase() === "true";
+  const category = query.categoryId || query.category || undefined;
 
   return productRepository.getAllProducts({
     search,
+    category,
     page,
     limit,
     isActive: !isTrash,
@@ -89,9 +92,22 @@ const getProductById = async (id) => {
 };
 
 const getCategories = async () => {
-  const categories = await productRepository.getCategories();
-  // Frontend expects [{ id, name }], not raw strings.
-  return categories
+  const productCategories = await productCategoryRepository.getAllProductCategories({
+    isActive: true,
+    limit: 100,
+  });
+
+  if (productCategories?.data && productCategories.data.length > 0) {
+    return productCategories.data.map((c) => ({
+      id: c._id.toString(),
+      _id: c._id.toString(),
+      name: c.name,
+      slug: c.slug,
+    }));
+  }
+
+  const legacyCategories = await productRepository.getCategories();
+  return legacyCategories
     .filter(Boolean)
     .map((category) => ({ id: category, name: category }));
 };

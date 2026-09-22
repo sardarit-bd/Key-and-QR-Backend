@@ -1,15 +1,17 @@
 import Product from "../../models/product.model.js";
+import ProductCategory from "../productCategory/productCategory.model.js";
 
 const createProduct = async (payload) => {
   return Product.create(payload);
 };
 
 const getProductById = async (id) => {
-  return Product.findById(id);
+  return Product.findById(id).populate("categoryId", "name slug");
 };
 
 const getAllProducts = async ({
   search,
+  category,
   page = 1,
   limit = 10,
   isActive = true,
@@ -18,17 +20,20 @@ const getAllProducts = async ({
 
   const filter = { isActive };
 
+  if (category && category !== "all") {
+    filter.categoryId = category;
+  }
+
   if (search) {
     filter.$or = [
       { name: { $regex: search, $options: "i" } },
-      { category: { $regex: search, $options: "i" } },
       { brand: { $regex: search, $options: "i" } },
     ];
   }
 
   const [data, total] = await Promise.all([
     Product.find(filter)
-      .populate('categoryId', 'name')
+      .populate("categoryId", "name slug")
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limit),
