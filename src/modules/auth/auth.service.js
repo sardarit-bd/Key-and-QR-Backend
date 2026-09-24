@@ -159,13 +159,23 @@ const claimScannedTagIfExists = async (userId, tagCode) => {
     const tag = await Tag.findOne({ tagCode: normalizedCode });
     if (!tag) {
       logger.warn(`Tag ${normalizedCode} not found during registration claim.`);
-      return null;
+      return {
+        success: false,
+        claimed: false,
+        reason: "TAG_NOT_FOUND",
+        message: "Tag not found.",
+      };
     }
 
     // Strict Ownership Guard: Never reassign an already-owned tag or steal ownership
     if (tag.owner && tag.owner.toString() !== userId.toString()) {
       logger.warn(`Tag ${normalizedCode} is already owned by another user (${tag.owner}). Aborting tag claim.`);
-      return null;
+      return {
+        success: false,
+        claimed: false,
+        reason: "ALREADY_OWNED",
+        message: "This tag is already owned by another user.",
+      };
     }
 
     // 1. Update Tag ownership & activation
@@ -278,6 +288,8 @@ const claimScannedTagIfExists = async (userId, tagCode) => {
     }
 
     return {
+      success: true,
+      claimed: true,
       claimedTag: normalizedCode,
       tagId: tag._id,
     };
@@ -287,7 +299,12 @@ const claimScannedTagIfExists = async (userId, tagCode) => {
       error: error.message,
       stack: error.stack,
     });
-    return null;
+    return {
+      success: false,
+      claimed: false,
+      reason: "ERROR",
+      message: error.message,
+    };
   }
 };
 
@@ -335,15 +352,19 @@ const registerUser = async (payload, metadata = {}) => {
   await storeRefreshToken(createdUser._id, authResponse.refreshToken, metadata);
 
   // 6. Claim scanned tag directly if tagCode was provided (non-blocking)
+  let tagClaimResult = null;
   if (tagCode) {
-    await claimScannedTagIfExists(createdUser._id, tagCode);
+    tagClaimResult = await claimScannedTagIfExists(createdUser._id, tagCode);
   }
 
   // 7. Claim guest resources (non-blocking)
   await claimGuestResourcesIfExists(createdUser._id, createdUser.email);
 
   // 8. Return auth response
-  return authResponse;
+  return {
+    ...authResponse,
+    tagClaimResult,
+  };
 };
 
 /**
