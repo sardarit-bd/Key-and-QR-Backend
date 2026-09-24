@@ -26,6 +26,7 @@ const register = catchAsync(async (req, res) => {
       user: result.user,
       accessToken: result.accessToken,
       refreshToken: result.refreshToken,
+      tagClaimResult: result.tagClaimResult || null,
     },
   });
 });

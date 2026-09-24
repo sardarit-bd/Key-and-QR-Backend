@@ -196,6 +196,9 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
             isClaimable: Boolean(giftInfo?.isClaimable),
         };
 
+        const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+        const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+
         return {
             ...personalPayload,
             canReveal: false,
@@ -203,6 +206,8 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
             dailyLimit: 1,
             usedToday: 1,
             latestQuote: personalPayload,
+            isAlreadyOwned,
+            isOwner,
         };
     }
 
@@ -270,6 +275,9 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         } catch (assignErr) {}
     }
 
+    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+
     return {
         canReveal,
         remainingQuotesToday,
@@ -281,12 +289,16 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         gift: giftInfo,
         isGift: Boolean(giftInfo?.isGift),
         giftOrderId: giftInfo?.orderId || null,
-        isClaimable: Boolean(giftInfo?.isClaimable),
+        isClaimable: Boolean(giftInfo?.isClaimable && !isAlreadyOwned),
         isPersonalMessage: false,
+        isAlreadyOwned,
+        isOwner,
         ...(formattedLatestQuote || {}),
         canReveal,
         remainingQuotesToday,
         latestQuote: formattedLatestQuote,
+        isAlreadyOwned,
+        isOwner,
     };
 };
 
@@ -614,6 +626,9 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         giftInfo,
     });
 
+    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+
     return {
         ...formattedQuote,
         canReveal: canRevealNext,
@@ -621,6 +636,8 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         dailyLimit,
         usedToday: newUsedToday,
         latestQuote: formattedQuote,
+        isAlreadyOwned,
+        isOwner,
         streak: updatedStreak ? {
             current: updatedStreak.current,
             longest: updatedStreak.longest,

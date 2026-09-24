@@ -87,6 +87,10 @@ const activateTag = async (tagCode, userId) => {
     throw new AppError(httpStatus.NOT_FOUND, "Tag not found");
   }
 
+  if (tag.owner && tag.owner.toString() !== userId.toString()) {
+    throw new AppError(httpStatus.BAD_REQUEST, "This tag is already claimed by another account");
+  }
+
   if (!tag.isActive) {
     throw new AppError(httpStatus.BAD_REQUEST, "Tag is disabled");
   }
