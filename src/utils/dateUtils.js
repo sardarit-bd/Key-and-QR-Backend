@@ -87,20 +87,57 @@ export const getNextAvailableAt = (tz = null, baseDate = new Date()) => {
     baseDate = tz;
     tz = null;
   }
+  let timeZone = null;
   let offsetMinutes = null;
 
   if (tz && typeof tz === "object") {
-    if (tz.headers && tz.headers["x-timezone-offset"] !== undefined && tz.headers["x-timezone-offset"] !== "") {
-      offsetMinutes = Number(tz.headers["x-timezone-offset"]);
+    if (tz.headers) {
+      timeZone = tz.headers["x-timezone"] || tz.headers["x-client-timezone"] || null;
+      if (tz.headers["x-timezone-offset"] !== undefined && tz.headers["x-timezone-offset"] !== "") {
+        offsetMinutes = Number(tz.headers["x-timezone-offset"]);
+      }
+    } else if (tz.timeZone || tz.timezone) {
+      timeZone = tz.timeZone || tz.timezone;
     } else if (tz.offsetMinutes !== undefined) {
       offsetMinutes = Number(tz.offsetMinutes);
     }
+  } else if (typeof tz === "string") {
+    const trimmed = tz.trim();
+    if (/^[+-]?\d+$/.test(trimmed)) {
+      offsetMinutes = Number(trimmed);
+    } else if (trimmed) {
+      timeZone = trimmed;
+    }
   } else if (typeof tz === "number" && !isNaN(tz)) {
     offsetMinutes = tz;
-  } else if (typeof tz === "string" && /^[+-]?\d+$/.test(tz.trim())) {
-    offsetMinutes = Number(tz.trim());
   }
 
+  // 1. Try IANA timezone via Intl.DateTimeFormat (exact target local midnight)
+  if (timeZone) {
+    try {
+      const dtf = new Intl.DateTimeFormat("en-US", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hourCycle: "h23",
+      });
+      const parts = Object.fromEntries(dtf.formatToParts(baseDate).map((p) => [p.type, p.value]));
+      const hours = parseInt(parts.hour, 10);
+      const minutes = parseInt(parts.minute, 10);
+      const seconds = parseInt(parts.second, 10);
+      const secondsUntilMidnight = 86400 - (hours * 3600 + minutes * 60 + seconds);
+      const nextMidnight = new Date(baseDate.getTime() + secondsUntilMidnight * 1000 - baseDate.getMilliseconds());
+      return nextMidnight.toISOString();
+    } catch (e) {
+      // Invalid IANA timezone, fall through
+    }
+  }
+
+  // 2. Try timezone offset (in minutes, JS convention: UTC - local)
   if (offsetMinutes !== null && !isNaN(offsetMinutes)) {
     try {
       // Shift baseDate to local time
@@ -116,7 +153,7 @@ export const getNextAvailableAt = (tz = null, baseDate = new Date()) => {
     }
   }
 
-  // Fallback: next UTC midnight
+  // 3. Fallback: next UTC midnight
   const next = new Date(baseDate);
   next.setUTCHours(24, 0, 0, 0);
   return next.toISOString();

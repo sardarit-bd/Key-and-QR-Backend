@@ -13,7 +13,7 @@ import ReceivedQuote from "../received-quote/receivedQuote.model.js";
 import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
 import subscriptionRepository from "../subscription/subscription.repository.js";
 import streakService from "../streak/streak.service.js";
-import { getDayKey } from "../../utils/dateUtils.js";
+import { getDayKey, getNextAvailableAt } from "../../utils/dateUtils.js";
 
 const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag, explicitTodayKey = null, tz = null) => {
     if (!targetUserId || !quoteDoc?._id) return;
@@ -58,9 +58,77 @@ const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag
     }
 };
 
+// Safely resolves audio track from quote root or editorData hierarchy
+const resolveQuoteAudioTrack = (q) => {
+    if (!q) return null;
+    const directAudio = q?.audioTrack || q?.backgroundMusic || q?.audioUrl || q?.audio;
+    if (directAudio) {
+        return typeof directAudio === "string"
+            ? { source: directAudio, autoplay: true, loop: true }
+            : directAudio;
+    }
+
+    const editorData = q?.editorData;
+    if (editorData) {
+        const mobileAudioEl = editorData?.mobile?.elements?.find(
+            (e) => e.type === "audio" && (e.audioData?.source || e.audioData?.url)
+        );
+        if (mobileAudioEl?.audioData) {
+            const data = mobileAudioEl.audioData;
+            return {
+                ...data,
+                source: data.source || data.url,
+                autoplay: data.autoplay ?? true,
+                loop: data.loop ?? true,
+            };
+        }
+
+        const desktopAudioEl = editorData?.desktop?.elements?.find(
+            (e) => e.type === "audio" && (e.audioData?.source || e.audioData?.url)
+        );
+        if (desktopAudioEl?.audioData) {
+            const data = desktopAudioEl.audioData;
+            return {
+                ...data,
+                source: data.source || data.url,
+                autoplay: data.autoplay ?? true,
+                loop: data.loop ?? true,
+            };
+        }
+
+        const rootAudioEl = editorData?.elements?.find(
+            (e) => e.type === "audio" && (e.audioData?.source || e.audioData?.url)
+        );
+        if (rootAudioEl?.audioData) {
+            const data = rootAudioEl.audioData;
+            return {
+                ...data,
+                source: data.source || data.url,
+                autoplay: data.autoplay ?? true,
+                loop: data.loop ?? true,
+            };
+        }
+
+        const editorAudio = editorData?.mobile?.audio || editorData?.desktop?.audio || editorData?.audio;
+        if (editorAudio) {
+            return typeof editorAudio === "string"
+                ? { source: editorAudio, autoplay: true, loop: true }
+                : {
+                    ...editorAudio,
+                    source: editorAudio.source || editorAudio.url,
+                    autoplay: editorAudio.autoplay ?? true,
+                    loop: editorAudio.loop ?? true,
+                };
+        }
+    }
+
+    return null;
+};
+
 // Helper to format consistent quote response with audit status flags
 const formatQuotePayload = (q, srcType, { isNewQuote = true, isAlreadyUnlocked = false, statusMessage = null, giftInfo = null } = {}) => {
     const imageUrl = q?.image?.url || (typeof q?.image === "string" ? q.image : null);
+    const resolvedAudio = resolveQuoteAudioTrack(q);
     return {
         _id: q?._id,
         quote: q?.text || "",
@@ -72,7 +140,7 @@ const formatQuotePayload = (q, srcType, { isNewQuote = true, isAlreadyUnlocked =
         theme: q?.theme || null,
         editorData: q?.editorData || null,
         renderedImages: q?.renderedImages || null,
-        audioTrack: q?.audioTrack || q?.backgroundMusic || null,
+        audioTrack: resolvedAudio,
         allowReuse: typeof q?.allowReuse === "boolean" ? q.allowReuse : true,
         sourceType: srcType,
         isPersonalMessage: false,
@@ -251,6 +319,14 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
 
     const canReveal = usedToday < dailyLimit;
     const remainingQuotesToday = Math.max(0, dailyLimit - usedToday);
+    const dailyLimitReached = !canReveal;
+
+    let nextResetTime = null;
+    let timeUntilResetMs = 0;
+    if (dailyLimitReached) {
+        nextResetTime = getNextAvailableAt(tzOrReq || tz);
+        timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
+    }
 
     // If eligible for a new reveal, latestQuote is null (ready for intermediary reveal screen).
     // If quota is exhausted, latestQuote contains the quote unlocked today.
@@ -264,13 +340,17 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         });
     }
 
-    // Resolve preview category
+    // Resolve preview category and audio
     let previewCategory = formattedLatestQuote?.category || "inspire";
+    let previewAudio = formattedLatestQuote?.audioTrack || null;
     if (!formattedLatestQuote) {
         try {
             const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
             if (tagAssignment?.quote?.category) {
                 previewCategory = tagAssignment.quote.category;
+            }
+            if (tagAssignment?.quote) {
+                previewAudio = resolveQuoteAudioTrack(tagAssignment.quote);
             }
         } catch (assignErr) {}
     }
@@ -282,10 +362,14 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         canReveal,
         remainingQuotesToday,
         dailyLimit,
+        dailyLimitReached,
+        nextResetTime,
+        timeUntilResetMs,
         usedToday,
         latestQuote: formattedLatestQuote,
         tagCode: tag.tagCode,
         category: previewCategory,
+        audioTrack: previewAudio || formattedLatestQuote?.audioTrack || null,
         gift: giftInfo,
         isGift: Boolean(giftInfo?.isGift),
         giftOrderId: giftInfo?.orderId || null,
@@ -294,8 +378,12 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         isAlreadyOwned,
         isOwner,
         ...(formattedLatestQuote || {}),
+        audioTrack: previewAudio || formattedLatestQuote?.audioTrack || null,
         canReveal,
         remainingQuotesToday,
+        dailyLimitReached,
+        nextResetTime,
+        timeUntilResetMs,
         latestQuote: formattedLatestQuote,
         isAlreadyOwned,
         isOwner,
@@ -431,11 +519,17 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         : (await scanRepository.getPublicDailyScan(tag._id, todayKey) ? 1 : 0);
 
     if (usedToday >= dailyLimit) {
-        throw new AppError(
+        const nextResetTime = getNextAvailableAt(tzOrReq || req || tz);
+        const timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
+        const appErr = new AppError(
             httpStatus.TOO_MANY_REQUESTS,
             "You've reached your daily quote limit. Come back tomorrow!",
             "DAILY_LIMIT_REACHED"
         );
+        appErr.dailyLimitReached = true;
+        appErr.nextResetTime = nextResetTime;
+        appErr.timeUntilResetMs = timeUntilResetMs;
+        throw appErr;
     }
 
     // Quote Selection: Priority 1 & 2: Active Quote Assignment (Tag > User)
@@ -618,6 +712,14 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
     const newUsedToday = usedToday + 1;
     const remainingQuotesToday = Math.max(0, dailyLimit - newUsedToday);
     const canRevealNext = remainingQuotesToday > 0;
+    const dailyLimitReached = !canRevealNext;
+
+    let nextResetTime = null;
+    let timeUntilResetMs = 0;
+    if (dailyLimitReached) {
+        nextResetTime = getNextAvailableAt(tzOrReq || req || tz);
+        timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
+    }
 
     const formattedQuote = formatQuotePayload(selectedQuote, quoteSource, {
         isNewQuote: true,
@@ -634,6 +736,9 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         canReveal: canRevealNext,
         remainingQuotesToday,
         dailyLimit,
+        dailyLimitReached,
+        nextResetTime,
+        timeUntilResetMs,
         usedToday: newUsedToday,
         latestQuote: formattedQuote,
         isAlreadyOwned,
