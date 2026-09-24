@@ -40,6 +40,9 @@ const globalErrorHandler = (error, req, res, next) => {
     code: error.errorCode || error.code || undefined,
     nextAllowedAt: error.nextAllowedAt || undefined,
     remainingDays: error.remainingDays || undefined,
+    dailyLimitReached: error.dailyLimitReached || undefined,
+    nextResetTime: error.nextResetTime || undefined,
+    timeUntilResetMs: error.timeUntilResetMs || undefined,
     error: env.nodeEnv === "development" ? error.stack : undefined,
     data: null,
   });
