@@ -8,7 +8,7 @@ import { verifyGuestAccessToken } from "../../utils/jwt.js";
 
 const createCheckout = catchAsync(async (req, res) => {
     // Get userId from optional auth middleware (null for guests)
-    const userId = req.user?.userId || null;
+    const userId = req.user?.userId || req.user?._id || null;
     const isGuest = !userId;
 
     // All validation moved to middleware

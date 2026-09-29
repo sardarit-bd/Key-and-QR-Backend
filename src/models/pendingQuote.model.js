@@ -5,7 +5,10 @@ const pendingQuoteSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: function () {
+        return this.type !== "gift";
+      },
+      default: null,
     },
     order: {
       type: mongoose.Schema.Types.ObjectId,

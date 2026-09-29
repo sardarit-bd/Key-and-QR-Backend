@@ -165,4 +165,19 @@ router.post(
     orderController.rejectGiftMessage
 );
 
+// PUT aliases for gift message moderation
+router.put(
+    "/:id/approve-gift-message",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.approveGiftMessage
+);
+
+router.put(
+    "/:id/reject-gift-message",
+    auth(),
+    roleMiddleware(roles.ADMIN),
+    orderController.rejectGiftMessage
+);
+
 export default router;
