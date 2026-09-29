@@ -5,7 +5,10 @@ const pendingQuoteSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
-      required: true,
+      required: function () {
+        return this.type !== "gift";
+      },
+      default: null,
     },
     order: {
       type: mongoose.Schema.Types.ObjectId,
@@ -20,13 +23,9 @@ const pendingQuoteSchema = new mongoose.Schema(
     },
     category: {
       type: String,
-      enum: [
-        "inspire", "love", "strength", "healing", "faith", "gratitude",
-        "hope", "success", "leadership", "family", "friendship", "kindness",
-        "happiness", "wisdom", "motivation", "self-growth", "positivity",
-        "courage", "mindfulness", "dreams", "life", "peace", "discipline",
-        "purpose", "other",
-      ],
+      required: true,
+      trim: true,
+      maxlength: 100,
       default: "other",
     },
     // Discriminator: "community" for user submissions, "gift" for gift messages attached to orders

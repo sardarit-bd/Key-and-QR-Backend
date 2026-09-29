@@ -13,6 +13,7 @@ import PAYMENT_CONFIG from "../../config/payment.config.js";
 import PAYMENT_STATUS from "../../config/paymentStatus.js";
 import logger from "../../utils/logger.js";
 import { generateGuestAccessToken } from "../../utils/jwt.js";
+import User from "../../models/user.model.js";
 
 // ============================================================
 // HELPER: Build order items from cart
@@ -531,6 +532,26 @@ const createOrder = async (userId, payload, isGuest = false) => {
     };
   }
 
+  // ************* Resolve unified gift message from payload root or items *************
+  const fallbackGiftItem = items.find(
+    (i) =>
+      i.purchaseType === "gift" &&
+      i.giftMessage &&
+      typeof i.giftMessage === "string" &&
+      i.giftMessage.trim() !== ""
+  );
+  const resolvedGiftMessage =
+    payload.giftMessage &&
+      typeof payload.giftMessage === "string" &&
+      payload.giftMessage.trim() !== ""
+      ? payload.giftMessage.trim()
+      : fallbackGiftItem?.giftMessage?.trim() || null;
+
+  const isGiftOrder =
+    payload.purchaseType === "gift" ||
+    Boolean(resolvedGiftMessage) ||
+    items.some((i) => i.purchaseType === "gift");
+
   // ************* Build order data *************
   const orderData = {
     user: userId || null,
@@ -540,11 +561,10 @@ const createOrder = async (userId, payload, isGuest = false) => {
     shippingCost: totals.shippingCost,
     discount: totals.discount,
     grandTotal: totals.grandTotal,
-    purchaseType: payload.purchaseType || "self",
-    giftMessage:
-      payload.purchaseType === "gift" ? payload.giftMessage || null : null,
-    giftMessageStatus: payload.purchaseType === "gift" ? "pending" : "none",
-    giftStatus: payload.purchaseType === "gift" ? "pending_claim" : "none",
+    purchaseType: isGiftOrder ? "gift" : (payload.purchaseType || "self"),
+    giftMessage: isGiftOrder ? resolvedGiftMessage : null,
+    giftMessageStatus: isGiftOrder && resolvedGiftMessage ? "pending" : "none",
+    giftStatus: isGiftOrder ? "pending_claim" : "none",
     shippingAddress,
     isGuestOrder: isGuest,
     // Legacy fields for backward compatibility
@@ -558,10 +578,25 @@ const createOrder = async (userId, payload, isGuest = false) => {
   const order = await orderRepository.createOrder(orderData);
 
   // ************* Handle gift messages *************
-  if (payload.purchaseType === "gift" && payload.giftMessage) {
+  if (orderData.purchaseType === "gift" && orderData.giftMessage) {
+    let effectiveUserId = userId || orderData.user || null;
+    if (!effectiveUserId && (payload.email || orderData.shippingAddress?.email || orderData.guestCustomer?.email)) {
+      try {
+        const customerEmail = (payload.email || orderData.shippingAddress?.email || orderData.guestCustomer?.email)?.toLowerCase().trim();
+        if (customerEmail) {
+          const matchedUser = await User.findOne({ email: customerEmail, isDeleted: { $ne: true } }).select("_id");
+          if (matchedUser) {
+            effectiveUserId = matchedUser._id;
+          }
+        }
+      } catch (err) {
+        logger.warn("Failed to match customer email to user for gift quote:", err);
+      }
+    }
+
     await pendingQuoteRepository.createPendingQuote({
-      text: payload.giftMessage,
-      user: userId,
+      text: orderData.giftMessage,
+      user: effectiveUserId || null,
       order: order._id,
       type: "gift",
       status: "pending",
@@ -2067,7 +2102,7 @@ const completeReturn = async (orderId) => {
     returnReceivedAt: new Date(),
     fulfillmentStatus: "returned",
     isStockDeducted: false,
-    ...( (order.paymentStatus === "paid" || order.paymentStatus === "succeeded") && {
+    ...((order.paymentStatus === "paid" || order.paymentStatus === "succeeded") && {
       paymentStatus: "refunded",
       refundStatus: "completed",
       refundProcessedAt: new Date(),
@@ -2145,7 +2180,11 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
     throw new AppError(404, "Order not found");
   }
 
-  if (!order.giftMessage) {
+  const giftMsg =
+    order.giftMessage ||
+    order.items?.find((i) => i.giftMessage)?.giftMessage;
+
+  if (!giftMsg) {
     throw new AppError(400, "No gift message found");
   }
 
@@ -2158,6 +2197,7 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
   }
 
   return orderRepository.updateOrder(orderId, {
+    giftMessage: order.giftMessage || giftMsg,
     giftMessageStatus: "approved",
     giftMessageReviewedAt: new Date(),
     giftMessageAdminNote: adminNote,
@@ -2174,7 +2214,11 @@ const rejectGiftMessage = async (orderId, adminNote = null) => {
     throw new AppError(404, "Order not found");
   }
 
-  if (!order.giftMessage) {
+  const giftMsg =
+    order.giftMessage ||
+    order.items?.find((i) => i.giftMessage)?.giftMessage;
+
+  if (!giftMsg) {
     throw new AppError(400, "No gift message found");
   }
 
@@ -2187,6 +2231,7 @@ const rejectGiftMessage = async (orderId, adminNote = null) => {
   }
 
   return orderRepository.updateOrder(orderId, {
+    giftMessage: order.giftMessage || giftMsg,
     giftMessageStatus: "rejected",
     giftMessageReviewedAt: new Date(),
     giftMessageAdminNote: adminNote,

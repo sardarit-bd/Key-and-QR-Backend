@@ -10,7 +10,7 @@ const validateRequest = (schemas) => {
   return (req, res, next) => {
     // Backward compatible: if a single schema is passed, validate body only
     if (schemas && schemas.validate) {
-      const { error } = schemas.validate(req.body, {
+      const { error, value } = schemas.validate(req.body, {
         abortEarly: false,
         stripUnknown: true,
       });
@@ -23,6 +23,7 @@ const validateRequest = (schemas) => {
         });
       }
 
+      req.body = value;
       return next();
     }
 
