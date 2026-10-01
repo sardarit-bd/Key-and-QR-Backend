@@ -106,12 +106,47 @@ const quoteSchema = new mongoose.Schema(
         default: null,
       },
     },
+
+    // ============================================================
+    // GIFT & ORDER ATTRIBUTION
+    // ============================================================
+    order: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
+
+    isGift: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    isPersonalGift: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+
+    giftSenderName: {
+      type: String,
+      default: null,
+      trim: true,
+    },
+
+    recipientUser: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true }
 );
 
-// Create index for faster random queries
-quoteSchema.index({ category: 1, isActive: 1 });
+// Create index for faster random queries (excluding private personal gifts)
+quoteSchema.index({ category: 1, isActive: 1, isPersonalGift: 1 });
 
 // Helpful for admin filtering later
 quoteSchema.index({ isActive: 1, allowReuse: 1, createdAt: -1 });

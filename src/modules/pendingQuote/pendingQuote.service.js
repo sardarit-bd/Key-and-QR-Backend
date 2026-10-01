@@ -4,6 +4,10 @@ import pendingQuoteRepository from "./pendingQuote.repository.js";
 import quoteRepository from "../quote/quote.repository.js";
 import orderRepository from "../order/order.repository.js";
 import subscriptionRepository from "../subscription/subscription.repository.js";
+import Quote from "../quote/quote.model.js";
+import QuoteAssignment from "../quoteAssignment/quoteAssignment.model.js";
+import Tag from "../tag/tag.model.js";
+import User from "../../models/user.model.js";
 
 // ---------------------------------------------------------------------------
 // Quote submission limits
@@ -199,6 +203,94 @@ const approveQuote = async (id, adminNote = null) => {
     throw new AppError(httpStatus.BAD_REQUEST, `Quote already ${pendingQuote.status}`);
   }
 
+  // Handle gift message quote approval
+  if (pendingQuote.type === "gift" || pendingQuote.order) {
+    let order = null;
+    if (pendingQuote.order) {
+      order = await orderRepository.findById(pendingQuote.order);
+    }
+    const orderId = order?._id || pendingQuote.order || null;
+
+    // Resolve sender name
+    let senderName = pendingQuote.author || order?.giftSenderName || null;
+    if (!senderName && order?.user) {
+      try {
+        const userDoc = await User.findById(order.user).select("name");
+        senderName = userDoc?.name || null;
+      } catch {}
+    }
+    if (!senderName) {
+      senderName =
+        order?.shippingAddress?.fullName ||
+        order?.guestCustomer?.fullName ||
+        "A loved one";
+    }
+
+    // 1. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
+    let quote = orderId ? await Quote.findOne({ order: orderId, isGift: true }) : null;
+    if (!quote) {
+      quote = await Quote.create({
+        text: pendingQuote.text,
+        category: "gift",
+        author: senderName,
+        giftSenderName: senderName,
+        order: orderId,
+        isGift: true,
+        isPersonalGift: true,
+        recipientUser: order?.giftClaimedBy || null,
+        isActive: true,
+        allowReuse: false,
+      });
+    } else {
+      quote.text = pendingQuote.text;
+      quote.author = senderName;
+      quote.giftSenderName = senderName;
+      quote.isGift = true;
+      quote.isPersonalGift = true;
+      quote.isActive = true;
+      if (order?.giftClaimedBy) {
+        quote.recipientUser = order.giftClaimedBy;
+      }
+      await quote.save();
+    }
+
+    // 2. Mark PendingQuote as approved
+    const updated = await pendingQuoteRepository.approveQuote(id, adminNote);
+
+    // 3. Mark Order.giftMessageStatus = "approved" & sync tags
+    if (orderId) {
+      await orderRepository.updateOrder(orderId, {
+        giftMessage: pendingQuote.text,
+        giftMessageStatus: "approved",
+        giftMessageReviewedAt: new Date(),
+        giftMessageAdminNote: adminNote,
+      });
+
+      if (order && typeof order.getAllTags === "function") {
+        const allTags = await order.getAllTags();
+        if (allTags && allTags.length > 0) {
+          for (const tagId of allTags) {
+            await Tag.findByIdAndUpdate(tagId, { personalMessage: pendingQuote.text });
+            await QuoteAssignment.findOneAndUpdate(
+              { tag: tagId, assignmentType: "tag" },
+              {
+                quote: quote._id,
+                tag: tagId,
+                assignmentType: "tag",
+                priority: 100,
+                isActive: true,
+              },
+              { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+          }
+        }
+      }
+    }
+
+    return updated;
+  }
+
+  // Regular community quote approval
   await quoteRepository.createQuote({
     text: pendingQuote.text,
     category: resolveApprovedCategory(pendingQuote.category),
@@ -207,15 +299,6 @@ const approveQuote = async (id, adminNote = null) => {
   });
 
   const updated = await pendingQuoteRepository.approveQuote(id, adminNote);
-
-  if (pendingQuote.order) {
-    await orderRepository.updateOrder(pendingQuote.order, {
-      giftMessageStatus: "approved",
-      giftMessageReviewedAt: new Date(),
-      giftMessageAdminNote: adminNote,
-    });
-  }
-
   return updated;
 };
 

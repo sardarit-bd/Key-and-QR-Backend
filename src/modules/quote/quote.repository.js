@@ -17,6 +17,7 @@ const getAllQuotes = async ({
   category = null,
   isActive,
   allowReuse,
+  isPersonalGift,
 }) => {
   const skip = (page - 1) * limit;
 
@@ -45,6 +46,11 @@ const getAllQuotes = async ({
   // Reuse filter
   if (allowReuse !== undefined) {
     filter.allowReuse = allowReuse;
+  }
+
+  // Personal gift filter
+  if (isPersonalGift !== undefined) {
+    filter.isPersonalGift = isPersonalGift;
   }
 
   const [data, total] = await Promise.all([
@@ -104,7 +110,7 @@ const toggleActive = async (id) => {
 
 /**Get random quote (with optional category + excludeIds)*/
 const getRandomQuoteByCategory = async (category = null, excludeIds = []) => {
-  const filter = { isActive: true };
+  const filter = { isActive: true, isPersonalGift: { $ne: true } };
 
   if (category) {
     filter.category = { $regex: new RegExp(`^${category}$`, "i") };
@@ -124,7 +130,7 @@ const getRandomQuoteByCategory = async (category = null, excludeIds = []) => {
 
 /**Count active quotes (with optional category) — used for cycle/remaining detection*/
 const countActiveQuotes = async (category = null) => {
-  const filter = { isActive: true };
+  const filter = { isActive: true, isPersonalGift: { $ne: true } };
 
   if (category) {
     filter.category = { $regex: new RegExp(`^${category}$`, "i") };

@@ -34,19 +34,19 @@ router.post(
     try {
       // ✅ IDEMPOTENCY CHECK
       const existingLog = await WebhookLog.findOne({ eventId });
-      
+
       if (existingLog) {
         if (existingLog.status === "completed") {
           logger.info(`✅ Webhook ${eventId} already processed - skipping`);
           return res.json({ received: true, alreadyProcessed: true });
         }
-        
+
         // If failed, retry with backoff
         if (existingLog.status === "failed" && existingLog.retryCount < 3) {
           logger.info(`🔄 Retrying webhook ${eventId}, attempt ${existingLog.retryCount + 1}`);
           await WebhookLog.updateOne(
             { _id: existingLog._id },
-            { 
+            {
               status: "processing",
               $inc: { retryCount: 1 }
             }
@@ -84,16 +84,36 @@ router.post(
           const session = event.data.object;
 
           if (session.mode === "payment") {
-            const orderId = session.metadata.orderId;
-            const paymentIntentId = session.payment_intent;
+            const orderId = session.metadata?.orderId;
+            const paymentIntentId = typeof session.payment_intent === "object"
+              ? session.payment_intent?.id
+              : session.payment_intent;
 
-            // ✅ Use transaction for payment confirmation and tag assignment
+            if (orderId && paymentIntentId) {
+              // ✅ Use transaction for payment confirmation and tag assignment
+              await orderService.confirmPaymentAndAssignTag(
+                orderId,
+                paymentIntentId,
+              );
+            } else if (!orderId) {
+              logger.warn(`⚠️ checkout.session.completed missing metadata.orderId (Session: ${session.id})`);
+            }
+          } else if (session.mode === "subscription") {
+            await handleSubscriptionWebhook(event);
+          }
+        } else if (eventType === "payment_intent.succeeded") {
+          const paymentIntent = event.data.object;
+          const orderId = paymentIntent.metadata?.orderId;
+          const paymentIntentId = paymentIntent.id;
+
+          if (orderId && paymentIntentId) {
+            logger.info(`💳 Processing payment_intent.succeeded fallback for order ${orderId}`);
             await orderService.confirmPaymentAndAssignTag(
               orderId,
               paymentIntentId,
             );
-          } else if (session.mode === "subscription") {
-            await handleSubscriptionWebhook(event);
+          } else {
+            logger.info(`ℹ️ payment_intent.succeeded received without metadata.orderId (${paymentIntentId})`);
           }
         } else if (
           eventType === "customer.subscription.updated" ||
@@ -110,7 +130,7 @@ router.post(
             processedAt: new Date(),
           }
         );
-        
+
         logger.info(`✅ Webhook ${eventId} processed successfully`);
 
       } catch (error) {
