@@ -37,10 +37,10 @@ const annotateFavorites = async (receivedQuotes, userId) => {
     const quoteId = quote?._id?.toString();
     const quoteCat = quote?.category;
     const category = rqObj.category;
-    const isGenericPool = !category || category.slug === "inspire" || rqObj.categorySlug === "inspire";
+    const isGenericPool = !category || category.slug === "inspire" || category.slug === "inspiration" || rqObj.categorySlug === "inspire" || rqObj.categorySlug === "inspiration";
 
     let resolvedCategory = category;
-    if (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire") {
+    if (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration") {
       resolvedCategory = {
         ...(category && typeof category === 'object' ? (category.toObject ? category.toObject() : category) : {}),
         name: quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1),
@@ -185,15 +185,15 @@ const readAgain = async (receivedQuoteId, userId) => {
   const quote = receivedQuote.quote;
   const category = receivedQuote.category;
   const quoteCat = quote?.category;
-  const isGenericPool = !category || category.slug === "inspire" || receivedQuote.categorySlug === "inspire";
+  const isGenericPool = !category || category.slug === "inspire" || category.slug === "inspiration" || receivedQuote.categorySlug === "inspire" || receivedQuote.categorySlug === "inspiration";
 
-  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
     ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
-    : (category?.name || receivedQuote.categorySlug || "Inspire");
+    : (category?.name || receivedQuote.categorySlug || "Inspiration");
 
-  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
     ? quoteCat.toLowerCase()
-    : (category?.slug || receivedQuote.categorySlug || "inspire");
+    : (category?.slug || receivedQuote.categorySlug || "inspiration");
 
   return {
     receivedQuoteId: receivedQuote._id,
@@ -259,7 +259,7 @@ const resolvePlan = async (userId) => {
 // The Inspire category is special: it pools quotes from every active category.
 // Returns the Quote category string filter for selection (null = all active quotes).
 const resolveQuoteCategory = (requestedSlug, isPremium, category) => {
-  if (requestedSlug === "inspire") {
+  if (requestedSlug === "inspire" || requestedSlug === "inspiration") {
     if (!category) {
       throw new AppError(
         httpStatus.NOT_FOUND,
@@ -318,8 +318,9 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
   const dayKey = getDayKey(tz);
 
   // 1. Category lookup
-  const slug = categorySlug || "inspire";
-  const category = await categoryRepository.findBySlug(slug);
+  const normalizedSlug = (categorySlug === "inspire" || !categorySlug) ? "inspiration" : categorySlug;
+  const category = (await categoryRepository.findBySlug(normalizedSlug)) 
+    || (await categoryRepository.findBySlug("inspire"));
 
   if (!category) {
     throw new AppError(
@@ -337,6 +338,7 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
     );
   }
 
+  const slug = category.slug || normalizedSlug;
   const quoteCategory = resolveQuoteCategory(slug, isPremium, category);
 
   // 2. Daily limit
@@ -391,13 +393,13 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
 
         const remainingToday = dailyLimit - 1;
         const quoteCat = scanQuote.category;
-        const isGenericPool = slug === "inspire" || !category || category.slug === "inspire";
+        const isGenericPool = slug === "inspire" || slug === "inspiration" || !category || category.slug === "inspire" || category.slug === "inspiration";
 
-        const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+        const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
           ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
           : category.name;
 
-        const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+        const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
           ? quoteCat.toLowerCase()
           : category.slug;
 
@@ -508,13 +510,13 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
   const remainingToday = dailyLimit - (todayCount + 1);
 
   const quoteCat = selection.quote?.category;
-  const isGenericPool = slug === "inspire" || !category || category.slug === "inspire";
+  const isGenericPool = slug === "inspire" || slug === "inspiration" || !category || category.slug === "inspire" || category.slug === "inspiration";
 
-  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
     ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
     : category.name;
 
-  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire")
+  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
     ? quoteCat.toLowerCase()
     : category.slug;
 
