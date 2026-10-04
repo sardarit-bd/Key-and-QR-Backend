@@ -15,6 +15,13 @@ const receivedQuoteSchema = new mongoose.Schema(
       required: true,
     },
 
+    order: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Order",
+      default: null,
+      index: true,
+    },
+
     category: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Category",

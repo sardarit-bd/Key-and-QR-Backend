@@ -17,6 +17,8 @@ import User from "../../models/user.model.js";
 import Quote from "../quote/quote.model.js";
 import QuoteAssignment from "../quoteAssignment/quoteAssignment.model.js";
 import PendingQuote from "../../models/pendingQuote.model.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
+import { getDayKey } from "../../utils/dateUtils.js";
 
 // ============================================================
 // HELPER: Build order items from cart
@@ -564,6 +566,13 @@ const createOrder = async (userId, payload, isGuest = false) => {
       ? payload.giftMessage.trim()
       : fallbackGiftItem?.giftMessage?.trim() || null;
 
+  const resolvedGiftSenderName =
+    payload.giftSenderName && typeof payload.giftSenderName === "string" && payload.giftSenderName.trim() !== ""
+      ? payload.giftSenderName.trim()
+      : (payload.senderName && typeof payload.senderName === "string" && payload.senderName.trim() !== ""
+          ? payload.senderName.trim()
+          : null);
+
   const isGiftOrder =
     payload.purchaseType === "gift" ||
     Boolean(resolvedGiftMessage) ||
@@ -582,6 +591,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
     giftMessage: isGiftOrder ? resolvedGiftMessage : null,
     giftMessageStatus: isGiftOrder && resolvedGiftMessage ? "pending" : "none",
     giftStatus: isGiftOrder ? "pending_claim" : "none",
+    giftSenderName: isGiftOrder ? (resolvedGiftSenderName || null) : null,
     shippingAddress,
     isGuestOrder: isGuest,
     // Legacy fields for backward compatibility
@@ -616,6 +626,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
       user: effectiveUserId || null,
       order: order._id,
       type: "gift",
+      author: resolvedGiftSenderName || null,
       status: "pending",
       category: "other",
     });
@@ -1087,6 +1098,43 @@ const claimGiftOrder = async (orderId, userId) => {
         { order: orderId },
         { recipientUser: userId }
       ).session(session);
+
+      // Immediately insert an initial ReceivedQuote record for the recipient user
+      try {
+        const giftQuote = await Quote.findOne({ order: orderId, isGift: true }).session(session);
+        if (giftQuote) {
+          const existingReceived = await ReceivedQuote.findOne({
+            user: userId,
+            quote: giftQuote._id,
+          }).session(session);
+
+          if (!existingReceived) {
+            const todayKey = getDayKey();
+            await ReceivedQuote.create(
+              [
+                {
+                  user: userId,
+                  quote: giftQuote._id,
+                  order: orderId,
+                  categorySlug: "gift",
+                  receivedAt: new Date(),
+                  source: "personal",
+                  dayKey: todayKey,
+                  isRead: true,
+                  metadata: {
+                    orderId: orderId.toString(),
+                    sourceType: "personal_gift",
+                    giftSenderName: giftQuote.giftSenderName || giftQuote.author || null,
+                  },
+                },
+              ],
+              { session }
+            );
+          }
+        }
+      } catch (recvErr) {
+        logger.warn("Failed to create initial ReceivedQuote in claimGiftOrder:", recvErr);
+      }
 
       return updatedOrder;
     });
@@ -2263,6 +2311,14 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
       "A loved one";
   }
 
+  // Build structured dedication metadata
+  const giftDedication = {
+    text: giftMsg,
+    senderName,
+    recipientName: order.shippingAddress?.fullName || null,
+    orderId: order._id,
+  };
+
   // 1. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
   let quote = await Quote.findOne({ order: order._id, isGift: true });
   if (!quote) {
@@ -2271,7 +2327,9 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
       category: "gift",
       author: senderName,
       giftSenderName: senderName,
+      user: order.user || null,
       order: order._id,
+      giftDedication,
       isGift: true,
       isPersonalGift: true,
       recipientUser: order.giftClaimedBy || null,
@@ -2282,6 +2340,10 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
     quote.text = giftMsg;
     quote.author = senderName;
     quote.giftSenderName = senderName;
+    if (order.user && !quote.user) {
+      quote.user = order.user;
+    }
+    quote.giftDedication = giftDedication;
     quote.isGift = true;
     quote.isPersonalGift = true;
     quote.isActive = true;
@@ -2301,12 +2363,13 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
     }
   );
 
-  // 3. Mark Order.giftMessageStatus = "approved"
+  // 3. Mark Order.giftMessageStatus = "approved" and save quote back-reference
   const updatedOrder = await orderRepository.updateOrder(orderId, {
     giftMessage: order.giftMessage || giftMsg,
     giftMessageStatus: "approved",
     giftMessageReviewedAt: new Date(),
     giftMessageAdminNote: adminNote,
+    quote: quote._id,
   });
 
   // 4. If physical tags are assigned to this order, sync tag.personalMessage and create QuoteAssignment (priority: 100) linked to the tag

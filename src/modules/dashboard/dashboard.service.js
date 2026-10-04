@@ -159,13 +159,45 @@ class DashboardService {
                 resolvedCategorySlug = quoteCat.toLowerCase();
             }
 
+            const isGiftQuote = Boolean(
+                quote?.isGift ||
+                quote?.isPersonalGift ||
+                quote?.order ||
+                latestReceivedQuote?.order ||
+                latestReceivedQuote?.source === "personal"
+            );
+
+            const fallbackDedicationText =
+                text ||
+                quote?.text ||
+                quote?.editorData?.desktop?.elements?.find(el => el.id === 'el_init_text' || el.type === 'text')?.textData?.content ||
+                quote?.editorData?.mobile?.elements?.find(el => el.id === 'el_init_text' || el.type === 'text')?.textData?.content ||
+                null;
+
+            const orderId = quote?.order ? quote.order.toString() : (latestReceivedQuote?.order ? latestReceivedQuote.order.toString() : null);
+
+            const giftDedication = quote?.giftDedication || (isGiftQuote ? {
+                text: fallbackDedicationText,
+                senderName: quote?.giftSenderName || quote?.author || "Lmao",
+                recipientName: null,
+                orderId: orderId || null
+            } : null);
+
+            const giftSenderName = quote?.giftSenderName || giftDedication?.senderName || quote?.author || "Lmao";
+
             latestInspiration = {
                 hasReceivedQuote: true,
+                isGift: isGiftQuote,
+                isPersonalGift: isGiftQuote,
+                giftDedication,
+                giftSenderName,
+                orderId,
                 latestQuote: {
                     id: latestReceivedQuote._id,
                     quoteId: quote?._id || null,
-                    previewText: this.buildPreviewText(text),
-                    fullText: text,
+                    text: text || fallbackDedicationText,
+                    previewText: this.buildPreviewText(text || fallbackDedicationText),
+                    fullText: text || fallbackDedicationText,
                     author: quote?.author || "InspireTag",
                     description: quote?.description || null,
                     image: quote?.image || null,
@@ -182,6 +214,11 @@ class DashboardService {
                     receivedAt: latestReceivedQuote.receivedAt,
                     favorite: isFavorite,
                     favoriteId: favoriteMap.get(quote?._id.toString()) || null,
+                    isGift: isGiftQuote,
+                    isPersonalGift: isGiftQuote,
+                    giftDedication,
+                    giftSenderName,
+                    orderId,
                 },
             };
         }

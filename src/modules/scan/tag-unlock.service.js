@@ -34,15 +34,17 @@ const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag
             const created = await receivedQuoteRepository.createReceivedQuote({
                 user: targetUserId,
                 quote: quoteDoc._id,
+                order: quoteDoc.order || tag?.assignedOrderId || null,
                 category: categoryDoc?._id || null,
                 categorySlug: categoryDoc?.slug || (quoteDoc.category ? quoteDoc.category.toString().toLowerCase() : "inspire"),
                 receivedAt: new Date(),
-                source: "scan",
+                source: quoteSource === "personal" ? "personal" : "scan",
                 dayKey: todayKey,
                 isRead: true,
                 metadata: {
                     tagCode: tag?.tagCode,
                     tagId: tag?._id,
+                    orderId: quoteDoc.order ? quoteDoc.order.toString() : (tag?.assignedOrderId ? tag.assignedOrderId.toString() : null),
                     sourceType: quoteSource,
                 },
             });
@@ -314,12 +316,12 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         } catch {}
     }
 
-    const shouldShowDedicationAsMain = giftDedication && (!isTagClaimed || !hasViewedDedication) && (giftInfo?.isClaimable || !isTagClaimed);
+    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+    const shouldShowDedicationAsMain = giftDedication && !hasViewedDedication && (!isTagClaimed || !isAlreadyOwned);
 
     // Initial gift dedication scan (unclaimed or not yet viewed)
     if (shouldShowDedicationAsMain) {
-        const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-        const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
 
         const personalPayload = {
             _id: giftQuote?._id || null,
@@ -428,9 +430,6 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
             }
         } catch (assignErr) {}
     }
-
-    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
 
     return {
         canReveal,
@@ -544,7 +543,9 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         } catch {}
     }
 
-    const shouldShowDedicationAsMain = giftDedication && (!isTagClaimed || !hasViewedDedication) && (giftInfo?.isClaimable || !isTagClaimed);
+    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+    const shouldShowDedicationAsMain = giftDedication && !hasViewedDedication && (!isTagClaimed || !isAlreadyOwned);
 
     // Initial gift dedication scan (unclaimed or not yet viewed)
     if (shouldShowDedicationAsMain) {
@@ -565,9 +566,6 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
                 });
             } catch (err) {}
         }
-
-        const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-        const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
 
         const personalPayload = {
             _id: giftQuote?._id || null,
@@ -651,8 +649,8 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
     // Avoid trapping user on static assignment if already received on prior calendar day
     let bypassedAssignedQuoteId = null;
     if (assignedQuote && (assignedQuote.isGift || assignedQuote.isPersonalGift)) {
-        // If this assignment is the personal gift dedication, and user has claimed or already viewed it, bypass it to regular rotation
-        if (isTagClaimed || hasViewedDedication) {
+        // If this assignment is the personal gift dedication, ONLY bypass once user has viewed it
+        if (hasViewedDedication) {
             bypassedAssignedQuoteId = assignedQuote._id;
             assignedQuote = null;
             assignmentSourceType = null;
@@ -836,9 +834,6 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         giftInfo,
         giftDedication,
     });
-
-    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
 
     return {
         ...formattedQuote,

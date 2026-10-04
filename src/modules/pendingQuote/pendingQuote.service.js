@@ -226,6 +226,14 @@ const approveQuote = async (id, adminNote = null) => {
         "A loved one";
     }
 
+    // Build structured dedication metadata
+    const giftDedication = {
+      text: pendingQuote.text,
+      senderName,
+      recipientName: order?.shippingAddress?.fullName || null,
+      orderId: orderId || null,
+    };
+
     // 1. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
     let quote = orderId ? await Quote.findOne({ order: orderId, isGift: true }) : null;
     if (!quote) {
@@ -234,7 +242,9 @@ const approveQuote = async (id, adminNote = null) => {
         category: "gift",
         author: senderName,
         giftSenderName: senderName,
+        user: order?.user || pendingQuote.user || null,
         order: orderId,
+        giftDedication,
         isGift: true,
         isPersonalGift: true,
         recipientUser: order?.giftClaimedBy || null,
@@ -245,6 +255,10 @@ const approveQuote = async (id, adminNote = null) => {
       quote.text = pendingQuote.text;
       quote.author = senderName;
       quote.giftSenderName = senderName;
+      if ((order?.user || pendingQuote.user) && !quote.user) {
+        quote.user = order?.user || pendingQuote.user;
+      }
+      quote.giftDedication = giftDedication;
       quote.isGift = true;
       quote.isPersonalGift = true;
       quote.isActive = true;
@@ -257,13 +271,14 @@ const approveQuote = async (id, adminNote = null) => {
     // 2. Mark PendingQuote as approved
     const updated = await pendingQuoteRepository.approveQuote(id, adminNote);
 
-    // 3. Mark Order.giftMessageStatus = "approved" & sync tags
+    // 3. Mark Order.giftMessageStatus = "approved", sync quote back-reference & sync tags
     if (orderId) {
       await orderRepository.updateOrder(orderId, {
         giftMessage: pendingQuote.text,
         giftMessageStatus: "approved",
         giftMessageReviewedAt: new Date(),
         giftMessageAdminNote: adminNote,
+        quote: quote._id,
       });
 
       if (order && typeof order.getAllTags === "function") {
@@ -295,6 +310,7 @@ const approveQuote = async (id, adminNote = null) => {
     text: pendingQuote.text,
     category: resolveApprovedCategory(pendingQuote.category),
     author: pendingQuote.author || null,
+    user: pendingQuote.user || null,
     isActive: true,
   });
 

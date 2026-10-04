@@ -214,6 +214,19 @@ const orderSchema = new mongoose.Schema(
             default: null,
         },
 
+        giftSenderName: {
+            type: String,
+            default: null,
+            trim: true,
+        },
+
+        quote: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Quote",
+            default: null,
+            index: true,
+        },
+
         giftClaimedAt: {
             type: Date,
             default: null,

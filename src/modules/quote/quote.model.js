@@ -135,6 +135,24 @@ const quoteSchema = new mongoose.Schema(
       trim: true,
     },
 
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+      index: true,
+    },
+
+    giftDedication: {
+      text: { type: String, default: null, trim: true },
+      senderName: { type: String, default: null, trim: true },
+      recipientName: { type: String, default: null, trim: true },
+      orderId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Order",
+        default: null,
+      },
+    },
+
     recipientUser: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",

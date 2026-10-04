@@ -1,6 +1,6 @@
 import ReceivedQuote from "./receivedQuote.model.js";
 
-const QUOTE_POPULATE_FIELDS = "text category author description image theme allowReuse editorData renderedImages isActive";
+const QUOTE_POPULATE_FIELDS = "text category author description image theme allowReuse editorData renderedImages isActive order isGift isPersonalGift giftSenderName recipientUser giftDedication user";
 
 const createReceivedQuote = (payload) => {
   return ReceivedQuote.create(payload);
