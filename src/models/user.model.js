@@ -88,6 +88,18 @@ const userSchema = new mongoose.Schema(
       sparse: true,
     },
 
+    // Subscription status
+    isPremium: {
+      type: Boolean,
+      default: false,
+    },
+
+    subscriptionTier: {
+      type: String,
+      enum: ["free", "subscriber"],
+      default: "free",
+    },
+
     passwordResetToken: {
       type: String,
       default: null,

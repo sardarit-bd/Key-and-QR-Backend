@@ -117,7 +117,10 @@ router.post(
           }
         } else if (
           eventType === "customer.subscription.updated" ||
-          eventType === "customer.subscription.deleted"
+          eventType === "customer.subscription.deleted" ||
+          eventType === "invoice.paid" ||
+          eventType === "invoice.payment_succeeded" ||
+          eventType === "invoice.payment_failed"
         ) {
           await handleSubscriptionWebhook(event);
         }

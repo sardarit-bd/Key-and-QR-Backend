@@ -357,11 +357,15 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         };
     }
 
-    // Resolve user tier and daily limit (free: 1, subscriber: 3)
+    const authUserId = user?.userId || user?._id || user?.id || null;
+
+    // Resolve user tier and daily limit (free: 1, subscriber: 3).
+    // CRITICAL: Only an actively logged-in subscriber is granted the subscriber 3/day tier.
+    // Unauthenticated/guest visitors on a physical tag get the standard 1/day quota.
     let isSubscriber = false;
-    if (targetUserId) {
+    if (authUserId) {
         try {
-            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(targetUserId);
+            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(authUserId);
             isSubscriber = Boolean(activeSubs && activeSubs.length > 0);
         } catch (subErr) {
             // fallback free
@@ -369,27 +373,62 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
     }
     const dailyLimit = isSubscriber ? 3 : 1;
 
-    // Check today's usage WITHOUT creating any records
+    // Check today's usage and active quote for this tag WITHOUT creating duplicate records
     let usedToday = 0;
     let latestRevealedQuote = null;
     let latestSource = "random";
 
-    if (targetUserId) {
-        usedToday = await receivedQuoteRepository.countToday(targetUserId, todayKey);
-        if (usedToday > 0) {
-            const todayQuotes = await receivedQuoteRepository.getTodayReceivedQuotes(targetUserId, todayKey);
-            if (todayQuotes && todayQuotes.length > 0 && todayQuotes[0]?.quote) {
-                latestRevealedQuote = todayQuotes[0].quote;
-                latestSource = todayQuotes[0].source || "scan";
+    // 1. First, check if this physical tag already has an unlocked quote today or in the rolling 24-hour window
+    const publicDailyScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    if (publicDailyScan?.quote && publicDailyScan.quote.isActive !== false) {
+        usedToday = 1;
+        latestRevealedQuote = publicDailyScan.quote;
+        latestSource = publicDailyScan.sourceType || "scan";
+    }
+
+    // 2. If user is authenticated, check their own received quotes today
+    if (authUserId) {
+        const userUsage = await receivedQuoteRepository.countToday(authUserId, todayKey);
+        if (userUsage > 0) {
+            usedToday = Math.max(usedToday, userUsage);
+            const userQuotes = await receivedQuoteRepository.getTodayReceivedQuotes(authUserId, todayKey);
+            if (userQuotes && userQuotes.length > 0 && userQuotes[0]?.quote) {
+                if (!latestRevealedQuote || isSubscriber) {
+                    latestRevealedQuote = userQuotes[0].quote;
+                    latestSource = userQuotes[0].source || "scan";
+                }
             }
         }
     } else {
-        const publicScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
-        if (publicScan?.quote && publicScan.quote.isActive !== false) {
-            usedToday = 1;
-            latestRevealedQuote = publicScan.quote;
-            latestSource = publicScan.sourceType || "random";
+        // 3. Unauthenticated / Logged-out scan:
+        // If no tag scan was found yet, check if the tag owner received a quote today
+        if (!latestRevealedQuote && tag.owner) {
+            try {
+                const ownerQuotes = await receivedQuoteRepository.getTodayReceivedQuotes(tag.owner, todayKey);
+                if (ownerQuotes && ownerQuotes.length > 0 && ownerQuotes[0]?.quote) {
+                    latestRevealedQuote = ownerQuotes[0].quote;
+                    latestSource = ownerQuotes[0].source || "scan";
+                    usedToday = 1;
+
+                    // Bridge to ScanHistory so all subsequent guest scans see it immediately
+                    try {
+                        await scanRepository.createPublicScan({
+                            tag: tag._id,
+                            quote: latestRevealedQuote._id,
+                            category: latestRevealedQuote.category || "inspire",
+                            scanDateKey: todayKey,
+                            sourceType: latestSource,
+                        });
+                    } catch (bridgeErr) {}
+                }
+            } catch (err) {}
         }
+    }
+
+    // For unauthenticated scans, if an active quote already exists for this tag today,
+    // mark usedToday = 1 so the guest cannot reveal a second, different quote
+    if (!authUserId && latestRevealedQuote) {
+        usedToday = 1;
     }
 
     const canReveal = usedToday < dailyLimit;
@@ -403,10 +442,10 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
     }
 
-    // If eligible for a new reveal, latestQuote is null (ready for intermediary reveal screen).
-    // If quota is exhausted, latestQuote contains the quote unlocked today.
+    // If quota is exhausted OR if user is unauthenticated and tag is already unlocked,
+    // latestQuote contains the quote unlocked today so the frontend directly displays it.
     let formattedLatestQuote = null;
-    if (!canReveal && latestRevealedQuote) {
+    if (latestRevealedQuote && (!canReveal || !authUserId)) {
         formattedLatestQuote = formatQuotePayload(latestRevealedQuote, latestSource, {
             isNewQuote: false,
             isAlreadyUnlocked: true,
@@ -600,20 +639,25 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         };
     }
 
-    // Resolve tier & limits
+    // Resolve tier & limits (only authenticated users obtain subscriber quota)
     let isSubscriber = false;
-    if (targetUserId) {
+    const authUserId = user?.userId || user?._id || user?.id || null;
+    if (authUserId) {
         try {
-            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(targetUserId);
+            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(authUserId);
             isSubscriber = Boolean(activeSubs && activeSubs.length > 0);
         } catch (subErr) {}
     }
     const dailyLimit = isSubscriber ? 3 : 1;
 
     // Quota eligibility check
-    const usedToday = targetUserId
-        ? await receivedQuoteRepository.countToday(targetUserId, todayKey)
-        : (await scanRepository.getPublicDailyScan(tag._id, todayKey) ? 1 : 0);
+    let usedToday = 0;
+    if (authUserId) {
+        usedToday = await receivedQuoteRepository.countToday(authUserId, todayKey);
+    } else {
+        const publicDailyScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+        usedToday = (publicDailyScan?.quote && publicDailyScan.quote.isActive !== false) ? 1 : 0;
+    }
 
     if (usedToday >= dailyLimit) {
         const nextResetTime = getNextAvailableAt(tzOrReq || req || tz);

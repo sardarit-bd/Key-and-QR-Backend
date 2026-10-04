@@ -6,6 +6,9 @@ import subscriptionRepository from "./subscription.repository.js";
 import tagRepository from "../tag/tag.repository.js";
 import subscriptionRules from "./subscription.config.js";
 import authRepository from "../auth/auth.repository.js";
+import sendEmail from "../../utils/sendEmail.js";
+import logger from "../../utils/logger.js";
+import User from "../../models/user.model.js";
 
 const mapStripeStatusToLocal = (status) => {
   const allowed = [
@@ -275,20 +278,108 @@ const getLatestInvoice = async (userId) => {
 };
 
 const activateFromCheckoutSession = async (session) => {
-  const userId = session.metadata?.userId;
-  const tagId = session.metadata?.tagId;
+  let userId = session.metadata?.userId || null;
+  let tagId = session.metadata?.tagId || null;
   const preferredCategory = session.metadata?.preferredCategory || null;
 
-  if (!userId || !tagId) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Missing checkout metadata");
+  // Retrieve full session with subscription and customer expanded
+  let fullSession = session;
+  try {
+    fullSession = await stripe.checkout.sessions.retrieve(session.id, {
+      expand: ["subscription", "customer"],
+    });
+  } catch (err) {
+    logger.warn(`Could not retrieve full checkout session (${session.id}): ${err.message}. Using event payload.`);
   }
 
-  const fullSession = await stripe.checkout.sessions.retrieve(session.id, {
-    expand: ["subscription", "customer"],
-  });
-
   const stripeSubscription = fullSession.subscription;
-  const customerId = fullSession.customer?.id || null;
+  const customerId =
+    (typeof fullSession.customer === "object" ? fullSession.customer?.id : fullSession.customer) ||
+    session.customer ||
+    null;
+  const customerEmail =
+    fullSession.customer_details?.email ||
+    fullSession.customer_email ||
+    session.customer_details?.email ||
+    session.customer_email ||
+    null;
+
+  // Fallback 1: Resolve existing subscription document by session ID
+  let existingSub = null;
+  if (!userId || !tagId) {
+    existingSub = await subscriptionRepository.findByCheckoutSessionId(session.id);
+    if (existingSub) {
+      if (!userId && existingSub.user) {
+        userId = (existingSub.user._id || existingSub.user).toString();
+      }
+      if (!tagId && existingSub.tag) {
+        tagId = (existingSub.tag._id || existingSub.tag).toString();
+      }
+    }
+  }
+
+  // Fallback 2: Resolve user by customerId
+  let userDoc = null;
+  if (!userId && customerId) {
+    userDoc = await User.findOne({ stripeCustomerId: customerId });
+    if (userDoc) {
+      userId = userDoc._id.toString();
+    }
+  }
+
+  // Fallback 3: Resolve user by customerEmail
+  if (!userId && customerEmail) {
+    userDoc = await User.findOne({ email: customerEmail.toLowerCase().trim() });
+    if (userDoc) {
+      userId = userDoc._id.toString();
+    }
+  }
+
+  if (!userId) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Unable to resolve user for subscription activation");
+  }
+
+  if (!userDoc) {
+    userDoc = await User.findById(userId);
+  }
+
+  // Fallback for tagId if still missing
+  if (!tagId) {
+    if (session.metadata?.tagCode) {
+      const tag = await tagRepository.findByTagCode(session.metadata.tagCode);
+      if (tag) tagId = tag._id.toString();
+    }
+    if (!tagId) {
+      const userTags = await tagRepository.findTagsByOwner(userId);
+      if (userTags && userTags.length > 0) {
+        tagId = userTags[0]._id.toString();
+      } else {
+        const uniqueCode = `TAG-${userId.toString().slice(-6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
+        const newTag = await tagRepository.createTag({
+          tagCode: uniqueCode,
+          owner: userId,
+          isActive: true,
+          isActivated: true,
+          activatedAt: new Date(),
+          subscriptionType: "subscriber",
+        });
+        tagId = newTag._id.toString();
+      }
+    }
+  }
+
+  const rawStripeStatus = stripeSubscription?.status || "active";
+  const mappedStatus = mapStripeStatusToLocal(rawStripeStatus);
+  const resolvedStatus = ["active", "trialing"].includes(mappedStatus) ? mappedStatus : "active";
+  const stripeSubId = typeof stripeSubscription === "object" ? stripeSubscription?.id : stripeSubscription;
+
+  const currentPeriodStart = stripeSubscription?.items?.data?.[0]?.current_period_start
+    ? new Date(stripeSubscription.items.data[0].current_period_start * 1000)
+    : (stripeSubscription?.current_period_start ? new Date(stripeSubscription.current_period_start * 1000) : new Date());
+
+  const currentPeriodEnd = stripeSubscription?.items?.data?.[0]?.current_period_end
+    ? new Date(stripeSubscription.items.data[0].current_period_end * 1000)
+    : (stripeSubscription?.current_period_end ? new Date(stripeSubscription.current_period_end * 1000) : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000));
 
   const updated = await subscriptionRepository.upsertSubscriptionByUserAndTag(
     userId,
@@ -297,31 +388,75 @@ const activateFromCheckoutSession = async (session) => {
       user: userId,
       tag: tagId,
       subscriptionType: "subscriber",
-      status: mapStripeStatusToLocal(stripeSubscription.status),
+      status: resolvedStatus,
       preferredCategory,
-      stripeCustomerId: customerId,
-      stripeSubscriptionId: stripeSubscription.id,
+      stripeCustomerId: customerId || userDoc?.stripeCustomerId,
+      stripeSubscriptionId: stripeSubId,
       stripeCheckoutSessionId: session.id,
       stripePriceId:
-        stripeSubscription.items?.data?.[0]?.price?.id || env.stripeSubscriptionPriceId,
-      currentPeriodStart: stripeSubscription.items?.data?.[0]?.current_period_start
-        ? new Date(stripeSubscription.items.data[0].current_period_start * 1000)
-        : null,
-      currentPeriodEnd: stripeSubscription.items?.data?.[0]?.current_period_end
-        ? new Date(stripeSubscription.items.data[0].current_period_end * 1000)
-        : null,
-      cancelAtPeriodEnd: stripeSubscription.cancel_at_period_end || false,
+        stripeSubscription?.items?.data?.[0]?.price?.id || env.stripeSubscriptionPriceId,
+      currentPeriodStart,
+      currentPeriodEnd,
+      cancelAtPeriodEnd: stripeSubscription?.cancel_at_period_end || false,
     }
   );
 
-  if (customerId) {
-    // Using authRepository.updateUser
-    await authRepository.updateUser(userId, { stripeCustomerId: customerId });
-  }
+  // Immediately update User model so profile and queries reflect subscriber tier
+  await User.findByIdAndUpdate(userId, {
+    isPremium: true,
+    subscriptionTier: "subscriber",
+    ...(customerId ? { stripeCustomerId: customerId } : {}),
+  });
 
   await tagRepository.updateTag(tagId, {
     subscriptionType: "subscriber",
   });
+
+  // Dispatch Welcome/Confirmation Email (non-blocking)
+  try {
+    const recipientEmail = userDoc?.email || customerEmail;
+    if (recipientEmail) {
+      await sendEmail({
+        to: recipientEmail,
+        subject: "Welcome to MyInspireTag Premium!",
+        html: `
+          <div style="font-family: Arial, sans-serif; background-color: #121212; color: #ffffff; padding: 32px; border-radius: 12px; max-width: 600px; margin: 0 auto; border: 1px solid rgba(234, 179, 8, 0.3);">
+            <h1 style="color: #eab308; margin-top: 0; font-size: 24px;">✨ Welcome to MyInspireTag Premium!</h1>
+            <p style="color: #d1d5db; font-size: 15px; line-height: 1.6;">
+              Hi ${userDoc?.name || "Friend"},
+            </p>
+            <p style="color: #d1d5db; font-size: 15px; line-height: 1.6;">
+              Thank you for subscribing! Your Premium membership is now <strong>active</strong>.
+            </p>
+            <div style="background-color: #1c1917; padding: 20px; border-radius: 8px; margin: 24px 0; border: 1px solid #292524;">
+              <h3 style="color: #facc15; margin-top: 0; font-size: 16px;">Your Premium Privileges:</h3>
+              <ul style="color: #e5e7eb; font-size: 14px; line-height: 1.8; margin-bottom: 0; padding-left: 20px;">
+                <li>Unlimited daily inspirational quote unlocks (up to 3 daily quotes).</li>
+                <li>Exclusive premium categories & mood themes.</li>
+                <li>Full audio experiences with personalized dedication access.</li>
+                <li>Save unlimited favorites and track your inspiration streak.</li>
+              </ul>
+            </div>
+            <p style="color: #9ca3af; font-size: 13px; line-height: 1.5;">
+              You can manage your subscription anytime from your account dashboard.
+            </p>
+            <div style="margin-top: 28px; text-align: center;">
+              <a href="${env.clientUrl}/dashboard/user" style="background-color: #eab308; color: #000000; padding: 12px 28px; border-radius: 8px; font-weight: bold; text-decoration: none; display: inline-block;">
+                Go to Dashboard
+              </a>
+            </div>
+            <hr style="border: none; border-top: 1px solid #27272a; margin: 32px 0;" />
+            <p style="color: #71717a; font-size: 12px; text-align: center; margin: 0;">
+              MyInspireTag — Daily words that awaken your purpose.
+            </p>
+          </div>
+        `,
+      });
+      logger.info(`✅ Subscription confirmation email sent to ${recipientEmail}`);
+    }
+  } catch (emailErr) {
+    logger.error(`⚠️ Failed to send subscription confirmation email: ${emailErr.message}`);
+  }
 
   return updated;
 };
@@ -354,11 +489,111 @@ const syncFromStripeSubscription = async (stripeSubscription) => {
     subscriptionType: shouldBeSubscriber ? "subscriber" : "free",
   });
 
-  await tagRepository.updateTag(local.tag._id, {
-    subscriptionType: shouldBeSubscriber ? "subscriber" : "free",
-  });
+  if (local.user) {
+    const userId = local.user?._id || local.user;
+    await User.findByIdAndUpdate(userId, {
+      isPremium: shouldBeSubscriber,
+      subscriptionTier: shouldBeSubscriber ? "subscriber" : "free",
+    });
+  }
+
+  if (local.tag) {
+    const tagId = local.tag?._id || local.tag;
+    await tagRepository.updateTag(tagId, {
+      subscriptionType: shouldBeSubscriber ? "subscriber" : "free",
+    });
+  }
 
   return updated;
+};
+
+const handleInvoicePaymentSucceeded = async (invoice) => {
+  const stripeSubscriptionId =
+    typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+
+  if (!stripeSubscriptionId) {
+    logger.info("invoice.payment_succeeded event has no subscription reference; skipping subscription update.");
+    return null;
+  }
+
+  logger.info(`💳 Processing invoice payment for subscription ${stripeSubscriptionId}`);
+
+  let stripeSub = null;
+  try {
+    stripeSub = await stripe.subscriptions.retrieve(stripeSubscriptionId);
+  } catch (err) {
+    logger.warn(`Could not retrieve Stripe subscription ${stripeSubscriptionId}: ${err.message}`);
+  }
+
+  let local = await subscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId);
+
+  // If not found by subscription ID, try finding by customer
+  if (!local && invoice.customer) {
+    const user = await User.findOne({ stripeCustomerId: invoice.customer });
+    if (user) {
+      const userSubs = await subscriptionRepository.findUserSubscriptions(user._id);
+      if (userSubs && userSubs.length > 0) {
+        local = userSubs[0];
+        await subscriptionRepository.updateById(local._id, {
+          stripeSubscriptionId,
+        });
+      }
+    }
+  }
+
+  if (local) {
+    const status = stripeSub ? mapStripeStatusToLocal(stripeSub.status) : "active";
+    const currentPeriodStart = stripeSub?.current_period_start
+      ? new Date(stripeSub.current_period_start * 1000)
+      : new Date();
+    const currentPeriodEnd = stripeSub?.current_period_end
+      ? new Date(stripeSub.current_period_end * 1000)
+      : new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
+
+    const updated = await subscriptionRepository.updateById(local._id, {
+      status,
+      subscriptionType: "subscriber",
+      currentPeriodStart,
+      currentPeriodEnd,
+      stripeSubscriptionId,
+    });
+
+    const userId = local.user?._id || local.user;
+    if (userId) {
+      await User.findByIdAndUpdate(userId, {
+        isPremium: true,
+        subscriptionTier: "subscriber",
+      });
+    }
+
+    const tagId = local.tag?._id || local.tag;
+    if (tagId) {
+      await tagRepository.updateTag(tagId, {
+        subscriptionType: "subscriber",
+      });
+    }
+
+    logger.info(`✅ Successfully updated subscription ${local._id} to subscriber status on invoice.paid`);
+    return updated;
+  }
+
+  return null;
+};
+
+const handleInvoicePaymentFailed = async (invoice) => {
+  const stripeSubscriptionId =
+    typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+
+  if (!stripeSubscriptionId) return null;
+
+  const local = await subscriptionRepository.findByStripeSubscriptionId(stripeSubscriptionId);
+  if (local) {
+    await subscriptionRepository.updateById(local._id, {
+      status: "past_due",
+    });
+    logger.warn(`⚠️ Subscription ${local._id} marked past_due after invoice payment failure.`);
+  }
+  return null;
 };
 
 
@@ -469,6 +704,8 @@ export default {
   createCustomerPortalSession,
   activateFromCheckoutSession,
   syncFromStripeSubscription,
+  handleInvoicePaymentSucceeded,
+  handleInvoicePaymentFailed,
   getAllSubscriptionsForAdmin,
   getSubscriptionStatsForAdmin,
   syncAllSubscriptionsWithStripe,
