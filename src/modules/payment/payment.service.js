@@ -38,6 +38,9 @@ class PaymentService {
                 success_url: PAYMENT_CONFIG.getSuccessUrl(orderId),
                 cancel_url: PAYMENT_CONFIG.getCancelUrl(),
                 metadata: sessionMetadata,
+                payment_intent_data: {
+                    metadata: sessionMetadata,
+                },
                 expires_at: Math.floor(Date.now() / 1000) + PAYMENT_CONFIG.getSessionExpiry(),
             });
 

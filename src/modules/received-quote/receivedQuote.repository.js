@@ -82,6 +82,32 @@ const getTodayReceivedQuotes = async (userId, dayKey) => {
     .populate("category", "name slug icon color");
 };
 
+const getQuotesWithin24Hours = async (userId = null, tagId = null) => {
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const filter = {
+    receivedAt: { $gte: twentyFourHoursAgo },
+  };
+
+  const orConditions = [];
+  if (userId) {
+    orConditions.push({ user: userId });
+  }
+  if (tagId) {
+    orConditions.push({ "metadata.tagId": tagId });
+  }
+
+  if (orConditions.length === 1) {
+    Object.assign(filter, orConditions[0]);
+  } else if (orConditions.length > 1) {
+    filter.$or = orConditions;
+  }
+
+  return ReceivedQuote.find(filter)
+    .sort({ receivedAt: -1 })
+    .populate("quote", QUOTE_POPULATE_FIELDS)
+    .populate("category", "name slug icon color");
+};
+
 const existsForToday = async (userId, dayKey) => {
   return ReceivedQuote.exists({ user: userId, dayKey });
 };
@@ -216,6 +242,7 @@ export default {
   getUserHistory,
   getUserHistoryDates,
   getTodayReceivedQuotes,
+  getQuotesWithin24Hours,
   existsForToday,
   hasReceivedQuoteOnPriorDay,
   hasReceivedQuoteToday,

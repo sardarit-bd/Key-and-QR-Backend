@@ -176,14 +176,29 @@ class DashboardService {
 
             const orderId = quote?.order ? quote.order.toString() : (latestReceivedQuote?.order ? latestReceivedQuote.order.toString() : null);
 
-            const giftDedication = quote?.giftDedication || (isGiftQuote ? {
-                text: fallbackDedicationText,
-                senderName: quote?.giftSenderName || quote?.author || "Lmao",
-                recipientName: null,
-                orderId: orderId || null
-            } : null);
+            const hasValidQuoteDedication = Boolean(
+                quote?.giftDedication &&
+                typeof quote.giftDedication.text === "string" &&
+                quote.giftDedication.text.trim().length > 0
+            );
 
-            const giftSenderName = quote?.giftSenderName || giftDedication?.senderName || quote?.author || "Lmao";
+            const giftDedication = hasValidQuoteDedication
+                ? {
+                    text: quote.giftDedication.text.trim(),
+                    senderName: quote.giftDedication.senderName || quote?.giftSenderName || quote?.author || "A loved one",
+                    recipientName: quote.giftDedication.recipientName || null,
+                    orderId: quote.giftDedication.orderId ? quote.giftDedication.orderId.toString() : (orderId || null),
+                    quoteId: quote._id,
+                }
+                : (isGiftQuote && fallbackDedicationText ? {
+                    text: fallbackDedicationText,
+                    senderName: quote?.giftSenderName || quote?.author || "A loved one",
+                    recipientName: null,
+                    orderId: orderId || null,
+                    quoteId: quote?._id || null,
+                } : null);
+
+            const giftSenderName = quote?.giftSenderName || giftDedication?.senderName || (isGiftQuote ? (quote?.author || "A loved one") : null);
 
             latestInspiration = {
                 hasReceivedQuote: true,
@@ -223,6 +238,133 @@ class DashboardService {
             };
         }
 
+        // ---- Persistent Gift Dedication for Recipient ----
+        // Recipient keeps access to their personal gift dedication even after rotating daily quotes
+        let persistentGiftDedication = (latestInspiration.giftDedication && latestInspiration.giftDedication.text?.trim()) ? latestInspiration.giftDedication : null;
+        try {
+            if (!persistentGiftDedication) {
+                // 1. Check for gift quotes directly linked to the user as recipient or creator
+                let giftQuoteDoc = await Quote.findOne({
+                    $or: [
+                        { recipientUser: userId },
+                        { user: userId, isPersonalGift: true },
+                        { user: userId, isGift: true },
+                    ],
+                    isGift: true,
+                    isActive: true,
+                }).sort({ createdAt: -1 });
+
+                // 2. Check orders placed by or gifted to the user
+                let userOrderIds = [];
+                const userOrders = await Order.find({
+                    $or: [
+                        { user: userId },
+                        { giftClaimedBy: userId },
+                    ],
+                    purchaseType: "gift",
+                }).select("_id quote giftMessage giftSenderName shippingAddress");
+
+                if (userOrders.length > 0) {
+                    userOrderIds = userOrders.map(o => o._id);
+                }
+
+                // 3. Check tags owned by the user (and tags assigned to user orders)
+                const userTags = await Tag.find({
+                    owner: userId,
+                    isActive: true,
+                }).select("_id tagCode assignedOrderId personalMessage");
+
+                const tagOrderIds = userTags.map(t => t.assignedOrderId).filter(Boolean);
+                const allRelevantOrderIds = [...new Set([...userOrderIds.map(id => id.toString()), ...tagOrderIds.map(id => id.toString())])];
+
+                // If no gift quote yet, look up by order IDs or tag IDs or personal message
+                if (!giftQuoteDoc && (allRelevantOrderIds.length > 0 || userTags.length > 0)) {
+                    giftQuoteDoc = await Quote.findOne({
+                        $or: [
+                            ...(allRelevantOrderIds.length > 0 ? [{ order: { $in: allRelevantOrderIds }, isGift: true }] : []),
+                            ...(userTags.length > 0 ? [{ tag: { $in: userTags.map(t => t._id) }, isGift: true }] : []),
+                            ...(userTags.filter(t => t.personalMessage?.trim()).map(t => ({ text: t.personalMessage.trim(), isGift: true }))),
+                        ],
+                        isActive: true,
+                    }).sort({ createdAt: -1 });
+                }
+
+                if (giftQuoteDoc) {
+                    const senderName =
+                        giftQuoteDoc.giftDedication?.senderName ||
+                        giftQuoteDoc.giftSenderName ||
+                        giftQuoteDoc.author ||
+                        "A loved one";
+                    const dedicationText =
+                        giftQuoteDoc.giftDedication?.text ||
+                        giftQuoteDoc.text ||
+                        null;
+
+                    if (dedicationText?.trim()) {
+                        persistentGiftDedication = {
+                            quoteId: giftQuoteDoc._id,
+                            text: dedicationText.trim(),
+                            senderName,
+                            recipientName: giftQuoteDoc.giftDedication?.recipientName || user?.name || null,
+                            orderId: giftQuoteDoc.order ? giftQuoteDoc.order.toString() : null,
+                        };
+                    }
+                }
+
+                // If still no quote document found, fallback to order giftMessage or tag personalMessage
+                if (!persistentGiftDedication) {
+                    const orderWithMsg = userOrders.find(o => o.giftMessage?.trim());
+                    if (orderWithMsg) {
+                        persistentGiftDedication = {
+                            text: orderWithMsg.giftMessage.trim(),
+                            senderName: orderWithMsg.giftSenderName || "A loved one",
+                            recipientName: orderWithMsg.shippingAddress?.fullName || user?.name || null,
+                            orderId: orderWithMsg._id.toString(),
+                        };
+                    }
+                }
+
+                if (!persistentGiftDedication) {
+                    const tagWithMsg = userTags.find(t => t.personalMessage?.trim());
+                    if (tagWithMsg) {
+                        let senderName = "A loved one";
+                        if (tagWithMsg.assignedOrderId) {
+                            const linkedOrder = userOrders.find(o => o._id.toString() === tagWithMsg.assignedOrderId.toString());
+                            if (linkedOrder?.giftSenderName) senderName = linkedOrder.giftSenderName;
+                        }
+                        persistentGiftDedication = {
+                            text: tagWithMsg.personalMessage.trim(),
+                            senderName,
+                            recipientName: user?.name || null,
+                            orderId: tagWithMsg.assignedOrderId ? tagWithMsg.assignedOrderId.toString() : null,
+                        };
+                    }
+                }
+            }
+        } catch (giftErr) {
+            logger.warn(`Failed resolving persistent gift dedication for dashboard: ${giftErr.message}`);
+        }
+
+        if (persistentGiftDedication && persistentGiftDedication.text?.trim()) {
+            latestInspiration.giftDedication = persistentGiftDedication;
+            latestInspiration.giftSenderName = persistentGiftDedication.senderName;
+            latestInspiration.isGift = true;
+            latestInspiration.isPersonalGift = true;
+            latestInspiration.hasGiftDedication = true;
+            if (latestInspiration.latestQuote) {
+                latestInspiration.latestQuote.giftDedication = persistentGiftDedication;
+                latestInspiration.latestQuote.giftSenderName = persistentGiftDedication.senderName;
+                latestInspiration.latestQuote.isGift = true;
+                latestInspiration.latestQuote.isPersonalGift = true;
+            }
+        } else {
+            latestInspiration.giftDedication = null;
+            latestInspiration.hasGiftDedication = false;
+            if (latestInspiration.latestQuote) {
+                latestInspiration.latestQuote.giftDedication = null;
+            }
+        }
+
         return {
             user: user
                 ? {
@@ -234,6 +376,7 @@ class DashboardService {
                   }
                 : null,
             greeting,
+            giftDedication: persistentGiftDedication,
             subscription: {
                 plan,
                 isPremium: plan === "subscriber",

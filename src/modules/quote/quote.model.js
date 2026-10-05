@@ -159,12 +159,20 @@ const quoteSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+
+    tag: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Tag",
+      default: null,
+      index: true,
+    },
   },
   { timestamps: true }
 );
 
 // Create index for faster random queries (excluding private personal gifts)
 quoteSchema.index({ category: 1, isActive: 1, isPersonalGift: 1 });
+quoteSchema.index({ tag: 1 });
 
 // Helpful for admin filtering later
 quoteSchema.index({ isActive: 1, allowReuse: 1, createdAt: -1 });

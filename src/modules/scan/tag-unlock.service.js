@@ -206,9 +206,10 @@ const resolveGiftDedication = async (tag) => {
     }
 
     const giftDedication = {
-        text: giftQuote?.text || tag.personalMessage,
-        senderName: giftQuote?.giftSenderName || giftQuote?.author || "A loved one",
+        text: giftQuote?.giftDedication?.text || giftQuote?.text || tag.personalMessage,
+        senderName: giftQuote?.giftDedication?.senderName || giftQuote?.giftSenderName || giftQuote?.author || "A loved one",
         quoteId: giftQuote?._id || null,
+        recipientName: giftQuote?.giftDedication?.recipientName || null,
         orderId: giftQuote?.order ? giftQuote.order.toString() : (tag.assignedOrderId ? tag.assignedOrderId.toString() : null),
     };
 
@@ -401,13 +402,13 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         }
     } else {
         // 3. Unauthenticated / Logged-out scan:
-        // If no tag scan was found yet, check if the tag owner received a quote today
-        if (!latestRevealedQuote && tag.owner) {
+        // If no tag scan was found yet, check if the tag or tag owner has a quote within the 24-hour window
+        if (!latestRevealedQuote) {
             try {
-                const ownerQuotes = await receivedQuoteRepository.getTodayReceivedQuotes(tag.owner, todayKey);
-                if (ownerQuotes && ownerQuotes.length > 0 && ownerQuotes[0]?.quote) {
-                    latestRevealedQuote = ownerQuotes[0].quote;
-                    latestSource = ownerQuotes[0].source || "scan";
+                const recentReceived = await receivedQuoteRepository.getQuotesWithin24Hours(tag.owner || null, tag._id);
+                if (recentReceived && recentReceived.length > 0 && recentReceived[0]?.quote) {
+                    latestRevealedQuote = recentReceived[0].quote;
+                    latestSource = recentReceived[0].source || "scan";
                     usedToday = 1;
 
                     // Bridge to ScanHistory so all subsequent guest scans see it immediately
@@ -425,7 +426,7 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         }
     }
 
-    // For unauthenticated scans, if an active quote already exists for this tag today,
+    // For unauthenticated scans, if an active quote already exists for this tag today or within 24h,
     // mark usedToday = 1 so the guest cannot reveal a second, different quote
     if (!authUserId && latestRevealedQuote) {
         usedToday = 1;
@@ -650,16 +651,61 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
     }
     const dailyLimit = isSubscriber ? 3 : 1;
 
-    // Quota eligibility check
+    // Quota eligibility check with 24-hour window active quote recovery
     let usedToday = 0;
+    let existingActiveQuote = null;
+    let existingSourceType = "scan";
+
+    const publicDailyScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    if (publicDailyScan?.quote && publicDailyScan.quote.isActive !== false) {
+        existingActiveQuote = publicDailyScan.quote;
+        existingSourceType = publicDailyScan.sourceType || "scan";
+    }
+
+    if (!existingActiveQuote) {
+        try {
+            const recentReceived = await receivedQuoteRepository.getQuotesWithin24Hours(tag.owner || null, tag._id);
+            if (recentReceived && recentReceived.length > 0 && recentReceived[0]?.quote) {
+                existingActiveQuote = recentReceived[0].quote;
+                existingSourceType = recentReceived[0].source || "scan";
+            }
+        } catch (e) {}
+    }
+
     if (authUserId) {
         usedToday = await receivedQuoteRepository.countToday(authUserId, todayKey);
     } else {
-        const publicDailyScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
-        usedToday = (publicDailyScan?.quote && publicDailyScan.quote.isActive !== false) ? 1 : 0;
+        usedToday = existingActiveQuote ? 1 : 0;
     }
 
-    if (usedToday >= dailyLimit) {
+    // If quota reached OR if unauthenticated user scans a tag already unlocked in 24-hour window
+    if (usedToday >= dailyLimit || (!authUserId && existingActiveQuote)) {
+        if (existingActiveQuote) {
+            const nextResetTime = getNextAvailableAt(tzOrReq || req || tz);
+            const timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
+            const formatted = formatQuotePayload(existingActiveQuote, existingSourceType, {
+                isNewQuote: false,
+                isAlreadyUnlocked: true,
+                statusMessage: "Today's quote has already been unlocked. Come back tomorrow!",
+                giftInfo,
+                giftDedication,
+            });
+            return {
+                ...formatted,
+                canReveal: false,
+                remainingQuotesToday: 0,
+                dailyLimit,
+                dailyLimitReached: true,
+                nextResetTime,
+                timeUntilResetMs,
+                usedToday: 1,
+                latestQuote: formatted,
+                giftDedication: giftDedication || null,
+                isAlreadyOwned,
+                isOwner,
+            };
+        }
+
         const nextResetTime = getNextAvailableAt(tzOrReq || req || tz);
         const timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
         const appErr = new AppError(

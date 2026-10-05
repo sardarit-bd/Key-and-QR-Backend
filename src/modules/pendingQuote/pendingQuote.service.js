@@ -8,6 +8,9 @@ import Quote from "../quote/quote.model.js";
 import QuoteAssignment from "../quoteAssignment/quoteAssignment.model.js";
 import Tag from "../tag/tag.model.js";
 import User from "../../models/user.model.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
+import { getDayKey } from "../../utils/dateUtils.js";
+import { getOrderTagIds } from "../order/order.service.js";
 
 // ---------------------------------------------------------------------------
 // Quote submission limits
@@ -234,7 +237,11 @@ const approveQuote = async (id, adminNote = null) => {
       orderId: orderId || null,
     };
 
-    // 1. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
+    // 1. Resolve tags for this order
+    const allTags = orderId ? await getOrderTagIds(orderId, order) : [];
+    const primaryTagId = allTags.length > 0 ? allTags[0] : null;
+
+    // 2. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
     let quote = orderId ? await Quote.findOne({ order: orderId, isGift: true }) : null;
     if (!quote) {
       quote = await Quote.create({
@@ -244,6 +251,7 @@ const approveQuote = async (id, adminNote = null) => {
         giftSenderName: senderName,
         user: order?.user || pendingQuote.user || null,
         order: orderId,
+        tag: primaryTagId,
         giftDedication,
         isGift: true,
         isPersonalGift: true,
@@ -262,16 +270,19 @@ const approveQuote = async (id, adminNote = null) => {
       quote.isGift = true;
       quote.isPersonalGift = true;
       quote.isActive = true;
+      if (primaryTagId && !quote.tag) {
+        quote.tag = primaryTagId;
+      }
       if (order?.giftClaimedBy) {
         quote.recipientUser = order.giftClaimedBy;
       }
       await quote.save();
     }
 
-    // 2. Mark PendingQuote as approved
+    // 3. Mark PendingQuote as approved
     const updated = await pendingQuoteRepository.approveQuote(id, adminNote);
 
-    // 3. Mark Order.giftMessageStatus = "approved", sync quote back-reference & sync tags
+    // 4. Mark Order.giftMessageStatus = "approved", sync quote back-reference & sync tags
     if (orderId) {
       await orderRepository.updateOrder(orderId, {
         giftMessage: pendingQuote.text,
@@ -281,24 +292,51 @@ const approveQuote = async (id, adminNote = null) => {
         quote: quote._id,
       });
 
-      if (order && typeof order.getAllTags === "function") {
-        const allTags = await order.getAllTags();
-        if (allTags && allTags.length > 0) {
-          for (const tagId of allTags) {
-            await Tag.findByIdAndUpdate(tagId, { personalMessage: pendingQuote.text });
-            await QuoteAssignment.findOneAndUpdate(
-              { tag: tagId, assignmentType: "tag" },
-              {
-                quote: quote._id,
-                tag: tagId,
-                assignmentType: "tag",
-                priority: 100,
-                isActive: true,
-              },
-              { upsert: true, new: true, setDefaultsOnInsert: true }
-            );
-          }
+      if (allTags && allTags.length > 0) {
+        for (const tagId of allTags) {
+          await Tag.findByIdAndUpdate(tagId, {
+            personalMessage: pendingQuote.text,
+            assignedOrderId: orderId,
+          });
+          await QuoteAssignment.findOneAndUpdate(
+            { tag: tagId, assignmentType: "tag" },
+            {
+              quote: quote._id,
+              tag: tagId,
+              assignmentType: "tag",
+              priority: 100,
+              isActive: true,
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
         }
+      }
+
+      // If gift was already claimed by a recipient, ensure ReceivedQuote is recorded
+      if (order?.giftClaimedBy) {
+        try {
+          const existingReceived = await ReceivedQuote.findOne({
+            user: order.giftClaimedBy,
+            quote: quote._id,
+          });
+          if (!existingReceived) {
+            await ReceivedQuote.create({
+              user: order.giftClaimedBy,
+              quote: quote._id,
+              order: orderId,
+              categorySlug: "gift",
+              receivedAt: new Date(),
+              source: "personal",
+              dayKey: getDayKey(),
+              isRead: true,
+              metadata: {
+                orderId: orderId.toString(),
+                sourceType: "personal_gift",
+                giftSenderName: senderName,
+              },
+            });
+          }
+        } catch (e) {}
       }
     }
 

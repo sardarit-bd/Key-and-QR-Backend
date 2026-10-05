@@ -4,6 +4,7 @@ import env from "../config/env.js";
 import orderService from "../modules/order/order.service.js";
 import { handleSubscriptionWebhook } from "../modules/subscription/subscription.webhook.js";
 import WebhookLog from "../models/webhookLog.model.js";
+import Order from "../modules/order/order.model.js";
 import logger from "../utils/logger.js";
 import auth from "../middlewares/auth.middleware.js";
 import roles from "../constants/roles.js";
@@ -84,10 +85,30 @@ router.post(
           const session = event.data.object;
 
           if (session.mode === "payment") {
-            const orderId = session.metadata?.orderId;
-            const paymentIntentId = typeof session.payment_intent === "object"
+            let orderId = session.metadata?.orderId;
+            let paymentIntentId = typeof session.payment_intent === "object"
               ? session.payment_intent?.id
               : session.payment_intent;
+
+            // Fallback: if orderId is missing in metadata, lookup order by stripeSessionId
+            if (!orderId && session.id) {
+              const matchedOrder = await Order.findOne({ stripeSessionId: session.id });
+              if (matchedOrder) {
+                orderId = matchedOrder._id.toString();
+              }
+            }
+
+            // Fallback: if payment_intent is not expanded, retrieve from Stripe
+            if (session.id && !paymentIntentId) {
+              try {
+                const fullSession = await stripe.checkout.sessions.retrieve(session.id);
+                paymentIntentId = typeof fullSession.payment_intent === "object"
+                  ? fullSession.payment_intent?.id
+                  : fullSession.payment_intent;
+              } catch (sessionErr) {
+                logger.warn(`Could not retrieve payment_intent from Stripe session ${session.id}: ${sessionErr.message}`);
+              }
+            }
 
             if (orderId && paymentIntentId) {
               // ✅ Use transaction for payment confirmation and tag assignment
@@ -97,14 +118,39 @@ router.post(
               );
             } else if (!orderId) {
               logger.warn(`⚠️ checkout.session.completed missing metadata.orderId (Session: ${session.id})`);
+            } else if (!paymentIntentId) {
+              logger.warn(`⚠️ checkout.session.completed missing paymentIntentId (Session: ${session.id}, Order: ${orderId})`);
             }
           } else if (session.mode === "subscription") {
             await handleSubscriptionWebhook(event);
           }
         } else if (eventType === "payment_intent.succeeded") {
           const paymentIntent = event.data.object;
-          const orderId = paymentIntent.metadata?.orderId;
+          let orderId = paymentIntent.metadata?.orderId;
           const paymentIntentId = paymentIntent.id;
+
+          if (!orderId && paymentIntentId) {
+            // Find order by stripePaymentIntentId
+            const matchedOrder = await Order.findOne({ stripePaymentIntentId: paymentIntentId });
+            if (matchedOrder) {
+              orderId = matchedOrder._id.toString();
+            } else {
+              // Check if a checkout session exists for this payment intent
+              try {
+                const sessions = await stripe.checkout.sessions.list({ payment_intent: paymentIntentId, limit: 1 });
+                if (sessions?.data?.length > 0) {
+                  const sess = sessions.data[0];
+                  orderId = sess.metadata?.orderId;
+                  if (!orderId && sess.id) {
+                    const orderFromSession = await Order.findOne({ stripeSessionId: sess.id });
+                    if (orderFromSession) orderId = orderFromSession._id.toString();
+                  }
+                }
+              } catch (sessErr) {
+                logger.warn(`Could not lookup checkout session for payment_intent ${paymentIntentId}: ${sessErr.message}`);
+              }
+            }
+          }
 
           if (orderId && paymentIntentId) {
             logger.info(`💳 Processing payment_intent.succeeded fallback for order ${orderId}`);
