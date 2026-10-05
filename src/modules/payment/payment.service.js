@@ -38,6 +38,9 @@ class PaymentService {
                 success_url: PAYMENT_CONFIG.getSuccessUrl(orderId),
                 cancel_url: PAYMENT_CONFIG.getCancelUrl(),
                 metadata: sessionMetadata,
+                payment_intent_data: {
+                    metadata: sessionMetadata,
+                },
                 expires_at: Math.floor(Date.now() / 1000) + PAYMENT_CONFIG.getSessionExpiry(),
             });
 
@@ -104,6 +107,20 @@ class PaymentService {
             });
         }
 
+        // Include shipping charge if present
+        if (order.shippingCost && order.shippingCost > 0) {
+            lineItems.push({
+                price_data: {
+                    currency: PAYMENT_CONFIG.getCurrency(),
+                    product_data: {
+                        name: "Shipping",
+                    },
+                    unit_amount: Math.round(order.shippingCost * 100),
+                },
+                quantity: 1,
+            });
+        }
+
         return lineItems;
     }
 
@@ -145,11 +162,55 @@ class PaymentService {
             };
         }
 
-        // If has stripe payment intent, check status
-        if (order.stripePaymentIntentId) {
+        // 1. If stripePaymentIntentId is missing but stripeSessionId exists, retrieve session from Stripe
+        if (!order.stripePaymentIntentId && order.stripeSessionId) {
+            try {
+                const checkoutSession = await stripe.checkout.sessions.retrieve(
+                    order.stripeSessionId
+                );
+
+                const paymentIntentId = typeof checkoutSession.payment_intent === "object"
+                    ? checkoutSession.payment_intent?.id
+                    : checkoutSession.payment_intent;
+
+                const isPaid = checkoutSession.payment_status === "paid" || checkoutSession.status === "complete";
+
+                if (isPaid && paymentIntentId) {
+                    await orderService.updateOrder(orderId, {
+                        stripePaymentIntentId: paymentIntentId,
+                    });
+
+                    await orderService.confirmPaymentAndAssignTag(
+                        orderId,
+                        paymentIntentId
+                    );
+
+                    return {
+                        status: PAYMENT_STATUS.SUCCEEDED,
+                        order: await orderService.getOrderById(orderId),
+                        verified: true,
+                    };
+                } else if (checkoutSession.status === "expired") {
+                    await orderService.updateOrder(orderId, {
+                        paymentStatus: PAYMENT_STATUS.CANCELLED,
+                    });
+                    return {
+                        status: PAYMENT_STATUS.CANCELLED,
+                        order: await orderService.getOrderById(orderId),
+                        verified: true,
+                    };
+                }
+            } catch (sessionError) {
+                console.error("Failed to verify Stripe checkout session:", sessionError);
+            }
+        }
+
+        // 2. If has stripe payment intent, check status
+        const activePaymentIntentId = order.stripePaymentIntentId;
+        if (activePaymentIntentId) {
             try {
                 const paymentIntent = await stripe.paymentIntents.retrieve(
-                    order.stripePaymentIntentId
+                    activePaymentIntentId
                 );
 
                 const statusMap = {
@@ -169,7 +230,7 @@ class PaymentService {
                     if (mappedStatus === PAYMENT_STATUS.SUCCEEDED && !order.isStockDeducted) {
                         await orderService.confirmPaymentAndAssignTag(
                             orderId,
-                            order.stripePaymentIntentId
+                            activePaymentIntentId
                         );
                     } else {
                         await orderService.updateOrder(orderId, {

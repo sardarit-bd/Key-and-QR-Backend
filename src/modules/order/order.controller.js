@@ -58,35 +58,35 @@ const getOrderById = catchAsync(async (req, res) => {
         });
     }
 
-    // Guest order: Require signed guest access token
-    if (!userId && order.isGuestOrder) {
+    // Guest order: Verify signed guest access token
+    if (order.isGuestOrder) {
         const guestToken = req.query.token;
 
-        if (!guestToken) {
+        if (guestToken) {
+            try {
+                const decoded = verifyGuestAccessToken(guestToken);
+
+                // Verify token is for this order
+                if (decoded.orderId === order._id.toString()) {
+                    return sendResponse(res, {
+                        statusCode: httpStatus.OK,
+                        success: true,
+                        message: "Order fetched successfully",
+                        data: order,
+                    });
+                }
+            } catch (error) {
+                throw new AppError(
+                    httpStatus.FORBIDDEN,
+                    "Invalid or expired guest access token"
+                );
+            }
+        }
+
+        if (!userId) {
             throw new AppError(
                 httpStatus.UNAUTHORIZED,
                 "Guest access token required"
-            );
-        }
-
-        try {
-            const decoded = verifyGuestAccessToken(guestToken);
-
-            // Verify token is for this order
-            if (decoded.orderId !== order._id.toString()) {
-                throw new Error("Token order mismatch");
-            }
-
-            return sendResponse(res, {
-                statusCode: httpStatus.OK,
-                success: true,
-                message: "Order fetched successfully",
-                data: order,
-            });
-        } catch (error) {
-            throw new AppError(
-                httpStatus.FORBIDDEN,
-                "Invalid or expired guest access token"
             );
         }
     }

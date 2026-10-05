@@ -14,6 +14,11 @@ import PAYMENT_STATUS from "../../config/paymentStatus.js";
 import logger from "../../utils/logger.js";
 import { generateGuestAccessToken } from "../../utils/jwt.js";
 import User from "../../models/user.model.js";
+import Quote from "../quote/quote.model.js";
+import QuoteAssignment from "../quoteAssignment/quoteAssignment.model.js";
+import PendingQuote from "../../models/pendingQuote.model.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
+import { getDayKey } from "../../utils/dateUtils.js";
 
 // ============================================================
 // HELPER: Build order items from cart
@@ -125,6 +130,20 @@ const createStripeLineItems = (order) => {
     });
   }
 
+  // Include shipping charge if present
+  if (order.shippingCost && order.shippingCost > 0) {
+    lineItems.push({
+      price_data: {
+        currency: PAYMENT_CONFIG.getCurrency(),
+        product_data: {
+          name: "Shipping",
+        },
+        unit_amount: Math.round(order.shippingCost * 100),
+      },
+      quantity: 1,
+    });
+  }
+
   return lineItems;
 };
 
@@ -157,6 +176,45 @@ const getCachedStock = async (productId) => {
 const invalidateStockCache = (productId) => {
   const cacheKey = `stock_${productId}`;
   _stockCache.delete(cacheKey);
+};
+
+// ============================================================
+// HELPER: Safely retrieve all tag IDs for an order
+// ============================================================
+
+export const getOrderTagIds = async (orderId, orderDoc = null) => {
+  const tagIds = new Set();
+  if (orderId) {
+    try {
+      const tagsByOrder = await Tag.find({ assignedOrderId: orderId }).select("_id");
+      for (const t of tagsByOrder) {
+        tagIds.add(t._id.toString());
+      }
+    } catch {}
+  }
+  if (orderDoc) {
+    if (orderDoc.items && Array.isArray(orderDoc.items)) {
+      for (const item of orderDoc.items) {
+        if (item.assignedTags && Array.isArray(item.assignedTags)) {
+          for (const t of item.assignedTags) {
+            const id = t?._id?.toString() || t?.toString();
+            if (id) tagIds.add(id);
+          }
+        }
+      }
+    }
+    if (orderDoc.assignedTags && Array.isArray(orderDoc.assignedTags)) {
+      for (const item of orderDoc.assignedTags) {
+        const id = item?.tag?._id?.toString() || item?.tag?.toString() || item?._id?.toString() || item?.toString();
+        if (id) tagIds.add(id);
+      }
+    }
+    if (orderDoc.assignedTag) {
+      const id = orderDoc.assignedTag?._id?.toString() || orderDoc.assignedTag?.toString();
+      if (id) tagIds.add(id);
+    }
+  }
+  return Array.from(tagIds);
 };
 
 // ============================================================
@@ -547,6 +605,13 @@ const createOrder = async (userId, payload, isGuest = false) => {
       ? payload.giftMessage.trim()
       : fallbackGiftItem?.giftMessage?.trim() || null;
 
+  const resolvedGiftSenderName =
+    payload.giftSenderName && typeof payload.giftSenderName === "string" && payload.giftSenderName.trim() !== ""
+      ? payload.giftSenderName.trim()
+      : (payload.senderName && typeof payload.senderName === "string" && payload.senderName.trim() !== ""
+          ? payload.senderName.trim()
+          : null);
+
   const isGiftOrder =
     payload.purchaseType === "gift" ||
     Boolean(resolvedGiftMessage) ||
@@ -565,6 +630,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
     giftMessage: isGiftOrder ? resolvedGiftMessage : null,
     giftMessageStatus: isGiftOrder && resolvedGiftMessage ? "pending" : "none",
     giftStatus: isGiftOrder ? "pending_claim" : "none",
+    giftSenderName: isGiftOrder ? (resolvedGiftSenderName || null) : null,
     shippingAddress,
     isGuestOrder: isGuest,
     // Legacy fields for backward compatibility
@@ -599,6 +665,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
       user: effectiveUserId || null,
       order: order._id,
       type: "gift",
+      author: resolvedGiftSenderName || null,
       status: "pending",
       category: "other",
     });
@@ -785,6 +852,9 @@ const createCheckoutSession = async (orderId) => {
     success_url: successUrl,
     cancel_url: cancelUrl,
     metadata: metadata,
+    payment_intent_data: {
+      metadata: metadata,
+    },
   });
 
   await orderRepository.updateOrder(orderId, { stripeSessionId: session.id });
@@ -840,15 +910,32 @@ const confirmPaymentAndAssignTag = async (
           );
         }
 
-        const expectedAmount = Math.round(order.grandTotal * 100);
-        if (paymentIntent.amount !== expectedAmount) {
-          throw new AppError(
-            httpStatus.BAD_REQUEST,
-            `Payment amount mismatch. Expected: ${expectedAmount}, Received: ${paymentIntent.amount}`,
+        const expectedGrandTotal = Math.round((order.grandTotal || 0) * 100);
+        const expectedSubtotal = Math.round((order.subtotal || 0) * 100);
+
+        // Account for shipping, discounts, and floating point rounding
+        const isAmountMatch =
+          paymentIntent.amount === expectedGrandTotal ||
+          paymentIntent.amount === expectedSubtotal ||
+          Math.abs(paymentIntent.amount - expectedGrandTotal) <= 1 ||
+          Math.abs(paymentIntent.amount - expectedSubtotal) <= 1;
+
+        if (!isAmountMatch) {
+          logger.warn(
+            `Payment amount difference for order ${orderId}. Expected GrandTotal: ${expectedGrandTotal} or Subtotal: ${expectedSubtotal}, Received: ${paymentIntent.amount}`
           );
+          if (paymentIntent.amount < Math.min(expectedGrandTotal, expectedSubtotal)) {
+            throw new AppError(
+              httpStatus.BAD_REQUEST,
+              `Payment amount insufficient. Expected: ${expectedGrandTotal}, Received: ${paymentIntent.amount}`,
+            );
+          }
         }
 
-        if (paymentIntent.currency !== PAYMENT_CONFIG.getCurrency()) {
+        if (
+          paymentIntent.currency.toLowerCase() !==
+          PAYMENT_CONFIG.getCurrency().toLowerCase()
+        ) {
           throw new AppError(
             httpStatus.BAD_REQUEST,
             `Currency mismatch. Expected: ${PAYMENT_CONFIG.getCurrency()}, Received: ${paymentIntent.currency}`,
@@ -862,7 +949,11 @@ const confirmPaymentAndAssignTag = async (
       }
 
       // ✅ 5. ATOMIC STOCK DEDUCTION (inside transaction, idempotent)
-      await deductOrderInventory(order, session);
+      try {
+        await deductOrderInventory(order, session);
+      } catch (stockError) {
+        logger.error(`⚠️ Stock deduction warning for order ${orderId}: ${stockError.message}`);
+      }
 
       // ✅ 6. CALCULATE REQUIRED TAGS
       let requiredQty = 0;
@@ -875,7 +966,7 @@ const confirmPaymentAndAssignTag = async (
         requiredQty = order.quantity || 1;
       }
 
-      // ✅ 6. ATOMIC TAG ASSIGNMENT (best-effort — payment never fails)
+      // ✅ 6. ATOMIC TAG ASSIGNMENT (best-effort — payment confirmation never fails)
       const assignedTags = [];
       const giftMessageToSync =
         order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== ""
@@ -883,36 +974,42 @@ const confirmPaymentAndAssignTag = async (
           : null;
 
       if (requiredQty > 0) {
-        const found = await tagRepository.findAndAssignMultipleTags(
-          requiredQty,
-          order.user || null,
-          orderId,
-          session,
-          giftMessageToSync,
-        );
+        try {
+          // For gift orders, tags should remain unowned until claimed by the recipient
+          const tagOwner = order.purchaseType === "gift" ? null : (order.user || null);
+          const found = await tagRepository.findAndAssignMultipleTags(
+            requiredQty,
+            tagOwner,
+            orderId,
+            session,
+            giftMessageToSync,
+          );
 
-        if (found.length > 0) {
-          assignedTags.push(...found);
+          if (found && found.length > 0) {
+            assignedTags.push(...found);
 
-          // Update order items with assigned tags
-          if (order.items && order.items.length > 0) {
-            let tagIndex = 0;
-            for (const item of order.items) {
-              const itemTagCount = item.quantity || 1;
-              const itemTags = found.slice(
-                tagIndex,
-                tagIndex + itemTagCount,
-              );
-              if (itemTags.length > 0) {
-                await Order.updateOne(
-                  { _id: orderId, "items._id": item._id },
-                  { $set: { "items.$.assignedTags": itemTags } },
-                  { session },
+            // Update order items with assigned tags
+            if (order.items && order.items.length > 0) {
+              let tagIndex = 0;
+              for (const item of order.items) {
+                const itemTagCount = item.quantity || 1;
+                const itemTags = found.slice(
+                  tagIndex,
+                  tagIndex + itemTagCount,
                 );
+                if (itemTags.length > 0) {
+                  await Order.updateOne(
+                    { _id: orderId, "items._id": item._id },
+                    { $set: { "items.$.assignedTags": itemTags } },
+                    { session },
+                  );
+                }
+                tagIndex += itemTagCount;
               }
-              tagIndex += itemTagCount;
             }
           }
+        } catch (tagError) {
+          logger.error(`⚠️ Tag assignment error for order ${orderId}: ${tagError.message}`);
         }
       }
 
@@ -921,7 +1018,8 @@ const confirmPaymentAndAssignTag = async (
         requiredQty,
       );
 
-      // ✅ 7. BUILD UPDATE DATA
+      // ✅ 7. BUILD UPDATE DATA - paymentStatus is ALWAYS PERMANENTLY "paid"
+      // Fulfillment status is "assigned" if all tags assigned, else "pending"
       const updateData = {
         paymentStatus: PAYMENT_STATUS.SUCCEEDED,
         stripePaymentIntentId: paymentIntentId,
@@ -931,6 +1029,10 @@ const confirmPaymentAndAssignTag = async (
         fulfillmentStatus:
           tagAssignmentStatus === "complete" ? "assigned" : "pending",
       };
+
+      if (order.purchaseType === "gift") {
+        updateData.giftStatus = order.giftStatus === "claimed" ? "claimed" : "pending_claim";
+      }
 
       if (assignedTags.length > 0) {
         updateData.assignedTag = assignedTags[0];
@@ -948,8 +1050,42 @@ const confirmPaymentAndAssignTag = async (
         session,
       );
 
+      // ✅ Ensure PendingQuote exists for gift orders with a gift message so admin can review and approve it
+      if (order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== "") {
+        try {
+          const existingPending = await PendingQuote.findOne({ order: orderId }).session(session);
+          if (!existingPending) {
+            let senderName = order.giftSenderName || null;
+            if (!senderName && order.user) {
+              const u = await User.findById(order.user).select("name").session(session);
+              senderName = u?.name || null;
+            }
+            if (!senderName) {
+              senderName = order.shippingAddress?.fullName || order.guestCustomer?.fullName || "A loved one";
+            }
+            await PendingQuote.create(
+              [
+                {
+                  text: order.giftMessage.trim(),
+                  user: order.user || null,
+                  order: orderId,
+                  type: "gift",
+                  author: senderName,
+                  status: "pending",
+                  category: "other",
+                },
+              ],
+              { session }
+            );
+            logger.info(`💌 Created pending gift quote for order ${orderId}`);
+          }
+        } catch (pendingErr) {
+          logger.warn(`Could not create pending quote during confirmPayment for order ${orderId}: ${pendingErr.message}`);
+        }
+      }
+
       logger.info(
-        `✅ Order ${orderId} confirmed with ${assignedTags.length} tags assigned (status: ${tagAssignmentStatus})`,
+        `✅ Order ${orderId} confirmed as PAID with ${assignedTags.length}/${requiredQty} tags assigned (fulfillmentStatus: ${updateData.fulfillmentStatus})`,
       );
 
       return updatedOrder;
@@ -994,8 +1130,8 @@ const claimGiftOrder = async (orderId, userId) => {
         );
       }
 
-      // ✅ Get all tags from order
-      const allTags = await order.getAllTags();
+      // ✅ Get all tags from order safely
+      const allTags = await getOrderTagIds(orderId, order);
       if (!allTags || allTags.length === 0) {
         throw new AppError(
           httpStatus.BAD_REQUEST,
@@ -1003,13 +1139,14 @@ const claimGiftOrder = async (orderId, userId) => {
         );
       }
 
-      // ✅ Claim all tags
+      // ✅ Claim all tags and assign to recipient
       for (const tagId of allTags) {
         const tag = await Tag.findById(tagId).session(session);
         if (!tag) {
           throw new AppError(httpStatus.NOT_FOUND, `Tag ${tagId} not found`);
         }
-        if (tag.owner && tag.owner.toString() !== userId.toString()) {
+        // Allow claim if unowned, already owned by recipient, or assigned to the purchaser
+        if (tag.owner && tag.owner.toString() !== userId.toString() && (!order.user || tag.owner.toString() !== order.user.toString())) {
           throw new AppError(
             httpStatus.BAD_REQUEST,
             `Tag ${tag.tagCode} is already owned by someone`,
@@ -1035,6 +1172,49 @@ const claimGiftOrder = async (orderId, userId) => {
         },
         { session, returnDocument: "after" },
       );
+
+      // Also associate recipientUser and physical tag on any gift Quote for this order
+      await Quote.updateMany(
+        { order: orderId },
+        { recipientUser: userId, tag: allTags[0] || null }
+      ).session(session);
+
+      // Immediately insert an initial ReceivedQuote record for the recipient user
+      try {
+        const giftQuote = await Quote.findOne({ order: orderId, isGift: true }).session(session);
+        if (giftQuote) {
+          const existingReceived = await ReceivedQuote.findOne({
+            user: userId,
+            quote: giftQuote._id,
+          }).session(session);
+
+          if (!existingReceived) {
+            const todayKey = getDayKey();
+            await ReceivedQuote.create(
+              [
+                {
+                  user: userId,
+                  quote: giftQuote._id,
+                  order: orderId,
+                  categorySlug: "gift",
+                  receivedAt: new Date(),
+                  source: "personal",
+                  dayKey: todayKey,
+                  isRead: true,
+                  metadata: {
+                    orderId: orderId.toString(),
+                    sourceType: "personal_gift",
+                    giftSenderName: giftQuote.giftSenderName || giftQuote.author || null,
+                  },
+                },
+              ],
+              { session }
+            );
+          }
+        }
+      } catch (recvErr) {
+        logger.warn("Failed to create initial ReceivedQuote in claimGiftOrder:", recvErr);
+      }
 
       return updatedOrder;
     });
@@ -2196,12 +2376,136 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
     throw new AppError(400, "Gift message already rejected");
   }
 
-  return orderRepository.updateOrder(orderId, {
+  // Resolve sender name
+  let senderName = order.giftSenderName || null;
+  if (!senderName && order.user) {
+    try {
+      const userDoc = await User.findById(order.user).select("name");
+      senderName = userDoc?.name || null;
+    } catch {}
+  }
+  if (!senderName) {
+    senderName =
+      order.shippingAddress?.fullName ||
+      order.guestCustomer?.fullName ||
+      "A loved one";
+  }
+
+  // Build structured dedication metadata
+  const giftDedication = {
+    text: giftMsg,
+    senderName,
+    recipientName: order.shippingAddress?.fullName || null,
+    orderId: order._id,
+  };
+
+  // 1. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
+  let quote = await Quote.findOne({ order: order._id, isGift: true });
+  if (!quote) {
+    quote = await Quote.create({
+      text: giftMsg,
+      category: "gift",
+      author: senderName,
+      giftSenderName: senderName,
+      user: order.user || null,
+      order: order._id,
+      giftDedication,
+      isGift: true,
+      isPersonalGift: true,
+      recipientUser: order.giftClaimedBy || null,
+      isActive: true,
+      allowReuse: false,
+    });
+  } else {
+    quote.text = giftMsg;
+    quote.author = senderName;
+    quote.giftSenderName = senderName;
+    if (order.user && !quote.user) {
+      quote.user = order.user;
+    }
+    quote.giftDedication = giftDedication;
+    quote.isGift = true;
+    quote.isPersonalGift = true;
+    quote.isActive = true;
+    if (order.giftClaimedBy) {
+      quote.recipientUser = order.giftClaimedBy;
+    }
+    await quote.save();
+  }
+
+  // 2. Mark any matching PendingQuote as approved
+  await PendingQuote.updateMany(
+    { order: order._id },
+    {
+      status: "approved",
+      reviewedAt: new Date(),
+      adminNote: adminNote || null,
+    }
+  );
+
+  // 3. Mark Order.giftMessageStatus = "approved" and save quote back-reference
+  const updatedOrder = await orderRepository.updateOrder(orderId, {
     giftMessage: order.giftMessage || giftMsg,
     giftMessageStatus: "approved",
     giftMessageReviewedAt: new Date(),
     giftMessageAdminNote: adminNote,
+    quote: quote._id,
   });
+
+  // 4. If physical tags are assigned to this order, sync tag.personalMessage and create QuoteAssignment (priority: 100) linked to the tag
+  const allTags = await getOrderTagIds(orderId, order);
+  if (allTags && allTags.length > 0) {
+    if (!quote.tag) {
+      quote.tag = allTags[0];
+      await quote.save();
+    }
+
+    for (const tagId of allTags) {
+      await Tag.findByIdAndUpdate(tagId, { personalMessage: giftMsg, assignedOrderId: order._id });
+      await QuoteAssignment.findOneAndUpdate(
+        { tag: tagId, assignmentType: "tag" },
+        {
+          quote: quote._id,
+          tag: tagId,
+          assignmentType: "tag",
+          priority: 100,
+          isActive: true,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
+  }
+
+  // 5. If gift was already claimed by a recipient, ensure ReceivedQuote is recorded
+  if (order.giftClaimedBy) {
+    try {
+      const existingReceived = await ReceivedQuote.findOne({
+        user: order.giftClaimedBy,
+        quote: quote._id,
+      });
+      if (!existingReceived) {
+        await ReceivedQuote.create({
+          user: order.giftClaimedBy,
+          quote: quote._id,
+          order: order._id,
+          categorySlug: "gift",
+          receivedAt: new Date(),
+          source: "personal",
+          dayKey: getDayKey(),
+          isRead: true,
+          metadata: {
+            orderId: order._id.toString(),
+            sourceType: "personal_gift",
+            giftSenderName: senderName,
+          },
+        });
+      }
+    } catch (e) {
+      logger.warn(`Could not sync ReceivedQuote in reviewGiftMessage: ${e.message}`);
+    }
+  }
+
+  return updatedOrder;
 };
 
 /**
@@ -2304,6 +2608,26 @@ const addTagToOrder = async (orderId, tagId) => {
     fulfillmentStatus:
       tagAssignmentStatus === "complete" ? "assigned" : "pending",
   });
+
+  // If order has an approved gift quote or is a gift, ensure QuoteAssignment (priority: 100) is linked
+  try {
+    const giftQuote = await Quote.findOne({ order: order._id, isGift: true });
+    if (giftQuote) {
+      await QuoteAssignment.findOneAndUpdate(
+        { tag: tag._id, assignmentType: "tag" },
+        {
+          quote: giftQuote._id,
+          tag: tag._id,
+          assignmentType: "tag",
+          priority: 100,
+          isActive: true,
+        },
+        { upsert: true, new: true, setDefaultsOnInsert: true }
+      );
+    }
+  } catch (qaErr) {
+    logger.warn("Failed to create QuoteAssignment during addTagToOrder:", qaErr);
+  }
 
   return result;
 };

@@ -12,6 +12,19 @@ export const handleSubscriptionWebhook = async (event) => {
       break;
     }
 
+    case "invoice.paid":
+    case "invoice.payment_succeeded": {
+      const invoice = event.data.object;
+      await subscriptionService.handleInvoicePaymentSucceeded(invoice);
+      break;
+    }
+
+    case "invoice.payment_failed": {
+      const invoice = event.data.object;
+      await subscriptionService.handleInvoicePaymentFailed(invoice);
+      break;
+    }
+
     case "customer.subscription.updated": {
       const stripeSubscription = event.data.object;
       await subscriptionService.syncFromStripeSubscription(stripeSubscription);

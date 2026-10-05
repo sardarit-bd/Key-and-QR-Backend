@@ -34,15 +34,17 @@ const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag
             const created = await receivedQuoteRepository.createReceivedQuote({
                 user: targetUserId,
                 quote: quoteDoc._id,
+                order: quoteDoc.order || tag?.assignedOrderId || null,
                 category: categoryDoc?._id || null,
                 categorySlug: categoryDoc?.slug || (quoteDoc.category ? quoteDoc.category.toString().toLowerCase() : "inspire"),
                 receivedAt: new Date(),
-                source: "scan",
+                source: quoteSource === "personal" ? "personal" : "scan",
                 dayKey: todayKey,
                 isRead: true,
                 metadata: {
                     tagCode: tag?.tagCode,
                     tagId: tag?._id,
+                    orderId: quoteDoc.order ? quoteDoc.order.toString() : (tag?.assignedOrderId ? tag.assignedOrderId.toString() : null),
                     sourceType: quoteSource,
                 },
             });
@@ -126,7 +128,7 @@ const resolveQuoteAudioTrack = (q) => {
 };
 
 // Helper to format consistent quote response with audit status flags
-const formatQuotePayload = (q, srcType, { isNewQuote = true, isAlreadyUnlocked = false, statusMessage = null, giftInfo = null } = {}) => {
+const formatQuotePayload = (q, srcType, { isNewQuote = true, isAlreadyUnlocked = false, statusMessage = null, giftInfo = null, giftDedication = null } = {}) => {
     const imageUrl = q?.image?.url || (typeof q?.image === "string" ? q.image : null);
     const resolvedAudio = resolveQuoteAudioTrack(q);
     return {
@@ -143,15 +145,75 @@ const formatQuotePayload = (q, srcType, { isNewQuote = true, isAlreadyUnlocked =
         audioTrack: resolvedAudio,
         allowReuse: typeof q?.allowReuse === "boolean" ? q.allowReuse : true,
         sourceType: srcType,
-        isPersonalMessage: false,
+        isPersonalMessage: Boolean(q?.isPersonalGift || q?.category === "gift"),
         isNewQuoteToday: isNewQuote,
         isAlreadyUnlockedToday: isAlreadyUnlocked,
         message: statusMessage,
         gift: giftInfo,
-        isGift: Boolean(giftInfo?.isGift),
-        giftOrderId: giftInfo?.orderId || null,
+        isGift: Boolean(giftInfo?.isGift || giftDedication),
+        giftOrderId: giftInfo?.orderId || giftDedication?.orderId || null,
         isClaimable: Boolean(giftInfo?.isClaimable),
+        giftDedication: giftDedication || null,
     };
+};
+
+/**
+ * Resolve dedicated gift quote and dedication metadata for a tag
+ */
+const resolveGiftDedication = async (tag) => {
+    if (!tag) return { giftQuote: null, giftDedication: null };
+
+    let giftQuote = null;
+    if (tag.assignedOrderId) {
+        try {
+            giftQuote = await Quote.findOne({ order: tag.assignedOrderId, isGift: true });
+        } catch {}
+    }
+    if (!giftQuote && tag._id) {
+        try {
+            const tagAssignment = await quoteAssignmentService.getTopAssignmentByTag(tag._id);
+            if (tagAssignment?.quote?.isGift) {
+                giftQuote = tagAssignment.quote;
+            }
+        } catch {}
+    }
+    if (!giftQuote && tag.personalMessage && tag.personalMessage.trim() !== "") {
+        try {
+            giftQuote = await Quote.findOne({ text: tag.personalMessage.trim(), isGift: true });
+            if (!giftQuote) {
+                giftQuote = await Quote.create({
+                    text: tag.personalMessage.trim(),
+                    category: "gift",
+                    author: "Gift Sender",
+                    giftSenderName: "Gift Sender",
+                    isGift: true,
+                    isPersonalGift: true,
+                    order: tag.assignedOrderId || null,
+                    recipientUser: tag.owner || null,
+                    isActive: true,
+                    allowReuse: false,
+                });
+            }
+        } catch (e) {
+            try {
+                giftQuote = await Quote.findOne({ text: tag.personalMessage.trim() });
+            } catch {}
+        }
+    }
+
+    if (!giftQuote && (!tag.personalMessage || tag.personalMessage.trim() === "")) {
+        return { giftQuote: null, giftDedication: null };
+    }
+
+    const giftDedication = {
+        text: giftQuote?.giftDedication?.text || giftQuote?.text || tag.personalMessage,
+        senderName: giftQuote?.giftDedication?.senderName || giftQuote?.giftSenderName || giftQuote?.author || "A loved one",
+        quoteId: giftQuote?._id || null,
+        recipientName: giftQuote?.giftDedication?.recipientName || null,
+        orderId: giftQuote?.order ? giftQuote.order.toString() : (tag.assignedOrderId ? tag.assignedOrderId.toString() : null),
+    };
+
+    return { giftQuote, giftDedication };
 };
 
 // ===============================
@@ -227,15 +289,16 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
 
     // Resolve minimal safe gift claim metadata
     let giftInfo = null;
+    let orderDoc = null;
     if (tag.assignedOrderId) {
         try {
-            const order = await Order.findById(tag.assignedOrderId).select("purchaseType giftStatus paymentStatus");
-            if (order && order.purchaseType === "gift") {
+            orderDoc = await Order.findById(tag.assignedOrderId).select("purchaseType giftStatus paymentStatus");
+            if (orderDoc && orderDoc.purchaseType === "gift") {
                 giftInfo = {
                     isGift: true,
-                    orderId: order._id.toString(),
-                    giftStatus: order.giftStatus || "pending_claim",
-                    isClaimable: !tag.owner && order.giftStatus !== "claimed" && order.paymentStatus === "paid",
+                    orderId: orderDoc._id.toString(),
+                    giftStatus: orderDoc.giftStatus || "pending_claim",
+                    isClaimable: !tag.owner && orderDoc.giftStatus !== "claimed" && orderDoc.paymentStatus === "paid",
                 };
             }
         } catch (e) {
@@ -243,29 +306,44 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         }
     }
 
-    // Check Personal Message (Public) - Does NOT write to DB on preview
-    if (tag.personalMessage && tag.personalMessage.trim() !== "") {
+    const { giftQuote, giftDedication } = await resolveGiftDedication(tag);
+    const targetUserId = user?.userId || user?._id || user?.id || (tag.owner ? tag.owner.toString() : null);
+    const isTagClaimed = Boolean(tag.owner || giftInfo?.giftStatus === "claimed" || orderDoc?.giftStatus === "claimed");
+
+    let hasViewedDedication = false;
+    if (giftQuote?._id && targetUserId) {
+        try {
+            hasViewedDedication = Boolean(await ReceivedQuote.exists({ user: targetUserId, quote: giftQuote._id }));
+        } catch {}
+    }
+
+    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+    const shouldShowDedicationAsMain = giftDedication && !hasViewedDedication && (!isTagClaimed || !isAlreadyOwned);
+
+    // Initial gift dedication scan (unclaimed or not yet viewed)
+    if (shouldShowDedicationAsMain) {
+
         const personalPayload = {
-            _id: null,
-            quote: tag.personalMessage,
-            text: tag.personalMessage,
-            category: "personal",
-            author: null,
+            _id: giftQuote?._id || null,
+            quote: giftDedication.text,
+            text: giftDedication.text,
+            category: giftQuote?.category || "gift",
+            author: giftDedication.senderName,
             description: null,
             image: null,
             theme: null,
             editorData: null,
-            allowReuse: true,
+            allowReuse: false,
             isPersonalMessage: true,
+            isGift: true,
             sourceType: "personal",
             gift: giftInfo,
-            isGift: Boolean(giftInfo?.isGift),
-            giftOrderId: giftInfo?.orderId || null,
+            isGift: Boolean(giftInfo?.isGift || giftDedication),
+            giftOrderId: giftInfo?.orderId || giftDedication.orderId || null,
             isClaimable: Boolean(giftInfo?.isClaimable),
+            giftDedication,
         };
-
-        const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-        const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
 
         return {
             ...personalPayload,
@@ -274,19 +352,21 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
             dailyLimit: 1,
             usedToday: 1,
             latestQuote: personalPayload,
+            giftDedication,
             isAlreadyOwned,
             isOwner,
         };
     }
 
-    // Identify target user
-    const targetUserId = user?.userId || user?._id || user?.id || (tag.owner ? tag.owner.toString() : null);
+    const authUserId = user?.userId || user?._id || user?.id || null;
 
-    // Resolve user tier and daily limit (free: 1, subscriber: 3)
+    // Resolve user tier and daily limit (free: 1, subscriber: 3).
+    // CRITICAL: Only an actively logged-in subscriber is granted the subscriber 3/day tier.
+    // Unauthenticated/guest visitors on a physical tag get the standard 1/day quota.
     let isSubscriber = false;
-    if (targetUserId) {
+    if (authUserId) {
         try {
-            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(targetUserId);
+            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(authUserId);
             isSubscriber = Boolean(activeSubs && activeSubs.length > 0);
         } catch (subErr) {
             // fallback free
@@ -294,27 +374,62 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
     }
     const dailyLimit = isSubscriber ? 3 : 1;
 
-    // Check today's usage WITHOUT creating any records
+    // Check today's usage and active quote for this tag WITHOUT creating duplicate records
     let usedToday = 0;
     let latestRevealedQuote = null;
     let latestSource = "random";
 
-    if (targetUserId) {
-        usedToday = await receivedQuoteRepository.countToday(targetUserId, todayKey);
-        if (usedToday > 0) {
-            const todayQuotes = await receivedQuoteRepository.getTodayReceivedQuotes(targetUserId, todayKey);
-            if (todayQuotes && todayQuotes.length > 0 && todayQuotes[0]?.quote) {
-                latestRevealedQuote = todayQuotes[0].quote;
-                latestSource = todayQuotes[0].source || "scan";
+    // 1. First, check if this physical tag already has an unlocked quote today or in the rolling 24-hour window
+    const publicDailyScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    if (publicDailyScan?.quote && publicDailyScan.quote.isActive !== false) {
+        usedToday = 1;
+        latestRevealedQuote = publicDailyScan.quote;
+        latestSource = publicDailyScan.sourceType || "scan";
+    }
+
+    // 2. If user is authenticated, check their own received quotes today
+    if (authUserId) {
+        const userUsage = await receivedQuoteRepository.countToday(authUserId, todayKey);
+        if (userUsage > 0) {
+            usedToday = Math.max(usedToday, userUsage);
+            const userQuotes = await receivedQuoteRepository.getTodayReceivedQuotes(authUserId, todayKey);
+            if (userQuotes && userQuotes.length > 0 && userQuotes[0]?.quote) {
+                if (!latestRevealedQuote || isSubscriber) {
+                    latestRevealedQuote = userQuotes[0].quote;
+                    latestSource = userQuotes[0].source || "scan";
+                }
             }
         }
     } else {
-        const publicScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
-        if (publicScan?.quote && publicScan.quote.isActive !== false) {
-            usedToday = 1;
-            latestRevealedQuote = publicScan.quote;
-            latestSource = publicScan.sourceType || "random";
+        // 3. Unauthenticated / Logged-out scan:
+        // If no tag scan was found yet, check if the tag or tag owner has a quote within the 24-hour window
+        if (!latestRevealedQuote) {
+            try {
+                const recentReceived = await receivedQuoteRepository.getQuotesWithin24Hours(tag.owner || null, tag._id);
+                if (recentReceived && recentReceived.length > 0 && recentReceived[0]?.quote) {
+                    latestRevealedQuote = recentReceived[0].quote;
+                    latestSource = recentReceived[0].source || "scan";
+                    usedToday = 1;
+
+                    // Bridge to ScanHistory so all subsequent guest scans see it immediately
+                    try {
+                        await scanRepository.createPublicScan({
+                            tag: tag._id,
+                            quote: latestRevealedQuote._id,
+                            category: latestRevealedQuote.category || "inspire",
+                            scanDateKey: todayKey,
+                            sourceType: latestSource,
+                        });
+                    } catch (bridgeErr) {}
+                }
+            } catch (err) {}
         }
+    }
+
+    // For unauthenticated scans, if an active quote already exists for this tag today or within 24h,
+    // mark usedToday = 1 so the guest cannot reveal a second, different quote
+    if (!authUserId && latestRevealedQuote) {
+        usedToday = 1;
     }
 
     const canReveal = usedToday < dailyLimit;
@@ -328,15 +443,16 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
     }
 
-    // If eligible for a new reveal, latestQuote is null (ready for intermediary reveal screen).
-    // If quota is exhausted, latestQuote contains the quote unlocked today.
+    // If quota is exhausted OR if user is unauthenticated and tag is already unlocked,
+    // latestQuote contains the quote unlocked today so the frontend directly displays it.
     let formattedLatestQuote = null;
-    if (!canReveal && latestRevealedQuote) {
+    if (latestRevealedQuote && (!canReveal || !authUserId)) {
         formattedLatestQuote = formatQuotePayload(latestRevealedQuote, latestSource, {
             isNewQuote: false,
             isAlreadyUnlocked: true,
             statusMessage: "Today's quote has already been unlocked. Come back tomorrow!",
             giftInfo,
+            giftDedication,
         });
     }
 
@@ -355,9 +471,6 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         } catch (assignErr) {}
     }
 
-    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
-
     return {
         canReveal,
         remainingQuotesToday,
@@ -371,9 +484,10 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         category: previewCategory,
         audioTrack: previewAudio || formattedLatestQuote?.audioTrack || null,
         gift: giftInfo,
-        isGift: Boolean(giftInfo?.isGift),
-        giftOrderId: giftInfo?.orderId || null,
+        isGift: Boolean(giftInfo?.isGift || giftDedication),
+        giftOrderId: giftInfo?.orderId || giftDedication?.orderId || null,
         isClaimable: Boolean(giftInfo?.isClaimable && !isAlreadyOwned),
+        giftDedication: giftDedication || null,
         isPersonalMessage: false,
         isAlreadyOwned,
         isOwner,
@@ -385,6 +499,7 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
         nextResetTime,
         timeUntilResetMs,
         latestQuote: formattedLatestQuote,
+        giftDedication: giftDedication || null,
         isAlreadyOwned,
         isOwner,
     };
@@ -442,29 +557,50 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
 
     // Resolve gift info
     let giftInfo = null;
+    let orderDoc = null;
     if (tag.assignedOrderId) {
         try {
-            const order = await Order.findById(tag.assignedOrderId).select("purchaseType giftStatus paymentStatus");
-            if (order && order.purchaseType === "gift") {
+            orderDoc = await Order.findById(tag.assignedOrderId).select("purchaseType giftStatus paymentStatus");
+            if (orderDoc && orderDoc.purchaseType === "gift") {
                 giftInfo = {
                     isGift: true,
-                    orderId: order._id.toString(),
-                    giftStatus: order.giftStatus || "pending_claim",
-                    isClaimable: !tag.owner && order.giftStatus !== "claimed" && order.paymentStatus === "paid",
+                    orderId: orderDoc._id.toString(),
+                    giftStatus: orderDoc.giftStatus || "pending_claim",
+                    isClaimable: !tag.owner && orderDoc.giftStatus !== "claimed" && orderDoc.paymentStatus === "paid",
                 };
             }
         } catch (e) {}
     }
 
-    // Personal message handling
-    if (tag.personalMessage && tag.personalMessage.trim() !== "") {
+    const { giftQuote, giftDedication } = await resolveGiftDedication(tag);
+    const targetUserId = user?.userId || user?._id || user?.id || (tag.owner ? tag.owner.toString() : null);
+    const isTagClaimed = Boolean(tag.owner || giftInfo?.giftStatus === "claimed" || orderDoc?.giftStatus === "claimed");
+
+    let hasViewedDedication = false;
+    if (giftQuote?._id && targetUserId) {
+        try {
+            hasViewedDedication = Boolean(await ReceivedQuote.exists({ user: targetUserId, quote: giftQuote._id }));
+        } catch {}
+    }
+
+    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
+    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
+    const shouldShowDedicationAsMain = giftDedication && !hasViewedDedication && (!isTagClaimed || !isAlreadyOwned);
+
+    // Initial gift dedication scan (unclaimed or not yet viewed)
+    if (shouldShowDedicationAsMain) {
+        if (targetUserId && giftQuote?._id) {
+            try {
+                await syncReceivedQuoteForUser(targetUserId, giftQuote, "personal", tag, todayKey, tz);
+            } catch (err) {}
+        }
         if (user?.userId) {
             try {
                 await scanRepository.createScan({
                     tag: tag._id,
                     user: user.userId,
-                    quote: null,
-                    category: "personal",
+                    quote: giftQuote?._id || null,
+                    category: giftQuote?.category || "gift",
                     scanDateKey: todayKey,
                     sourceType: "personal",
                 });
@@ -472,22 +608,23 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         }
 
         const personalPayload = {
-            _id: null,
-            quote: tag.personalMessage,
-            text: tag.personalMessage,
-            category: "personal",
-            author: null,
+            _id: giftQuote?._id || null,
+            quote: giftDedication.text,
+            text: giftDedication.text,
+            category: giftQuote?.category || "gift",
+            author: giftDedication.senderName,
             description: null,
             image: null,
             theme: null,
             editorData: null,
-            allowReuse: true,
+            allowReuse: false,
             isPersonalMessage: true,
+            isGift: true,
             sourceType: "personal",
             gift: giftInfo,
-            isGift: Boolean(giftInfo?.isGift),
-            giftOrderId: giftInfo?.orderId || null,
+            giftOrderId: giftInfo?.orderId || giftDedication.orderId || null,
             isClaimable: Boolean(giftInfo?.isClaimable),
+            giftDedication,
         };
 
         return {
@@ -497,28 +634,78 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
             dailyLimit: 1,
             usedToday: 1,
             latestQuote: personalPayload,
+            giftDedication,
+            isAlreadyOwned,
+            isOwner,
         };
     }
 
-    // Target user identification
-    const targetUserId = user?.userId || user?._id || user?.id || (tag.owner ? tag.owner.toString() : null);
-
-    // Resolve tier & limits
+    // Resolve tier & limits (only authenticated users obtain subscriber quota)
     let isSubscriber = false;
-    if (targetUserId) {
+    const authUserId = user?.userId || user?._id || user?.id || null;
+    if (authUserId) {
         try {
-            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(targetUserId);
+            const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(authUserId);
             isSubscriber = Boolean(activeSubs && activeSubs.length > 0);
         } catch (subErr) {}
     }
     const dailyLimit = isSubscriber ? 3 : 1;
 
-    // Quota eligibility check
-    const usedToday = targetUserId
-        ? await receivedQuoteRepository.countToday(targetUserId, todayKey)
-        : (await scanRepository.getPublicDailyScan(tag._id, todayKey) ? 1 : 0);
+    // Quota eligibility check with 24-hour window active quote recovery
+    let usedToday = 0;
+    let existingActiveQuote = null;
+    let existingSourceType = "scan";
 
-    if (usedToday >= dailyLimit) {
+    const publicDailyScan = await scanRepository.getPublicDailyScan(tag._id, todayKey);
+    if (publicDailyScan?.quote && publicDailyScan.quote.isActive !== false) {
+        existingActiveQuote = publicDailyScan.quote;
+        existingSourceType = publicDailyScan.sourceType || "scan";
+    }
+
+    if (!existingActiveQuote) {
+        try {
+            const recentReceived = await receivedQuoteRepository.getQuotesWithin24Hours(tag.owner || null, tag._id);
+            if (recentReceived && recentReceived.length > 0 && recentReceived[0]?.quote) {
+                existingActiveQuote = recentReceived[0].quote;
+                existingSourceType = recentReceived[0].source || "scan";
+            }
+        } catch (e) {}
+    }
+
+    if (authUserId) {
+        usedToday = await receivedQuoteRepository.countToday(authUserId, todayKey);
+    } else {
+        usedToday = existingActiveQuote ? 1 : 0;
+    }
+
+    // If quota reached OR if unauthenticated user scans a tag already unlocked in 24-hour window
+    if (usedToday >= dailyLimit || (!authUserId && existingActiveQuote)) {
+        if (existingActiveQuote) {
+            const nextResetTime = getNextAvailableAt(tzOrReq || req || tz);
+            const timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
+            const formatted = formatQuotePayload(existingActiveQuote, existingSourceType, {
+                isNewQuote: false,
+                isAlreadyUnlocked: true,
+                statusMessage: "Today's quote has already been unlocked. Come back tomorrow!",
+                giftInfo,
+                giftDedication,
+            });
+            return {
+                ...formatted,
+                canReveal: false,
+                remainingQuotesToday: 0,
+                dailyLimit,
+                dailyLimitReached: true,
+                nextResetTime,
+                timeUntilResetMs,
+                usedToday: 1,
+                latestQuote: formatted,
+                giftDedication: giftDedication || null,
+                isAlreadyOwned,
+                isOwner,
+            };
+        }
+
         const nextResetTime = getNextAvailableAt(tzOrReq || req || tz);
         const timeUntilResetMs = Math.max(0, new Date(nextResetTime).getTime() - Date.now());
         const appErr = new AppError(
@@ -551,6 +738,15 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
 
     // Avoid trapping user on static assignment if already received on prior calendar day
     let bypassedAssignedQuoteId = null;
+    if (assignedQuote && (assignedQuote.isGift || assignedQuote.isPersonalGift)) {
+        // If this assignment is the personal gift dedication, ONLY bypass once user has viewed it
+        if (hasViewedDedication) {
+            bypassedAssignedQuoteId = assignedQuote._id;
+            assignedQuote = null;
+            assignmentSourceType = null;
+        }
+    }
+
     if (assignedQuote && targetUserId) {
         try {
             const alreadyReceivedOnPriorDay = await receivedQuoteRepository.hasReceivedQuoteOnPriorDay(
@@ -580,7 +776,7 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         selectedQuote = assignedQuote;
         quoteSource = assignmentSourceType;
     } else {
-        // Priority 3: Rotating random quote bypassing already received quotes
+        // Priority 3: Rotating random quote bypassing already received quotes (and excluding personal gift quotes)
         const excludeIds = [];
         if (bypassedAssignedQuoteId) {
             try {
@@ -601,7 +797,7 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
             } catch (err) {}
         }
 
-        const matchFilter = { isActive: true };
+        const matchFilter = { isActive: true, isPersonalGift: { $ne: true } };
         if (excludeIds.length > 0) {
             matchFilter._id = { $nin: excludeIds };
         }
@@ -616,7 +812,7 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
             const todayReceivedIds = targetUserId
                 ? (await ReceivedQuote.find({ user: targetUserId, dayKey: todayKey }).distinct("quote"))
                 : [];
-            const cycleFilter = { isActive: true };
+            const cycleFilter = { isActive: true, isPersonalGift: { $ne: true } };
             if (todayReceivedIds.length > 0) {
                 cycleFilter._id = { $nin: todayReceivedIds };
             }
@@ -628,7 +824,7 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
 
         if (!randomQuotes || randomQuotes.length === 0) {
             randomQuotes = await Quote.aggregate([
-                { $match: { isActive: true } },
+                { $match: { isActive: true, isPersonalGift: { $ne: true } } },
                 { $sample: { size: 1 } },
             ]);
         }
@@ -726,10 +922,8 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         isAlreadyUnlocked: false,
         statusMessage: null,
         giftInfo,
+        giftDedication,
     });
-
-    const isAlreadyOwned = Boolean(tag.owner && (!user || tag.owner.toString() !== (user._id || user.id || user.userId)?.toString()));
-    const isOwner = Boolean(user && tag.owner && tag.owner.toString() === (user._id || user.id || user.userId)?.toString());
 
     return {
         ...formattedQuote,
@@ -741,6 +935,7 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         timeUntilResetMs,
         usedToday: newUsedToday,
         latestQuote: formattedQuote,
+        giftDedication: giftDedication || null,
         isAlreadyOwned,
         isOwner,
         streak: updatedStreak ? {

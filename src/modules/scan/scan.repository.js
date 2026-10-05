@@ -183,14 +183,49 @@ const getUserScanCount = async (userId) => {
 
 /**
  * Get today's public (anonymous) scan for a tag — used by the daily-quote
- * fast path. Filters user:null so it never collides with per-user scans.
+ * fast path. Looks up public scan first, then falls back to any active scan
+ * for this tag on dateKey or within a rolling 24-hour window to ensure quote consistency.
  */
 const getPublicDailyScan = async (tagId, dateKey) => {
-  return ScanHistory.findOne({
+  // 1. Try explicit public (user: null) scan for this tag and dateKey
+  let scan = await ScanHistory.findOne({
     tag: tagId,
     scanDateKey: dateKey,
     user: null,
   }).populate("quote", "text category author description image theme editorData renderedImages isActive");
+
+  if (scan?.quote && scan.quote.isActive !== false) {
+    return scan;
+  }
+
+  // 2. Fall back to any scan recorded for this physical tag on dateKey (including authenticated scans)
+  scan = await ScanHistory.findOne({
+    tag: tagId,
+    scanDateKey: dateKey,
+    quote: { $ne: null },
+  })
+    .sort({ createdAt: -1 })
+    .populate("quote", "text category author description image theme editorData renderedImages isActive");
+
+  if (scan?.quote && scan.quote.isActive !== false) {
+    return scan;
+  }
+
+  // 3. Fall back to 24-hour rolling window for this physical tag
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  scan = await ScanHistory.findOne({
+    tag: tagId,
+    createdAt: { $gte: twentyFourHoursAgo },
+    quote: { $ne: null },
+  })
+    .sort({ createdAt: -1 })
+    .populate("quote", "text category author description image theme editorData renderedImages isActive");
+
+  if (scan?.quote && scan.quote.isActive !== false) {
+    return scan;
+  }
+
+  return null;
 };
 
 /**

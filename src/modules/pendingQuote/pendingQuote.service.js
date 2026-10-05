@@ -4,6 +4,13 @@ import pendingQuoteRepository from "./pendingQuote.repository.js";
 import quoteRepository from "../quote/quote.repository.js";
 import orderRepository from "../order/order.repository.js";
 import subscriptionRepository from "../subscription/subscription.repository.js";
+import Quote from "../quote/quote.model.js";
+import QuoteAssignment from "../quoteAssignment/quoteAssignment.model.js";
+import Tag from "../tag/tag.model.js";
+import User from "../../models/user.model.js";
+import ReceivedQuote from "../received-quote/receivedQuote.model.js";
+import { getDayKey } from "../../utils/dateUtils.js";
+import { getOrderTagIds } from "../order/order.service.js";
 
 // ---------------------------------------------------------------------------
 // Quote submission limits
@@ -199,23 +206,153 @@ const approveQuote = async (id, adminNote = null) => {
     throw new AppError(httpStatus.BAD_REQUEST, `Quote already ${pendingQuote.status}`);
   }
 
+  // Handle gift message quote approval
+  if (pendingQuote.type === "gift" || pendingQuote.order) {
+    let order = null;
+    if (pendingQuote.order) {
+      order = await orderRepository.findById(pendingQuote.order);
+    }
+    const orderId = order?._id || pendingQuote.order || null;
+
+    // Resolve sender name
+    let senderName = pendingQuote.author || order?.giftSenderName || null;
+    if (!senderName && order?.user) {
+      try {
+        const userDoc = await User.findById(order.user).select("name");
+        senderName = userDoc?.name || null;
+      } catch {}
+    }
+    if (!senderName) {
+      senderName =
+        order?.shippingAddress?.fullName ||
+        order?.guestCustomer?.fullName ||
+        "A loved one";
+    }
+
+    // Build structured dedication metadata
+    const giftDedication = {
+      text: pendingQuote.text,
+      senderName,
+      recipientName: order?.shippingAddress?.fullName || null,
+      orderId: orderId || null,
+    };
+
+    // 1. Resolve tags for this order
+    const allTags = orderId ? await getOrderTagIds(orderId, order) : [];
+    const primaryTagId = allTags.length > 0 ? allTags[0] : null;
+
+    // 2. Create or Update dedicated Quote record with isGift: true & isPersonalGift: true
+    let quote = orderId ? await Quote.findOne({ order: orderId, isGift: true }) : null;
+    if (!quote) {
+      quote = await Quote.create({
+        text: pendingQuote.text,
+        category: "gift",
+        author: senderName,
+        giftSenderName: senderName,
+        user: order?.user || pendingQuote.user || null,
+        order: orderId,
+        tag: primaryTagId,
+        giftDedication,
+        isGift: true,
+        isPersonalGift: true,
+        recipientUser: order?.giftClaimedBy || null,
+        isActive: true,
+        allowReuse: false,
+      });
+    } else {
+      quote.text = pendingQuote.text;
+      quote.author = senderName;
+      quote.giftSenderName = senderName;
+      if ((order?.user || pendingQuote.user) && !quote.user) {
+        quote.user = order?.user || pendingQuote.user;
+      }
+      quote.giftDedication = giftDedication;
+      quote.isGift = true;
+      quote.isPersonalGift = true;
+      quote.isActive = true;
+      if (primaryTagId && !quote.tag) {
+        quote.tag = primaryTagId;
+      }
+      if (order?.giftClaimedBy) {
+        quote.recipientUser = order.giftClaimedBy;
+      }
+      await quote.save();
+    }
+
+    // 3. Mark PendingQuote as approved
+    const updated = await pendingQuoteRepository.approveQuote(id, adminNote);
+
+    // 4. Mark Order.giftMessageStatus = "approved", sync quote back-reference & sync tags
+    if (orderId) {
+      await orderRepository.updateOrder(orderId, {
+        giftMessage: pendingQuote.text,
+        giftMessageStatus: "approved",
+        giftMessageReviewedAt: new Date(),
+        giftMessageAdminNote: adminNote,
+        quote: quote._id,
+      });
+
+      if (allTags && allTags.length > 0) {
+        for (const tagId of allTags) {
+          await Tag.findByIdAndUpdate(tagId, {
+            personalMessage: pendingQuote.text,
+            assignedOrderId: orderId,
+          });
+          await QuoteAssignment.findOneAndUpdate(
+            { tag: tagId, assignmentType: "tag" },
+            {
+              quote: quote._id,
+              tag: tagId,
+              assignmentType: "tag",
+              priority: 100,
+              isActive: true,
+            },
+            { upsert: true, new: true, setDefaultsOnInsert: true }
+          );
+        }
+      }
+
+      // If gift was already claimed by a recipient, ensure ReceivedQuote is recorded
+      if (order?.giftClaimedBy) {
+        try {
+          const existingReceived = await ReceivedQuote.findOne({
+            user: order.giftClaimedBy,
+            quote: quote._id,
+          });
+          if (!existingReceived) {
+            await ReceivedQuote.create({
+              user: order.giftClaimedBy,
+              quote: quote._id,
+              order: orderId,
+              categorySlug: "gift",
+              receivedAt: new Date(),
+              source: "personal",
+              dayKey: getDayKey(),
+              isRead: true,
+              metadata: {
+                orderId: orderId.toString(),
+                sourceType: "personal_gift",
+                giftSenderName: senderName,
+              },
+            });
+          }
+        } catch (e) {}
+      }
+    }
+
+    return updated;
+  }
+
+  // Regular community quote approval
   await quoteRepository.createQuote({
     text: pendingQuote.text,
     category: resolveApprovedCategory(pendingQuote.category),
     author: pendingQuote.author || null,
+    user: pendingQuote.user || null,
     isActive: true,
   });
 
   const updated = await pendingQuoteRepository.approveQuote(id, adminNote);
-
-  if (pendingQuote.order) {
-    await orderRepository.updateOrder(pendingQuote.order, {
-      giftMessageStatus: "approved",
-      giftMessageReviewedAt: new Date(),
-      giftMessageAdminNote: adminNote,
-    });
-  }
-
   return updated;
 };
 
