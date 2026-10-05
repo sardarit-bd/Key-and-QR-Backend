@@ -1103,7 +1103,7 @@ const confirmPaymentAndAssignTag = async (
 /**
  * Claim Gift Order
  */
-const claimGiftOrder = async (orderId, userId) => {
+const claimGiftOrder = async (orderId, userId, tagCode = null) => {
   const session = await mongoose.startSession();
   try {
     return await session.withTransaction(async () => {
@@ -1137,6 +1137,31 @@ const claimGiftOrder = async (orderId, userId) => {
           httpStatus.BAD_REQUEST,
           "No tags assigned to this gift order",
         );
+      }
+
+      // ✅ Verify physical tagCode to prevent IDOR attacks
+      const normalizedTagCode = typeof tagCode === "string" ? tagCode.trim() : null;
+      let primaryTagId = allTags[0];
+
+      if (normalizedTagCode) {
+        const matchedTag = await Tag.findOne({ tagCode: normalizedTagCode }).session(session);
+        if (!matchedTag || !allTags.includes(matchedTag._id.toString())) {
+          throw new AppError(
+            httpStatus.FORBIDDEN,
+            "Invalid tag code for this gift order",
+          );
+        }
+        primaryTagId = matchedTag._id.toString();
+      } else {
+        // Fallback safeguard: If tagCode is optionally omitted by a legacy client request,
+        // safely default to that single tag if the order only contains a single tag.
+        // Otherwise, if multiple tags exist, require a matching tagCode and throw 403 Forbidden.
+        if (allTags.length > 1) {
+          throw new AppError(
+            httpStatus.FORBIDDEN,
+            "Tag code is required to claim this gift order with multiple tags",
+          );
+        }
       }
 
       // ✅ Claim all tags and assign to recipient
@@ -1176,7 +1201,7 @@ const claimGiftOrder = async (orderId, userId) => {
       // Also associate recipientUser and physical tag on any gift Quote for this order
       await Quote.updateMany(
         { order: orderId },
-        { recipientUser: userId, tag: allTags[0] || null }
+        { recipientUser: userId, tag: primaryTagId || allTags[0] || null }
       ).session(session);
 
       // Immediately insert an initial ReceivedQuote record for the recipient user
@@ -1969,8 +1994,8 @@ const cancelOrder = async (orderId, userId, reason, cancelledBy = "user") => {
     );
   }
 
-  if (cancelledBy === "user" && order.user.toString() !== userId) {
-    throw new AppError(403, "You are not authorized to cancel this order");
+  if (cancelledBy === "user" && (!order.user || order.user.toString() !== userId.toString())) {
+    throw new AppError(httpStatus.FORBIDDEN, "You are not authorized to cancel this order");
   }
 
   let refundProcessed = false;
@@ -2028,9 +2053,9 @@ const requestRefund = async (orderId, userId, reason) => {
     throw new AppError(404, "Order not found");
   }
 
-  if (order.user.toString() !== userId) {
+  if (!order.user || order.user.toString() !== userId.toString()) {
     throw new AppError(
-      403,
+      httpStatus.FORBIDDEN,
       "You are not authorized to request refund for this order",
     );
   }
@@ -2146,9 +2171,9 @@ const requestReturn = async (orderId, userId, reason) => {
     throw new AppError(404, "Order not found");
   }
 
-  if (order.user.toString() !== userId) {
+  if (!order.user || order.user.toString() !== userId.toString()) {
     throw new AppError(
-      403,
+      httpStatus.FORBIDDEN,
       "You are not authorized to request return for this order",
     );
   }
@@ -2878,5 +2903,4 @@ export default {
   replaceOrderTag,
   removeTagFromOrder,
   bulkUnassignTags,
-  claimGiftOrder,
 };

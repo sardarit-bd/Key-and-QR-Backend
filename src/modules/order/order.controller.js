@@ -298,9 +298,11 @@ const completeReturn = catchAsync(async (req, res) => {
  * Claim Gift Order (User)
  */
 const claimGiftOrder = catchAsync(async (req, res) => {
+    const { tagCode } = req.body || {};
     const result = await orderService.claimGiftOrder(
         req.params.id,
         req.user.userId,
+        tagCode,
     );
 
     sendResponse(res, {
