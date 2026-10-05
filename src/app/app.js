@@ -10,6 +10,7 @@ import notFoundHandler from "../middlewares/notFound.middleware.js";
 import router from "../routes/index.js";
 import stripeWebhook from "../routes/stripe.webhook.js";
 import { apiLimiter } from "../middlewares/rateLimiter.js";
+import sanitizeBody from "../middlewares/sanitize.middleware.js";
 
 const app = express();
 
@@ -84,6 +85,7 @@ app.use("/api/v1/stripe", stripeWebhook);
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
+app.use(sanitizeBody);
 app.use(cookieParser());
 
 app.get("/", (req, res) => {

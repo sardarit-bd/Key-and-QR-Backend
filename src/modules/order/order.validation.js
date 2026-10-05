@@ -36,3 +36,12 @@ export const updateOrderValidationSchema = Joi.object({
   // Legacy fields (backward compatibility)
   quantity: Joi.number().min(1).optional(),
 }).options({ stripUnknown: true });
+
+/**
+ * Validation schema for claiming a gift order.
+ * Accepts an optional tagCode to verify ownership of physical tag.
+ */
+export const claimGiftValidationSchema = Joi.object({
+  tagCode: Joi.string().trim().max(100).optional().allow("", null),
+}).options({ stripUnknown: true });
+

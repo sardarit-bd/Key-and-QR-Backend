@@ -7,7 +7,10 @@ import validateRequest from "../../middlewares/validate.middleware.js";
 import roles from "../../constants/roles.js";
 import { validateCheckout } from "../../middlewares/checkoutValidation.middleware.js";
 import { guestCheckoutLimiter } from "../../middlewares/rateLimiter.js";
-import { updateOrderValidationSchema } from "./order.validation.js";
+import {
+    updateOrderValidationSchema,
+    claimGiftValidationSchema,
+} from "./order.validation.js";
 
 const router = express.Router();
 
@@ -144,6 +147,7 @@ router.post(
 router.post(
     "/:id/claim-gift",
     auth(roles.USER, roles.ADMIN),
+    validateRequest(claimGiftValidationSchema),
     orderController.claimGiftOrder
 );
 
