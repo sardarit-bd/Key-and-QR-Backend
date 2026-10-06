@@ -1,5 +1,6 @@
 import Favorite from "./favorite.model.js";
 import Quote from "../quote/quote.model.js";
+import Product from "../../models/product.model.js";
 
 /**
  * Create a favorite
