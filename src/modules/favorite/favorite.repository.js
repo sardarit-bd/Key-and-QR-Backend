@@ -137,10 +137,12 @@ const getUserFavorites = async (
         }
     }
 
+    const FAVORITE_QUOTE_FIELDS = 'text category author description image theme renderedImages editorData isGift giftDedication giftSenderName';
+
     // Build query
     let query = Favorite.find(filter)
         .populate('product', 'name price image description')
-        .populate('quote', 'text category author image theme')
+        .populate('quote', FAVORITE_QUOTE_FIELDS)
         .sort(sort)
         .skip(skip)
         .limit(limit);
@@ -149,10 +151,17 @@ const getUserFavorites = async (
     // Note: Search in populated fields requires additional handling
     // This is a simplified version
 
-    const [data, total] = await Promise.all([
+    const [rawDocs, total] = await Promise.all([
         query.lean(),
         Favorite.countDocuments(filter),
     ]);
+
+    // Filter out orphaned favorites where quote or product was deleted
+    const data = type === 'quote'
+        ? rawDocs.filter((item) => Boolean(item.quote))
+        : type === 'product'
+        ? rawDocs.filter((item) => Boolean(item.product))
+        : rawDocs.filter((item) => Boolean(item.quote || item.product));
 
     return {
         meta: {
@@ -169,13 +178,15 @@ const getUserFavorites = async (
  * Get favorite by ID (with ownership check)
  */
 const getFavoriteById = (id, userId) => {
+    const FAVORITE_QUOTE_FIELDS = 'text category author description image theme renderedImages editorData isGift giftDedication giftSenderName';
+
     return Favorite.findOne({
         _id: id,
         user: userId,
         isDeleted: false,
     })
-    .populate('product', 'name price image')
-    .populate('quote', 'text category author image');
+    .populate('product', 'name price image description')
+    .populate('quote', FAVORITE_QUOTE_FIELDS);
 };
 
 /**
