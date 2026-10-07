@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import logger from "../../utils/logger.js";
 import Order from "../order/order.model.js";
 import Tag from "../tag/tag.model.js";
+import User from "../../models/user.model.js";
 
 
 class GuestAccountClaimService {
@@ -198,11 +199,16 @@ class GuestAccountClaimService {
             throw new Error(`Tag ${tagId} is owned by another user`);
         }
 
+        // ✅ Check if claiming user is a subscriber
+        const user = await User.findById(userId).lean();
+        const isSubscriber = Boolean(user?.isPremium || user?.subscriptionTier === "subscriber");
+
         // ✅ Update tag with user ID
         const updatedTag = await Tag.findByIdAndUpdate(
             tagId,
             {
                 owner: userId,
+                ...(isSubscriber ? { subscriptionType: "subscriber" } : {}),
                 // ✅ Maintain all other properties
                 // ✅ isActivated: true (already set)
                 // ✅ activatedAt: existing

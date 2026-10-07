@@ -1007,6 +1007,18 @@ const confirmPaymentAndAssignTag = async (
                 tagIndex += itemTagCount;
               }
             }
+
+            // If purchaser has an active subscription/premium status, elevate newly assigned tags
+            if (order.user && assignedTags.length > 0) {
+              const buyerUser = await User.findById(order.user).session(session).lean();
+              if (buyerUser?.isPremium || buyerUser?.subscriptionTier === "subscriber") {
+                await Tag.updateMany(
+                  { _id: { $in: assignedTags } },
+                  { subscriptionType: "subscriber" },
+                  { session },
+                );
+              }
+            }
           }
         } catch (tagError) {
           logger.error(`⚠️ Tag assignment error for order ${orderId}: ${tagError.message}`);
@@ -1164,6 +1176,11 @@ const claimGiftOrder = async (orderId, userId, tagCode = null) => {
         }
       }
 
+      const recipientUser = await User.findById(userId).session(session).lean();
+      const isRecipientSubscriber = Boolean(
+        recipientUser?.isPremium || recipientUser?.subscriptionTier === "subscriber"
+      );
+
       // ✅ Claim all tags and assign to recipient
       for (const tagId of allTags) {
         const tag = await Tag.findById(tagId).session(session);
@@ -1183,6 +1200,7 @@ const claimGiftOrder = async (orderId, userId, tagCode = null) => {
             owner: userId,
             isActivated: true,
             activatedAt: new Date(),
+            ...(isRecipientSubscriber ? { subscriptionType: "subscriber" } : {}),
           },
           { session, returnDocument: "after" },
         );

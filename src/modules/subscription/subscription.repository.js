@@ -11,8 +11,9 @@ const createSubscription = async (payload) => {
 };
 
 const upsertSubscriptionByUserAndTag = async (userId, tagId, payload) => {
+  const query = { user: userId, tag: tagId || null };
   return Subscription.findOneAndUpdate(
-    { user: userId, tag: tagId },
+    query,
     payload,
     {
       new: true,
@@ -52,8 +53,8 @@ const findUserSubscriptions = async (userId) => {
 const findActiveSubscriptionByUserAndTag = async (userId, tagId) => {
   return Subscription.findOne({
     user: userId,
-    tag: tagId,
-    status: { $in: ["active", "trialing"] },
+    tag: tagId || null,
+    status: { $in: ["active", "trialing", "past_due"] },
     subscriptionType: "subscriber",
   })
     .populate("tag", "tagCode subscriptionType owner isActivated isActive")
@@ -64,7 +65,7 @@ const findActiveSubscriptionByUserAndTag = async (userId, tagId) => {
 const findActiveSubscriptionsByUser = async (userId) => {
   return Subscription.find({
     user: userId,
-    status: { $in: ["active", "trialing"] },
+    status: { $in: ["active", "trialing", "past_due"] },
     subscriptionType: "subscriber",
   })
     .populate("tag", "tagCode subscriptionType owner isActivated isActive")

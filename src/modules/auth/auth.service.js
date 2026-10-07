@@ -101,6 +101,8 @@ const buildAuthResponse = (user) => {
       updatedAt: user.updatedAt,
       stripeCustomerId: user.stripeCustomerId || null,
       nameChangedAt: user.nameChangedAt || null,
+      isPremium: Boolean(user.isPremium || user.subscriptionTier === "subscriber"),
+      subscriptionTier: user.subscriptionTier || (user.isPremium ? "subscriber" : "free"),
     },
   };
 };
@@ -603,6 +605,8 @@ const getMe = async (userId) => {
     stripeCustomerId: user.stripeCustomerId || null,
     isDeleted: user.isDeleted,
     nameChangedAt: user.nameChangedAt || null,
+    isPremium: Boolean(user.isPremium || user.subscriptionTier === "subscriber"),
+    subscriptionTier: user.subscriptionTier || (user.isPremium ? "subscriber" : "free"),
   };
 };
 

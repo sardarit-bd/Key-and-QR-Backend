@@ -9,6 +9,8 @@ import authRepository from "../auth/auth.repository.js";
 import sendEmail from "../../utils/sendEmail.js";
 import logger from "../../utils/logger.js";
 import User from "../../models/user.model.js";
+import Tag from "../tag/tag.model.js";
+import Subscription from "./subscription.model.js";
 
 const mapStripeStatusToLocal = (status) => {
   const allowed = [
@@ -67,6 +69,7 @@ const getMySubscriptions = async (userId) => {
 
 const createCheckoutSession = async (userId, tagCode = null, preferredCategory = null) => {
   let tag = null;
+  const isTagSpecific = Boolean(tagCode);
 
   if (tagCode) {
     tag = await tagRepository.findByTagCode(tagCode);
@@ -78,36 +81,21 @@ const createCheckoutSession = async (userId, tagCode = null, preferredCategory =
     if (!tag.owner || tag.owner.toString() !== userId.toString()) {
       throw new AppError(httpStatus.FORBIDDEN, "You don't own this tag");
     }
+
+    if (!tag.isActive) {
+      throw new AppError(httpStatus.BAD_REQUEST, "Tag is disabled");
+    }
   } else {
-    // 1. Check if user already owns an active tag
+    // 1. For account-level subscription, link primary active tag if user owns one
     const userTags = await tagRepository.findTagsByOwner(userId);
     if (userTags && userTags.length > 0) {
       tag = userTags[0];
-    } else {
-      // 2. Auto-provision a digital user tag anchor for this user
-      const uniqueCode = `TAG-${userId.toString().slice(-6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
-      tag = await tagRepository.createTag({
-        tagCode: uniqueCode,
-        owner: userId,
-        isActive: true,
-        isActivated: true,
-        activatedAt: new Date(),
-        subscriptionType: "free",
-      });
     }
   }
 
-  if (!tag.isActive) {
-    throw new AppError(httpStatus.BAD_REQUEST, "Tag is disabled");
-  }
-
-  const existing = await subscriptionRepository.findByUserAndTag(userId, tag._id);
-
-  if (
-    existing &&
-    ["active", "trialing", "past_due"].includes(existing.status) &&
-    existing.subscriptionType === "subscriber"
-  ) {
+  // Check if user already holds an active Premium subscription
+  const existingSubs = await subscriptionRepository.findActiveSubscriptionsByUser(userId);
+  if (existingSubs && existingSubs.length > 0) {
     throw new AppError(
       httpStatus.CONFLICT,
       "You already have an active Premium subscription"
@@ -139,6 +127,13 @@ const createCheckoutSession = async (userId, tagCode = null, preferredCategory =
     await authRepository.updateUser(userId, { stripeCustomerId: customerId });
   }
 
+  const successUrl = tagCode
+    ? `${env.clientUrl}/subscription/success?tagCode=${tag.tagCode}`
+    : `${env.clientUrl}/subscription/success`;
+  const cancelUrl = tagCode
+    ? `${env.clientUrl}/subscription/cancel?tagCode=${tag.tagCode}`
+    : `${env.clientUrl}/subscription/cancel`;
+
   const session = await stripe.checkout.sessions.create({
     mode: "subscription",
     payment_method_types: ["card"],
@@ -149,22 +144,23 @@ const createCheckoutSession = async (userId, tagCode = null, preferredCategory =
         quantity: 1,
       },
     ],
-    success_url: `${env.clientUrl}/subscription/success?tagCode=${tag.tagCode}`,
-    cancel_url: `${env.clientUrl}/subscription/cancel?tagCode=${tag.tagCode}`,
+    success_url: successUrl,
+    cancel_url: cancelUrl,
     metadata: {
       userId: userId.toString(),
-      tagId: tag._id.toString(),
-      tagCode: tag.tagCode,
+      tagId: tag ? tag._id.toString() : "",
+      tagCode: tag ? tag.tagCode : "",
+      isTagSpecific: isTagSpecific ? "true" : "false",
       preferredCategory: preferredCategory || "",
     },
   });
 
   const subscription = await subscriptionRepository.upsertSubscriptionByUserAndTag(
     userId,
-    tag._id,
+    tag ? tag._id : null,
     {
       user: userId,
-      tag: tag._id,
+      tag: tag ? tag._id : null,
       subscriptionType: "free",
       status: "checkout_pending",
       stripeCheckoutSessionId: session.id,
@@ -280,6 +276,7 @@ const getLatestInvoice = async (userId) => {
 const activateFromCheckoutSession = async (session) => {
   let userId = session.metadata?.userId || null;
   let tagId = session.metadata?.tagId || null;
+  const tagCode = session.metadata?.tagCode || null;
   const preferredCategory = session.metadata?.preferredCategory || null;
 
   // Retrieve full session with subscription and customer expanded
@@ -292,7 +289,7 @@ const activateFromCheckoutSession = async (session) => {
     logger.warn(`Could not retrieve full checkout session (${session.id}): ${err.message}. Using event payload.`);
   }
 
-  const stripeSubscription = fullSession.subscription;
+  let stripeSubscription = fullSession.subscription;
   const customerId =
     (typeof fullSession.customer === "object" ? fullSession.customer?.id : fullSession.customer) ||
     session.customer ||
@@ -303,6 +300,16 @@ const activateFromCheckoutSession = async (session) => {
     session.customer_details?.email ||
     session.customer_email ||
     null;
+
+  // If subscription is string ID, retrieve the subscription object from Stripe
+  if (typeof stripeSubscription === "string" || (!stripeSubscription?.id && fullSession.subscription)) {
+    const subId = typeof stripeSubscription === "string" ? stripeSubscription : fullSession.subscription;
+    try {
+      stripeSubscription = await stripe.subscriptions.retrieve(subId);
+    } catch (subErr) {
+      logger.warn(`Could not retrieve Stripe subscription (${subId}): ${subErr.message}`);
+    }
+  }
 
   // Fallback 1: Resolve existing subscription document by session ID
   let existingSub = null;
@@ -343,35 +350,16 @@ const activateFromCheckoutSession = async (session) => {
     userDoc = await User.findById(userId);
   }
 
-  // Fallback for tagId if still missing
-  if (!tagId) {
-    if (session.metadata?.tagCode) {
-      const tag = await tagRepository.findByTagCode(session.metadata.tagCode);
-      if (tag) tagId = tag._id.toString();
-    }
-    if (!tagId) {
-      const userTags = await tagRepository.findTagsByOwner(userId);
-      if (userTags && userTags.length > 0) {
-        tagId = userTags[0]._id.toString();
-      } else {
-        const uniqueCode = `TAG-${userId.toString().slice(-6).toUpperCase()}-${Date.now().toString(36).toUpperCase()}`;
-        const newTag = await tagRepository.createTag({
-          tagCode: uniqueCode,
-          owner: userId,
-          isActive: true,
-          isActivated: true,
-          activatedAt: new Date(),
-          subscriptionType: "subscriber",
-        });
-        tagId = newTag._id.toString();
-      }
-    }
+  // Fallback for tagId if specified by tagCode
+  if (!tagId && tagCode) {
+    const matchedTag = await tagRepository.findByTagCode(tagCode);
+    if (matchedTag) tagId = matchedTag._id.toString();
   }
 
   const rawStripeStatus = stripeSubscription?.status || "active";
   const mappedStatus = mapStripeStatusToLocal(rawStripeStatus);
-  const resolvedStatus = ["active", "trialing"].includes(mappedStatus) ? mappedStatus : "active";
-  const stripeSubId = typeof stripeSubscription === "object" ? stripeSubscription?.id : stripeSubscription;
+  const resolvedStatus = ["active", "trialing", "past_due"].includes(mappedStatus) ? mappedStatus : "active";
+  const stripeSubId = typeof stripeSubscription === "object" ? stripeSubscription?.id : (stripeSubscription || null);
 
   const currentPeriodStart = stripeSubscription?.items?.data?.[0]?.current_period_start
     ? new Date(stripeSubscription.items.data[0].current_period_start * 1000)
@@ -383,10 +371,10 @@ const activateFromCheckoutSession = async (session) => {
 
   const updated = await subscriptionRepository.upsertSubscriptionByUserAndTag(
     userId,
-    tagId,
+    tagId || null,
     {
       user: userId,
-      tag: tagId,
+      tag: tagId || null,
       subscriptionType: "subscriber",
       status: resolvedStatus,
       preferredCategory,
@@ -401,16 +389,27 @@ const activateFromCheckoutSession = async (session) => {
     }
   );
 
-  // Immediately update User model so profile and queries reflect subscriber tier
+  // 1. Immediately update User model so profile and queries reflect subscriber tier
   await User.findByIdAndUpdate(userId, {
     isPremium: true,
     subscriptionTier: "subscriber",
     ...(customerId ? { stripeCustomerId: customerId } : {}),
   });
 
-  await tagRepository.updateTag(tagId, {
-    subscriptionType: "subscriber",
-  });
+  // 2. Update the specific tag if linked
+  if (tagId) {
+    await tagRepository.updateTag(tagId, {
+      subscriptionType: "subscriber",
+    });
+  }
+
+  // 3. Elevate ALL tags owned by this user so every physical tag reflects subscriber status
+  await Tag.updateMany(
+    { owner: userId },
+    { subscriptionType: "subscriber" }
+  );
+
+  logger.info(`✅ Successfully activated Premium subscription for user ${userId} and updated tag(s) to subscriber tier`);
 
   // Dispatch Welcome/Confirmation Email (non-blocking)
   try {
@@ -462,9 +461,21 @@ const activateFromCheckoutSession = async (session) => {
 };
 
 const syncFromStripeSubscription = async (stripeSubscription) => {
-  const local = await subscriptionRepository.findByStripeSubscriptionId(
+  let local = await subscriptionRepository.findByStripeSubscriptionId(
     stripeSubscription.id
   );
+
+  // Fallback: search by customer if not yet matched by subscription id
+  if (!local && stripeSubscription.customer) {
+    local = await subscriptionRepository.findByStripeCustomerId(stripeSubscription.customer);
+    if (!local) {
+      const user = await User.findOne({ stripeCustomerId: stripeSubscription.customer });
+      if (user) {
+        const userSubs = await subscriptionRepository.findUserSubscriptions(user._id);
+        if (userSubs && userSubs.length > 0) local = userSubs[0];
+      }
+    }
+  }
 
   if (!local) {
     return null;
@@ -489,12 +500,32 @@ const syncFromStripeSubscription = async (stripeSubscription) => {
     subscriptionType: shouldBeSubscriber ? "subscriber" : "free",
   });
 
-  if (local.user) {
-    const userId = local.user?._id || local.user;
-    await User.findByIdAndUpdate(userId, {
-      isPremium: shouldBeSubscriber,
-      subscriptionTier: shouldBeSubscriber ? "subscriber" : "free",
-    });
+  const userId = local.user?._id || local.user;
+  if (userId) {
+    if (shouldBeSubscriber) {
+      await User.findByIdAndUpdate(userId, {
+        isPremium: true,
+        subscriptionTier: "subscriber",
+      });
+      await Tag.updateMany(
+        { owner: userId },
+        { subscriptionType: "subscriber" }
+      );
+    } else {
+      // Check if user has any other active subscriptions before downgrading
+      const otherActive = await subscriptionRepository.findActiveSubscriptionsByUser(userId);
+      const hasOther = otherActive.some((s) => s._id.toString() !== local._id.toString());
+      if (!hasOther) {
+        await User.findByIdAndUpdate(userId, {
+          isPremium: false,
+          subscriptionTier: "free",
+        });
+        await Tag.updateMany(
+          { owner: userId },
+          { subscriptionType: "free" }
+        );
+      }
+    }
   }
 
   if (local.tag) {
@@ -529,13 +560,28 @@ const handleInvoicePaymentSucceeded = async (invoice) => {
 
   // If not found by subscription ID, try finding by customer
   if (!local && invoice.customer) {
-    const user = await User.findOne({ stripeCustomerId: invoice.customer });
+    let user = await User.findOne({ stripeCustomerId: invoice.customer });
+    if (!user && invoice.customer_email) {
+      user = await User.findOne({ email: invoice.customer_email.toLowerCase().trim() });
+    }
     if (user) {
       const userSubs = await subscriptionRepository.findUserSubscriptions(user._id);
       if (userSubs && userSubs.length > 0) {
         local = userSubs[0];
         await subscriptionRepository.updateById(local._id, {
           stripeSubscriptionId,
+        });
+      } else {
+        // Create active subscription record directly from invoice
+        local = await subscriptionRepository.createSubscription({
+          user: user._id,
+          tag: null,
+          subscriptionType: "subscriber",
+          status: "active",
+          stripeCustomerId: invoice.customer,
+          stripeSubscriptionId,
+          currentPeriodStart: new Date(),
+          currentPeriodEnd: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
         });
       }
     }
@@ -564,6 +610,10 @@ const handleInvoicePaymentSucceeded = async (invoice) => {
         isPremium: true,
         subscriptionTier: "subscriber",
       });
+      await Tag.updateMany(
+        { owner: userId },
+        { subscriptionType: "subscriber" }
+      );
     }
 
     const tagId = local.tag?._id || local.tag;

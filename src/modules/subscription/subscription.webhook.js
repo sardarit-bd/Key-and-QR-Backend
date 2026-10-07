@@ -25,6 +25,7 @@ export const handleSubscriptionWebhook = async (event) => {
       break;
     }
 
+    case "customer.subscription.created":
     case "customer.subscription.updated": {
       const stripeSubscription = event.data.object;
       await subscriptionService.syncFromStripeSubscription(stripeSubscription);

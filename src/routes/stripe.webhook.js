@@ -11,11 +11,32 @@ import roles from "../constants/roles.js";
 
 const router = express.Router();
 
+// Healthcheck GET endpoint for verifying webhook URL reachability
+router.get(
+  ["/webhook", "/stripe/webhook", "/"],
+  (req, res) => {
+    res.status(200).json({
+      success: true,
+      message: "Stripe Webhook endpoint is active and listening for POST events",
+    });
+  }
+);
+
 router.post(
-  "/webhook",
+  ["/webhook", "/stripe/webhook", "/"],
   express.raw({ type: "application/json" }),
   async (req, res) => {
     const sig = req.headers["stripe-signature"];
+    if (!sig) {
+      logger.error("Webhook Error: Missing stripe-signature header");
+      return res.status(400).send("Webhook Error: Missing stripe-signature header");
+    }
+
+    if (!env.stripeWebhookSecret) {
+      logger.error("Webhook Error: STRIPE_WEBHOOK_SECRET is not configured in environment");
+      return res.status(500).send("Webhook Error: STRIPE_WEBHOOK_SECRET is not configured on server");
+    }
+
     let event;
 
     try {
@@ -162,6 +183,7 @@ router.post(
             logger.info(`ℹ️ payment_intent.succeeded received without metadata.orderId (${paymentIntentId})`);
           }
         } else if (
+          eventType === "customer.subscription.created" ||
           eventType === "customer.subscription.updated" ||
           eventType === "customer.subscription.deleted" ||
           eventType === "invoice.paid" ||

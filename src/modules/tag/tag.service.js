@@ -4,6 +4,8 @@ import tagRepository from "./tag.repository.js";
 import logger from "../../utils/logger.js";
 import Tag from "./tag.model.js";
 
+import User from "../../models/user.model.js";
+
 // ================================
 // EXISTING FUNCTIONS
 // ================================
@@ -99,10 +101,14 @@ const activateTag = async (tagCode, userId) => {
     throw new AppError(httpStatus.CONFLICT, "Tag already activated");
   }
 
+  const user = await User.findById(userId).lean();
+  const isSubscriber = Boolean(user?.isPremium || user?.subscriptionTier === "subscriber");
+
   return tagRepository.updateTag(tag._id, {
     owner: userId,
     isActivated: true,
     activatedAt: new Date(),
+    ...(isSubscriber ? { subscriptionType: "subscriber" } : {}),
   });
 };
 
