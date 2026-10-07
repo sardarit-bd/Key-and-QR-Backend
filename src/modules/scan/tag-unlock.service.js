@@ -13,6 +13,7 @@ import ReceivedQuote from "../received-quote/receivedQuote.model.js";
 import receivedQuoteRepository from "../received-quote/receivedQuote.repository.js";
 import subscriptionRepository from "../subscription/subscription.repository.js";
 import streakService from "../streak/streak.service.js";
+import User from "../../models/user.model.js";
 import { getDayKey, getNextAvailableAt } from "../../utils/dateUtils.js";
 
 const syncReceivedQuoteForUser = async (targetUserId, quoteDoc, quoteSource, tag, explicitTodayKey = null, tz = null) => {
@@ -367,7 +368,16 @@ const publicUnlock = async (tagCode, user = null, tzOrReq = null) => {
     if (authUserId) {
         try {
             const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(authUserId);
-            isSubscriber = Boolean(activeSubs && activeSubs.length > 0);
+            if (activeSubs && activeSubs.length > 0) {
+                isSubscriber = true;
+            } else {
+                const userDoc = await User.findById(authUserId).select("isPremium subscriptionTier");
+                if (userDoc?.isPremium || userDoc?.subscriptionTier === "subscriber") {
+                    isSubscriber = true;
+                } else if (tag.owner && tag.owner.toString() === authUserId.toString() && tag.subscriptionType === "subscriber") {
+                    isSubscriber = true;
+                }
+            }
         } catch (subErr) {
             // fallback free
         }
@@ -646,7 +656,16 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
     if (authUserId) {
         try {
             const activeSubs = await subscriptionRepository.findActiveSubscriptionsByUser(authUserId);
-            isSubscriber = Boolean(activeSubs && activeSubs.length > 0);
+            if (activeSubs && activeSubs.length > 0) {
+                isSubscriber = true;
+            } else {
+                const userDoc = await User.findById(authUserId).select("isPremium subscriptionTier");
+                if (userDoc?.isPremium || userDoc?.subscriptionTier === "subscriber") {
+                    isSubscriber = true;
+                } else if (tag.owner && tag.owner.toString() === authUserId.toString() && tag.subscriptionType === "subscriber") {
+                    isSubscriber = true;
+                }
+            }
         } catch (subErr) {}
     }
     const dailyLimit = isSubscriber ? 3 : 1;

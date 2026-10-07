@@ -47,6 +47,8 @@ const auth = (...requiredRoles) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        isPremium: Boolean(user.isPremium || user.subscriptionTier === "subscriber"),
+        subscriptionTier: user.subscriptionTier || (user.isPremium ? "subscriber" : "free"),
       };
 
       // Check role permissions

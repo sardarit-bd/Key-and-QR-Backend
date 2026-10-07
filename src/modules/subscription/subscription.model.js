@@ -12,7 +12,7 @@ const subscriptionSchema = new mongoose.Schema(
     tag: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Tag",
-      required: true,
+      default: null,
       index: true,
     },
 

@@ -81,7 +81,17 @@ app.use(apiLimiter);
 
 app.use(passport.initialize());
 
-app.use("/api/v1/stripe", stripeWebhook);
+// Stripe Webhook mounted BEFORE body parsers to preserve raw stream for signature verification
+app.use(
+  [
+    "/api/v1/stripe",
+    "/api/v1/webhook",
+    "/api/webhook",
+    "/stripe",
+    "/webhook",
+  ],
+  stripeWebhook
+);
 
 app.use(express.json({ limit: "1mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
