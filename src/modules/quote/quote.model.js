@@ -166,6 +166,11 @@ const quoteSchema = new mongoose.Schema(
       default: null,
       index: true,
     },
+
+    tagIndex: {
+      type: Number,
+      default: null,
+    },
   },
   { timestamps: true }
 );

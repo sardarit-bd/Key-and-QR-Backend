@@ -270,7 +270,10 @@ const approveQuote = async (id, adminNote = null) => {
       quote.isGift = true;
       quote.isPersonalGift = true;
       quote.isActive = true;
-      if (primaryTagId && !quote.tag) {
+      if (order?.giftOption === "different" && pendingQuote.tagIndex && allTags && allTags.length >= pendingQuote.tagIndex) {
+        quote.tag = allTags[pendingQuote.tagIndex - 1];
+        quote.tagIndex = pendingQuote.tagIndex;
+      } else if (primaryTagId && !quote.tag) {
         quote.tag = primaryTagId;
       }
       if (order?.giftClaimedBy) {
@@ -284,31 +287,66 @@ const approveQuote = async (id, adminNote = null) => {
 
     // 4. Mark Order.giftMessageStatus = "approved", sync quote back-reference & sync tags
     if (orderId) {
-      await orderRepository.updateOrder(orderId, {
-        giftMessage: pendingQuote.text,
+      const orderUpdatePayload = {
+        giftMessage: order.giftMessage || pendingQuote.text,
         giftMessageStatus: "approved",
         giftMessageReviewedAt: new Date(),
         giftMessageAdminNote: adminNote,
         quote: quote._id,
-      });
+      };
+
+      if (order?.giftOption === "different" && Array.isArray(order.giftMessages)) {
+        orderUpdatePayload.giftMessages = order.giftMessages.map((gm) => {
+          if (gm.tagIndex === pendingQuote.tagIndex || (!gm.tagIndex && gm.message === pendingQuote.text)) {
+            const targetTagId = allTags && allTags.length >= (gm.tagIndex || 1) ? allTags[(gm.tagIndex || 1) - 1] : null;
+            return {
+              ...gm.toObject?.() || gm,
+              assignedTag: targetTagId || gm.assignedTag || null,
+              quote: quote._id,
+            };
+          }
+          return gm;
+        });
+      }
+
+      await orderRepository.updateOrder(orderId, orderUpdatePayload);
 
       if (allTags && allTags.length > 0) {
-        for (const tagId of allTags) {
-          await Tag.findByIdAndUpdate(tagId, {
+        if (order?.giftOption === "different" && pendingQuote.tagIndex && allTags[pendingQuote.tagIndex - 1]) {
+          const targetTagId = allTags[pendingQuote.tagIndex - 1];
+          await Tag.findByIdAndUpdate(targetTagId, {
             personalMessage: pendingQuote.text,
             assignedOrderId: orderId,
           });
           await QuoteAssignment.findOneAndUpdate(
-            { tag: tagId, assignmentType: "tag" },
+            { tag: targetTagId, assignmentType: "tag" },
             {
               quote: quote._id,
-              tag: tagId,
+              tag: targetTagId,
               assignmentType: "tag",
               priority: 100,
               isActive: true,
             },
             { upsert: true, new: true, setDefaultsOnInsert: true }
           );
+        } else {
+          for (const tagId of allTags) {
+            await Tag.findByIdAndUpdate(tagId, {
+              personalMessage: pendingQuote.text,
+              assignedOrderId: orderId,
+            });
+            await QuoteAssignment.findOneAndUpdate(
+              { tag: tagId, assignmentType: "tag" },
+              {
+                quote: quote._id,
+                tag: tagId,
+                assignmentType: "tag",
+                priority: 100,
+                isActive: true,
+              },
+              { upsert: true, new: true, setDefaultsOnInsert: true }
+            );
+          }
         }
       }
 

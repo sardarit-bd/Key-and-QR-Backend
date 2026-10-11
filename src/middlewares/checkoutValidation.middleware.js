@@ -2,6 +2,12 @@ import Joi from "joi";
 import AppError from "../utils/AppError.js";
 import httpStatus from "../constants/httpStatus.js";
 
+const giftMessageEntryValidation = Joi.object({
+    tagIndex: Joi.number().min(1).required(),
+    recipientName: Joi.string().max(100).allow(null, ""),
+    message: Joi.string().max(500).required(),
+});
+
 // Item shape used by the multi-product cart flow (Checkout.jsx -> buildCheckoutPayload)
 const cartItemSchema = Joi.object({
     product: Joi.string(),
@@ -10,7 +16,9 @@ const cartItemSchema = Joi.object({
     unitPrice: Joi.number().min(0),
     subtotal: Joi.number().min(0),
     purchaseType: Joi.string().valid("self", "gift").default("self"),
+    giftOption: Joi.string().valid("same", "different").default("same"),
     giftMessage: Joi.string().max(500).allow(null, ""),
+    giftMessages: Joi.array().items(giftMessageEntryValidation).optional(),
 }).or("product", "productId"); // at least one of these must be present
 
 const guestCheckoutSchema = Joi.object({
@@ -24,7 +32,9 @@ const guestCheckoutSchema = Joi.object({
     productId: Joi.string(),
     quantity: Joi.number().min(1).default(1),
     purchaseType: Joi.string().valid("self", "gift").default("self"),
+    giftOption: Joi.string().valid("same", "different").default("same"),
     giftMessage: Joi.string().max(500).allow(null, ""),
+    giftMessages: Joi.array().items(giftMessageEntryValidation).optional(),
 
     // Nested shape (preferred)
     guestCustomer: Joi.object({
