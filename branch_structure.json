@@ -1,21 +1,27 @@
 {
   "default_branch": "main",
   "branches": [
+    "dev-v2",
+    "dev-v4-env-u",
     "dev-v5",
-    "development",
+    "dev-v6",
     "main",
     "origin"
   ],
   "parent": {
+    "dev-v2": "main",
+    "dev-v4-env-u": "main",
     "dev-v5": "main",
-    "development": "main",
+    "dev-v6": "main",
     "main": null,
     "origin": "main"
   },
   "order": [
     "main",
+    "dev-v2",
+    "dev-v4-env-u",
     "dev-v5",
-    "development",
+    "dev-v6",
     "origin"
   ]
 }

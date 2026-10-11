@@ -2,6 +2,7 @@ import catchAsync from "../../utils/catchAsync.js";
 import sendResponse from "../../utils/sendResponse.js";
 import httpStatus from "../../constants/httpStatus.js";
 import quoteService from "./quote.service.js";
+import Category from "../category/category.model.js";
 
 const createQuote = catchAsync(async (req, res) => {
   const image = req.file || null;
@@ -131,15 +132,46 @@ const toggleQuoteActive = catchAsync(async (req, res) => {
 // Get random quote by category
 const getRandomQuote = catchAsync(async (req, res) => {
   const category = req.query.category || "random";
+  const user = req.user;
+  const isSubscriber = Boolean(
+    user?.isPremium ||
+    user?.subscriptionTier === "subscriber" ||
+    user?.role === "admin" ||
+    user?.role === "moderator"
+  );
 
-  // Pass through the requested category — "random" means any quote.
-  // The current category set is: love, strength, healing, faith, gratitude.
-  const queryCategory = category === "random" ? null : category;
+  const freePool = ["inspiration", "inspire"];
+  const isFreeCategory = !category || category === "random" || freePool.includes(category.toLowerCase());
+
+  let queryCategory;
+  if (isSubscriber) {
+    queryCategory = category === "random" ? null : category;
+  } else {
+    if (!isFreeCategory) {
+      // Check if requested category is premium
+      const categoryDoc = await Category.findOne({
+        $or: [
+          { slug: category.toLowerCase() },
+          { name: new RegExp(`^${category}$`, "i") },
+        ],
+      });
+      if (categoryDoc?.isPremium || !freePool.includes(category.toLowerCase())) {
+        return sendResponse(res, {
+          statusCode: httpStatus.FORBIDDEN,
+          success: false,
+          message: "This category requires a premium subscription",
+          data: null,
+        });
+      }
+    }
+    queryCategory = freePool;
+  }
 
   const result = await quoteService.getRandomQuote(queryCategory);
 
   if (!result) {
-    const fallbackResult = await quoteService.getRandomQuote(null);
+    const fallbackCategory = isSubscriber ? null : freePool;
+    const fallbackResult = await quoteService.getRandomQuote(fallbackCategory);
 
     if (!fallbackResult) {
       return sendResponse(res, {

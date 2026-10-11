@@ -113,7 +113,15 @@ const getRandomQuoteByCategory = async (category = null, excludeIds = []) => {
   const filter = { isActive: true, isPersonalGift: { $ne: true } };
 
   if (category) {
-    filter.category = { $regex: new RegExp(`^${category}$`, "i") };
+    if (Array.isArray(category)) {
+      filter.category = {
+        $in: category.map((c) => new RegExp(`^${c}$`, "i")),
+      };
+    } else if (category instanceof RegExp) {
+      filter.category = category;
+    } else {
+      filter.category = { $regex: new RegExp(`^${category}$`, "i") };
+    }
   }
 
   if (excludeIds.length > 0) {
@@ -133,7 +141,15 @@ const countActiveQuotes = async (category = null) => {
   const filter = { isActive: true, isPersonalGift: { $ne: true } };
 
   if (category) {
-    filter.category = { $regex: new RegExp(`^${category}$`, "i") };
+    if (Array.isArray(category)) {
+      filter.category = {
+        $in: category.map((c) => new RegExp(`^${c}$`, "i")),
+      };
+    } else if (category instanceof RegExp) {
+      filter.category = category;
+    } else {
+      filter.category = { $regex: new RegExp(`^${category}$`, "i") };
+    }
   }
 
   return Quote.countDocuments(filter);

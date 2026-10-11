@@ -7,7 +7,11 @@ import subscriptionRepository from "../subscription/subscription.repository.js";
 import streakService from "../streak/streak.service.js";
 import favoriteRepository from "../favorite/favorite.repository.js";
 import ScanHistory from "../scan/scan.model.js";
+import User from "../../models/user.model.js";
 import { getDayKey, getNextAvailableAt } from "../../utils/dateUtils.js";
+
+// Canonical allowed free category slugs
+const FREE_CATEGORY_SLUGS = ["inspiration", "inspire"];
 
 // Daily limits for the new dashboard quote engine.
 // Kept here (not in subscription.config.js) so the existing ScanHistory
@@ -40,7 +44,8 @@ const annotateFavorites = async (receivedQuotes, userId) => {
     const isGenericPool = !category || category.slug === "inspire" || category.slug === "inspiration" || rqObj.categorySlug === "inspire" || rqObj.categorySlug === "inspiration";
 
     let resolvedCategory = category;
-    if (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration") {
+    const isFreePlan = rqObj.metadata?.plan === "free";
+    if (!isFreePlan && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase())) {
       resolvedCategory = {
         ...(category && typeof category === 'object' ? (category.toObject ? category.toObject() : category) : {}),
         name: quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1),
@@ -187,11 +192,12 @@ const readAgain = async (receivedQuoteId, userId) => {
   const quoteCat = quote?.category;
   const isGenericPool = !category || category.slug === "inspire" || category.slug === "inspiration" || receivedQuote.categorySlug === "inspire" || receivedQuote.categorySlug === "inspiration";
 
-  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
+  const isFreePlan = receivedQuote.metadata?.plan === "free";
+  const resolvedCategoryName = (!isFreePlan && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase()))
     ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
     : (category?.name || receivedQuote.categorySlug || "Inspiration");
 
-  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
+  const resolvedCategorySlug = (!isFreePlan && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase()))
     ? quoteCat.toLowerCase()
     : (category?.slug || receivedQuote.categorySlug || "inspiration");
 
@@ -249,35 +255,53 @@ const getDailyUsage = async (userId, tz = null) => {
 // Resolve the plan for a user: subscriber when they hold an active/trialing
 // subscriber subscription, otherwise free.
 const resolvePlan = async (userId) => {
+  if (!userId) return "free";
+
   const activeSubscriptions =
     await subscriptionRepository.findActiveSubscriptionsByUser(userId);
-  const isSubscriber = activeSubscriptions.length > 0;
+  if (activeSubscriptions && activeSubscriptions.length > 0) {
+    return "subscriber";
+  }
 
-  return isSubscriber ? "subscriber" : "free";
+  const user = await User.findById(userId).select("isPremium subscriptionTier role");
+  if (
+    user?.isPremium ||
+    user?.subscriptionTier === "subscriber" ||
+    user?.role === "admin" ||
+    user?.role === "moderator"
+  ) {
+    return "subscriber";
+  }
+
+  return "free";
 };
 
-// The Inspire category is special: it pools quotes from every active category.
-// Returns the Quote category string filter for selection (null = all active quotes).
+// Resolve the quote category string/array filter for selection.
+// Free users: STRICTLY limited to the allowed free category pool (inspiration/inspire).
+// Premium users: can select any category, or if inspire/surprise-me is requested, pool from all categories (null).
 const resolveQuoteCategory = (requestedSlug, isPremium, category) => {
-  if (requestedSlug === "inspire" || requestedSlug === "inspiration") {
-    if (!category) {
+  const isFreeRequest = !requestedSlug || FREE_CATEGORY_SLUGS.includes(requestedSlug.toLowerCase());
+
+  if (!isPremium) {
+    // If a free user attempts to access a premium category or any category outside the free pool
+    if (category.isPremium || !isFreeRequest) {
       throw new AppError(
-        httpStatus.NOT_FOUND,
-        "Category not found",
-        "CATEGORY_NOT_FOUND"
+        httpStatus.FORBIDDEN,
+        "This category requires a premium subscription",
+        "PREMIUM_CATEGORY_REQUIRED"
       );
     }
+    // Free tier strictly pulls ONLY from the allowed free category pool
+    return FREE_CATEGORY_SLUGS;
+  }
+
+  // Subscriber tier:
+  // "inspire" or "surprise-me" acts as surprise me (pools from all active categories)
+  if (requestedSlug === "inspire" || requestedSlug === "surprise-me") {
     return null;
   }
 
-  if (category.isPremium && !isPremium) {
-    throw new AppError(
-      httpStatus.FORBIDDEN,
-      "This category requires a premium subscription",
-      "PREMIUM_CATEGORY_REQUIRED"
-    );
-  }
-
+  // Specific category requested by subscriber
   return category.slug;
 };
 
@@ -363,66 +387,71 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
 
       if (todayScan?.quote && todayScan.quote.isActive !== false) {
         const scanQuote = todayScan.quote;
-        const categoryId = category._id;
-        const currentCycle = await receivedQuoteRepository.getCurrentCycle(userId, categoryId);
+        const scanQuoteCat = scanQuote.category?.toLowerCase() || "";
+        const isScanInFreePool = FREE_CATEGORY_SLUGS.includes(scanQuoteCat);
 
-        const receivedQuote = await receivedQuoteRepository.createReceivedQuote({
-          user: userId,
-          quote: scanQuote._id,
-          category: categoryId,
-          categorySlug: category.slug,
-          receivedAt: new Date(),
-          source: "scan",
-          dayKey,
-          isRead: true,
-          isFavoriteSnapshot: false,
-          cycle: currentCycle || 1,
-          metadata: {
-            plan,
+        // For free users, only bridge if the scan quote belongs to the free category pool
+        if (isPremium || isScanInFreePool) {
+          const categoryId = category._id;
+          const currentCycle = await receivedQuoteRepository.getCurrentCycle(userId, categoryId);
+
+          const receivedQuote = await receivedQuoteRepository.createReceivedQuote({
+            user: userId,
+            quote: scanQuote._id,
+            category: categoryId,
             categorySlug: category.slug,
-            quoteCategory: quoteCategory || "inspire",
-            fromScanBridge: true,
-          },
-        });
+            receivedAt: new Date(),
+            source: "scan",
+            dayKey,
+            isRead: true,
+            isFavoriteSnapshot: false,
+            cycle: currentCycle || 1,
+            metadata: {
+              plan,
+              categorySlug: category.slug,
+              quoteCategory: Array.isArray(quoteCategory) ? quoteCategory.join(",") : (quoteCategory || "inspire"),
+              fromScanBridge: true,
+            },
+          });
 
-        const streak = await streakService.updateStreakAfterReceive(
-          userId,
-          receivedQuote.receivedAt,
-          tz
-        );
+          const streak = await streakService.updateStreakAfterReceive(
+            userId,
+            receivedQuote.receivedAt,
+            tz
+          );
 
-        const remainingToday = dailyLimit - 1;
-        const quoteCat = scanQuote.category;
-        const isGenericPool = slug === "inspire" || slug === "inspiration" || !category || category.slug === "inspire" || category.slug === "inspiration";
+          const remainingToday = dailyLimit - 1;
+          const quoteCat = scanQuote.category;
+          const isGenericPool = slug === "inspire" || slug === "inspiration" || !category || category.slug === "inspire" || category.slug === "inspiration";
 
-        const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
-          ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
-          : category.name;
+          const resolvedCategoryName = (isPremium && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase()))
+            ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
+            : category.name;
 
-        const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
-          ? quoteCat.toLowerCase()
-          : category.slug;
+          const resolvedCategorySlug = (isPremium && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase()))
+            ? quoteCat.toLowerCase()
+            : category.slug;
 
-        return {
-          _id: receivedQuote._id,
-          quote: {
-            _id: scanQuote._id,
-            text: scanQuote.text,
-            author: scanQuote.author || "InspireTag",
-            description: scanQuote.description || null,
-            image: scanQuote.image || null,
-            theme: scanQuote.theme || null,
-            editorData: scanQuote.editorData || null,
-            renderedImages: scanQuote.renderedImages || null,
-          },
-          category: {
-            _id: category._id,
-            name: resolvedCategoryName,
-            slug: resolvedCategorySlug,
-            icon: category.icon,
-            color: category.color,
-          },
-          receivedAt: receivedQuote.receivedAt,
+          return {
+            _id: receivedQuote._id,
+            quote: {
+              _id: scanQuote._id,
+              text: scanQuote.text,
+              author: scanQuote.author || "InspireTag",
+              description: scanQuote.description || null,
+              image: scanQuote.image || null,
+              theme: scanQuote.theme || null,
+              editorData: scanQuote.editorData || null,
+              renderedImages: scanQuote.renderedImages || null,
+            },
+            category: {
+              _id: category._id,
+              name: resolvedCategoryName,
+              slug: resolvedCategorySlug,
+              icon: category.icon,
+              color: category.color,
+            },
+            receivedAt: receivedQuote.receivedAt,
           remainingToday,
           dailyLimit,
           streak: streak
@@ -433,7 +462,8 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
                 todayCounted: streak.lastReceivedDate === dayKey,
               }
             : null,
-        };
+          };
+        }
       }
     } catch (bridgeErr) {
       // Fall through to normal quote selection if bridge fails
@@ -495,7 +525,7 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
     metadata: {
       plan,
       categorySlug: category.slug,
-      quoteCategory: quoteCategory || "inspire",
+      quoteCategory: Array.isArray(quoteCategory) ? quoteCategory.join(",") : (quoteCategory || "inspire"),
     },
   });
 
@@ -512,11 +542,11 @@ const receiveDashboardQuote = async (userId, categorySlug, tz = null) => {
   const quoteCat = selection.quote?.category;
   const isGenericPool = slug === "inspire" || slug === "inspiration" || !category || category.slug === "inspire" || category.slug === "inspiration";
 
-  const resolvedCategoryName = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
+  const resolvedCategoryName = (isPremium && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase()))
     ? quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1)
     : category.name;
 
-  const resolvedCategorySlug = (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire" && quoteCat.toLowerCase() !== "inspiration")
+  const resolvedCategorySlug = (isPremium && isGenericPool && quoteCat && !FREE_CATEGORY_SLUGS.includes(quoteCat.toLowerCase()))
     ? quoteCat.toLowerCase()
     : category.slug;
 
