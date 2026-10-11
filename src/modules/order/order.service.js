@@ -68,8 +68,14 @@ const buildOrderItems = async (items, isGuest = false) => {
       unitPrice: unitPrice,
       subtotal: itemSubtotal,
       purchaseType: item.purchaseType || "self",
+      giftOption:
+        item.purchaseType === "gift" ? item.giftOption || "same" : "same",
       giftMessage:
         item.purchaseType === "gift" ? item.giftMessage || null : null,
+      giftMessages:
+        item.purchaseType === "gift" && Array.isArray(item.giftMessages)
+          ? item.giftMessages
+          : [],
       assignedTags: [],
     });
   }
@@ -521,8 +527,14 @@ const createOrder = async (userId, payload, isGuest = false) => {
         unitPrice: unitPrice,
         subtotal: itemSubtotal,
         purchaseType: item.purchaseType || "self",
+        giftOption:
+          item.purchaseType === "gift" ? item.giftOption || "same" : "same",
         giftMessage:
           item.purchaseType === "gift" ? item.giftMessage || null : null,
+        giftMessages:
+          item.purchaseType === "gift" && Array.isArray(item.giftMessages)
+            ? item.giftMessages
+            : [],
         assignedTags: [],
       };
     });
@@ -556,8 +568,14 @@ const createOrder = async (userId, payload, isGuest = false) => {
         unitPrice: unitPrice,
         subtotal: subtotal,
         purchaseType: payload.purchaseType || "self",
+        giftOption:
+          payload.purchaseType === "gift" ? payload.giftOption || "same" : "same",
         giftMessage:
           payload.purchaseType === "gift" ? payload.giftMessage || null : null,
+        giftMessages:
+          payload.purchaseType === "gift" && Array.isArray(payload.giftMessages)
+            ? payload.giftMessages
+            : [],
         assignedTags: [],
       },
     ];
@@ -612,9 +630,36 @@ const createOrder = async (userId, payload, isGuest = false) => {
           ? payload.senderName.trim()
           : null);
 
+  const resolvedGiftOption =
+    payload.giftOption ||
+    (items.some((i) => i.giftOption === "different") ? "different" : "same");
+
+  let resolvedGiftMessages = [];
+  if (Array.isArray(payload.giftMessages) && payload.giftMessages.length > 0) {
+    resolvedGiftMessages = payload.giftMessages;
+  } else {
+    const giftItemsWithMessages = items.filter(
+      (i) => i.purchaseType === "gift" && Array.isArray(i.giftMessages) && i.giftMessages.length > 0
+    );
+    if (giftItemsWithMessages.length > 0) {
+      resolvedGiftMessages = giftItemsWithMessages.flatMap((i) => i.giftMessages);
+    }
+  }
+
+  if (resolvedGiftOption === "different" && resolvedGiftMessages.length > 0) {
+    resolvedGiftMessages = resolvedGiftMessages.map((gm, idx) => ({
+      tagIndex: Number(gm.tagIndex) || idx + 1,
+      recipientName: gm.recipientName ? String(gm.recipientName).trim() : null,
+      message: String(gm.message || "").trim(),
+      assignedTag: gm.assignedTag || null,
+      quote: gm.quote || null,
+    }));
+  }
+
   const isGiftOrder =
     payload.purchaseType === "gift" ||
     Boolean(resolvedGiftMessage) ||
+    resolvedGiftMessages.length > 0 ||
     items.some((i) => i.purchaseType === "gift");
 
   // ************* Build order data *************
@@ -627,8 +672,13 @@ const createOrder = async (userId, payload, isGuest = false) => {
     discount: totals.discount,
     grandTotal: totals.grandTotal,
     purchaseType: isGiftOrder ? "gift" : (payload.purchaseType || "self"),
+    giftOption: resolvedGiftOption,
     giftMessage: isGiftOrder ? resolvedGiftMessage : null,
-    giftMessageStatus: isGiftOrder && resolvedGiftMessage ? "pending" : "none",
+    giftMessages: isGiftOrder ? resolvedGiftMessages : [],
+    giftMessageStatus:
+      isGiftOrder && (resolvedGiftMessage || resolvedGiftMessages.length > 0)
+        ? "pending"
+        : "none",
     giftStatus: isGiftOrder ? "pending_claim" : "none",
     giftSenderName: isGiftOrder ? (resolvedGiftSenderName || null) : null,
     shippingAddress,
@@ -644,7 +694,7 @@ const createOrder = async (userId, payload, isGuest = false) => {
   const order = await orderRepository.createOrder(orderData);
 
   // ************* Handle gift messages *************
-  if (orderData.purchaseType === "gift" && orderData.giftMessage) {
+  if (orderData.purchaseType === "gift") {
     let effectiveUserId = userId || orderData.user || null;
     if (!effectiveUserId && (payload.email || orderData.shippingAddress?.email || orderData.guestCustomer?.email)) {
       try {
@@ -660,15 +710,33 @@ const createOrder = async (userId, payload, isGuest = false) => {
       }
     }
 
-    await pendingQuoteRepository.createPendingQuote({
-      text: orderData.giftMessage,
-      user: effectiveUserId || null,
-      order: order._id,
-      type: "gift",
-      author: resolvedGiftSenderName || null,
-      status: "pending",
-      category: "other",
-    });
+    if (orderData.giftOption === "different" && Array.isArray(orderData.giftMessages) && orderData.giftMessages.length > 0) {
+      for (const gm of orderData.giftMessages) {
+        if (gm.message && gm.message.trim() !== "") {
+          await pendingQuoteRepository.createPendingQuote({
+            text: gm.message.trim(),
+            user: effectiveUserId || null,
+            order: order._id,
+            type: "gift",
+            author: gm.recipientName ? `For: ${gm.recipientName}` : (resolvedGiftSenderName || null),
+            recipientName: gm.recipientName || null,
+            tagIndex: gm.tagIndex || 1,
+            status: "pending",
+            category: "other",
+          });
+        }
+      }
+    } else if (orderData.giftMessage) {
+      await pendingQuoteRepository.createPendingQuote({
+        text: orderData.giftMessage,
+        user: effectiveUserId || null,
+        order: order._id,
+        type: "gift",
+        author: resolvedGiftSenderName || null,
+        status: "pending",
+        category: "other",
+      });
+    }
   }
 
   return order;
@@ -1714,8 +1782,18 @@ const updateOrder = async (id, payload, session = null, user = null) => {
       activatedAt: new Date(),
       assignedOrderId: id,
     };
-    if (order.purchaseType === "gift" && order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== "") {
-      tagUpdateFields.personalMessage = order.giftMessage.trim();
+    if (order.purchaseType === "gift") {
+      if (order.giftOption === "different" && Array.isArray(order.giftMessages) && order.giftMessages.length > 0) {
+        const targetIndex = (existingAssignedTags?.length || 0) + 1;
+        const msgEntry =
+          order.giftMessages.find((m) => m.tagIndex === targetIndex) ||
+          order.giftMessages[existingAssignedTags?.length || 0];
+        if (msgEntry?.message && typeof msgEntry.message === "string" && msgEntry.message.trim() !== "") {
+          tagUpdateFields.personalMessage = msgEntry.message.trim();
+        }
+      } else if (order.giftMessage && typeof order.giftMessage === "string" && order.giftMessage.trim() !== "") {
+        tagUpdateFields.personalMessage = order.giftMessage.trim();
+      }
     }
     await tagRepository.updateTag(
       tag._id,
@@ -2498,24 +2576,50 @@ const approveGiftMessage = async (orderId, adminNote = null) => {
   // 4. If physical tags are assigned to this order, sync tag.personalMessage and create QuoteAssignment (priority: 100) linked to the tag
   const allTags = await getOrderTagIds(orderId, order);
   if (allTags && allTags.length > 0) {
-    if (!quote.tag) {
-      quote.tag = allTags[0];
-      await quote.save();
-    }
+    if (order.giftOption === "different" && Array.isArray(order.giftMessages) && order.giftMessages.length > 0) {
+      for (let i = 0; i < allTags.length; i++) {
+        const tagId = allTags[i];
+        const msgEntry = order.giftMessages.find((m) => m.tagIndex === i + 1) || order.giftMessages[i];
+        const specificMsg = msgEntry?.message?.trim() || giftMsg;
+        await Tag.findByIdAndUpdate(tagId, { personalMessage: specificMsg, assignedOrderId: order._id });
 
-    for (const tagId of allTags) {
-      await Tag.findByIdAndUpdate(tagId, { personalMessage: giftMsg, assignedOrderId: order._id });
-      await QuoteAssignment.findOneAndUpdate(
-        { tag: tagId, assignmentType: "tag" },
-        {
-          quote: quote._id,
-          tag: tagId,
-          assignmentType: "tag",
-          priority: 100,
-          isActive: true,
-        },
-        { upsert: true, new: true, setDefaultsOnInsert: true }
-      );
+        let specificQuote = await Quote.findOne({ order: order._id, text: specificMsg });
+        if (!specificQuote) {
+          specificQuote = quote;
+        }
+
+        await QuoteAssignment.findOneAndUpdate(
+          { tag: tagId, assignmentType: "tag" },
+          {
+            quote: specificQuote._id,
+            tag: tagId,
+            assignmentType: "tag",
+            priority: 100,
+            isActive: true,
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+      }
+    } else {
+      if (!quote.tag) {
+        quote.tag = allTags[0];
+        await quote.save();
+      }
+
+      for (const tagId of allTags) {
+        await Tag.findByIdAndUpdate(tagId, { personalMessage: giftMsg, assignedOrderId: order._id });
+        await QuoteAssignment.findOneAndUpdate(
+          { tag: tagId, assignmentType: "tag" },
+          {
+            quote: quote._id,
+            tag: tagId,
+            assignmentType: "tag",
+            priority: 100,
+            isActive: true,
+          },
+          { upsert: true, new: true, setDefaultsOnInsert: true }
+        );
+      }
     }
   }
 

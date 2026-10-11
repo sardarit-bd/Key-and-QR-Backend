@@ -169,7 +169,12 @@ const resolveTag = catchAsync(async (req, res) => {
 
   // 4. If still no quote, fallback to random quote
   if (!quote) {
-    quote = await quoteService.getRandomQuote(null);
+    const isSubscriber = Boolean(
+      (dailyUsage && dailyUsage.plan === "subscriber") ||
+      tag.subscriptionType === "subscriber"
+    );
+    const categoryFilter = isSubscriber ? null : ["inspiration", "inspire"];
+    quote = await quoteService.getRandomQuote(categoryFilter);
     quoteSource = "random";
   }
 

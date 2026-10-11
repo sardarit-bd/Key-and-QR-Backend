@@ -1,5 +1,38 @@
 import mongoose from "mongoose";
 
+const giftMessageEntrySchema = new mongoose.Schema(
+    {
+        tagIndex: {
+            type: Number,
+            required: true,
+            min: 1,
+        },
+        recipientName: {
+            type: String,
+            default: null,
+            trim: true,
+            maxlength: 100,
+        },
+        message: {
+            type: String,
+            required: true,
+            trim: true,
+            maxlength: 500,
+        },
+        assignedTag: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Tag",
+            default: null,
+        },
+        quote: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: "Quote",
+            default: null,
+        },
+    },
+    { _id: true }
+);
+
 const orderItemSchema = new mongoose.Schema(
     {
         product: {
@@ -27,9 +60,18 @@ const orderItemSchema = new mongoose.Schema(
             enum: ["self", "gift"],
             default: "self",
         },
+        giftOption: {
+            type: String,
+            enum: ["same", "different"],
+            default: "same",
+        },
         giftMessage: {
             type: String,
             default: null,
+        },
+        giftMessages: {
+            type: [giftMessageEntrySchema],
+            default: [],
         },
         assignedTags: {
             type: [mongoose.Schema.Types.ObjectId],
@@ -173,6 +215,17 @@ const orderSchema = new mongoose.Schema(
         giftMessage: {
             type: String,
             default: null,
+        },
+
+        giftOption: {
+            type: String,
+            enum: ["same", "different"],
+            default: "same",
+        },
+
+        giftMessages: {
+            type: [giftMessageEntrySchema],
+            default: [],
         },
 
         giftMessageStatus: {
