@@ -233,8 +233,13 @@ const claimScannedTagIfExists = async (userId, tagCode) => {
 
     // Priority D: Fallback to active random quote if none found yet
     if (!activeQuote) {
+      const isSubscriber = tag.subscriptionType === "subscriber";
+      const matchFilter = { isActive: true, isPersonalGift: { $ne: true } };
+      if (!isSubscriber) {
+        matchFilter.category = { $in: [/^inspiration$/i, /^inspire$/i] };
+      }
       const randomQuotes = await Quote.aggregate([
-        { $match: { isActive: true } },
+        { $match: matchFilter },
         { $sample: { size: 1 } },
       ]);
       if (randomQuotes.length > 0) {

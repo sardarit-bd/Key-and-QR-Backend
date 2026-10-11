@@ -38,7 +38,7 @@ class DashboardService {
     buildAvailableCategories(categories, plan, isLimitReached) {
         return categories.map((category) => {
             const isPremium = !!category.isPremium;
-            const isInspire = category.slug === "inspire";
+            const isInspire = category.slug === "inspire" || category.slug === "inspiration";
 
             let isLocked = false;
             let lockedReason = null;
@@ -149,14 +149,19 @@ class DashboardService {
 
             const quoteCat = quote?.category;
             const categoryDoc = latestReceivedQuote.category;
-            const isGenericPool = !categoryDoc || categoryDoc.slug === "inspire" || latestReceivedQuote.categorySlug === "inspire";
+            const isGenericPool = !categoryDoc || categoryDoc.slug === "inspire" || categoryDoc.slug === "inspiration" || latestReceivedQuote.categorySlug === "inspire" || latestReceivedQuote.categorySlug === "inspiration";
 
-            let resolvedCategoryName = categoryDoc?.name || latestReceivedQuote.categorySlug || "Inspire";
-            let resolvedCategorySlug = categoryDoc?.slug || latestReceivedQuote.categorySlug || "inspire";
+            let resolvedCategoryName = categoryDoc?.name || (latestReceivedQuote.categorySlug ? (latestReceivedQuote.categorySlug.charAt(0).toUpperCase() + latestReceivedQuote.categorySlug.slice(1)) : "Inspiration");
+            let resolvedCategorySlug = categoryDoc?.slug || latestReceivedQuote.categorySlug || "inspiration";
 
-            if (isGenericPool && quoteCat && quoteCat.toLowerCase() !== "inspire") {
-                resolvedCategoryName = quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1);
-                resolvedCategorySlug = quoteCat.toLowerCase();
+            if (isGenericPool && quoteCat && !["inspire", "inspiration"].includes(quoteCat.toLowerCase())) {
+                if (plan === "free") {
+                    resolvedCategoryName = "Inspiration";
+                    resolvedCategorySlug = "inspiration";
+                } else {
+                    resolvedCategoryName = quoteCat.charAt(0).toUpperCase() + quoteCat.slice(1);
+                    resolvedCategorySlug = quoteCat.toLowerCase();
+                }
             }
 
             const isGiftQuote = Boolean(
@@ -636,8 +641,8 @@ class DashboardService {
         // the overview reports plan-based locks.)
         return categories.map((category) => {
             const isPremium = !!category.isPremium;
-            const isInspire = category.slug === "inspire";
-            const isLocked = plan === "free" && !isPremium ? !isInspire : false;
+            const isInspire = category.slug === "inspire" || category.slug === "inspiration";
+            const isLocked = plan === "free" ? !isInspire : false;
 
             return {
                 id: category._id,
