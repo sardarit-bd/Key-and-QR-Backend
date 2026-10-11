@@ -42,6 +42,17 @@ const pendingQuoteSchema = new mongoose.Schema(
       maxlength: 100,
       default: null,
     },
+    // For gift quotes in multi-quantity orders: 1-based index of the tag
+    tagIndex: {
+      type: Number,
+      default: null,
+    },
+    recipientName: {
+      type: String,
+      trim: true,
+      maxlength: 100,
+      default: null,
+    },
     // Explicit submission timestamp — the cooldown anchor for submission
     // limits. Set on creation (same instant as createdAt) so the most
     // recent successful submission lookup is unambiguous.
