@@ -817,6 +817,9 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         }
 
         const matchFilter = { isActive: true, isPersonalGift: { $ne: true } };
+        if (!isSubscriber) {
+            matchFilter.category = { $in: [/^inspiration$/i, /^inspire$/i] };
+        }
         if (excludeIds.length > 0) {
             matchFilter._id = { $nin: excludeIds };
         }
@@ -832,6 +835,9 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
                 ? (await ReceivedQuote.find({ user: targetUserId, dayKey: todayKey }).distinct("quote"))
                 : [];
             const cycleFilter = { isActive: true, isPersonalGift: { $ne: true } };
+            if (!isSubscriber) {
+                cycleFilter.category = { $in: [/^inspiration$/i, /^inspire$/i] };
+            }
             if (todayReceivedIds.length > 0) {
                 cycleFilter._id = { $nin: todayReceivedIds };
             }
@@ -842,8 +848,12 @@ const revealQuote = async (tagCode, user = null, category = null, tzOrReq = null
         }
 
         if (!randomQuotes || randomQuotes.length === 0) {
+            const fallbackFilter = { isActive: true, isPersonalGift: { $ne: true } };
+            if (!isSubscriber) {
+                fallbackFilter.category = { $in: [/^inspiration$/i, /^inspire$/i] };
+            }
             randomQuotes = await Quote.aggregate([
-                { $match: { isActive: true, isPersonalGift: { $ne: true } } },
+                { $match: fallbackFilter },
                 { $sample: { size: 1 } },
             ]);
         }
