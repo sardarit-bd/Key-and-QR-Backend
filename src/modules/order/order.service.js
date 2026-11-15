@@ -958,12 +958,33 @@ const confirmPaymentAndAssignTag = async (
         return order;
       }
 
-      // ✅ 3. CANCELLED — reject
+      // ✅ 3. CANCELLED CHECK WITH STRIPE VERIFICATION (SEC-03 Payment Integrity)
+      // If order was marked cancelled due to a client race, but Stripe confirms payment succeeded,
+      // recover the order to fulfill the customer's purchase!
       if (order.fulfillmentStatus === "cancelled") {
-        throw new AppError(
-          httpStatus.BAD_REQUEST,
-          "Cannot confirm payment for cancelled order",
-        );
+        let isStripePaid = false;
+        try {
+          const verifiedPi = await stripe.paymentIntents.retrieve(paymentIntentId);
+          if (verifiedPi && verifiedPi.status === "succeeded") {
+            isStripePaid = true;
+          }
+        } catch (verifyErr) {
+          logger.warn(`Could not verify payment intent ${paymentIntentId} for cancelled order ${orderId}: ${verifyErr.message}`);
+        }
+
+        if (isStripePaid) {
+          logger.warn(`⚠️ Order ${orderId} was marked cancelled, but Stripe confirmed successful payment intent ${paymentIntentId}. Reviving order for fulfillment.`);
+          // Clear cancellation state and proceed with fulfillment inside transaction
+          order.fulfillmentStatus = "pending";
+          order.cancellationReason = null;
+          order.cancelledAt = null;
+          order.cancelledBy = null;
+        } else {
+          throw new AppError(
+            httpStatus.BAD_REQUEST,
+            "Cannot confirm payment for cancelled order",
+          );
+        }
       }
 
       // ✅ 4. VERIFY PAYMENT INTENT

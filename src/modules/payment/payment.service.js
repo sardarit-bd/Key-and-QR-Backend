@@ -4,6 +4,8 @@ import PAYMENT_STATUS from "../../config/paymentStatus.js";
 import AppError from "../../utils/AppError.js";
 import httpStatus from "../../constants/httpStatus.js";
 import orderService from "../order/order.service.js";
+import Order from "../order/order.model.js";
+import logger from "../../utils/logger.js";
 
 /**
  * Payment Service - Handles all payment-related operations
@@ -271,23 +273,89 @@ class PaymentService {
             throw new AppError(httpStatus.NOT_FOUND, "Order not found");
         }
 
-        if (order.paymentStatus === PAYMENT_STATUS.SUCCEEDED) {
+        if (
+            order.paymentStatus === PAYMENT_STATUS.SUCCEEDED ||
+            order.paymentStatus === "paid" ||
+            order.paymentStatus === "succeeded"
+        ) {
             throw new AppError(
                 httpStatus.BAD_REQUEST,
                 "Cannot cancel a completed payment"
             );
         }
 
-        if (order.paymentStatus === PAYMENT_STATUS.CANCELLED) {
+        if (order.paymentStatus === PAYMENT_STATUS.CANCELLED && order.fulfillmentStatus === "cancelled") {
             return order;
         }
 
-        return orderService.updateOrder(orderId, {
-            paymentStatus: PAYMENT_STATUS.CANCELLED,
-            fulfillmentStatus: "cancelled",
-            cancelledAt: new Date(),
-            cancellationReason: "Payment cancelled by customer",
-        });
+        // Safety Guard 1 (SEC-03 Fail-Closed): Check live Stripe state if session exists
+        if (order.stripeSessionId) {
+            try {
+                const checkoutSession = await stripe.checkout.sessions.retrieve(order.stripeSessionId);
+                if (checkoutSession && (checkoutSession.payment_status === "paid" || checkoutSession.status === "complete")) {
+                    throw new AppError(
+                        httpStatus.BAD_REQUEST,
+                        "Payment has already succeeded on Stripe. Cancellation rejected."
+                    );
+                }
+            } catch (stripeErr) {
+                // If it's our own AppError, rethrow
+                if (stripeErr instanceof AppError) throw stripeErr;
+
+                // If Stripe API timed out, returned 500, or failed to connect, FAIL CLOSED!
+                logger.error(`[handleCancellation] Stripe API failure during checkout session check for order ${orderId}: ${stripeErr.message}`);
+                throw new AppError(
+                    httpStatus.SERVICE_UNAVAILABLE,
+                    "Payment status could not be verified with payment provider. Please retry in a moment."
+                );
+            }
+        }
+
+        // Safety Guard 2 (SEC-03 Atomic Conditional State Transition):
+        // Update order ONLY if paymentStatus is NOT succeeded/paid and fulfillmentStatus is NOT cancelled/shipped/delivered
+        const nonCancellablePaymentStatuses = [
+            PAYMENT_STATUS.SUCCEEDED,
+            "paid",
+            "succeeded",
+            "refunded",
+        ];
+
+        const updatedOrder = await Order.findOneAndUpdate(
+            {
+                _id: orderId,
+                paymentStatus: { $nin: nonCancellablePaymentStatuses },
+            },
+            {
+                $set: {
+                    paymentStatus: PAYMENT_STATUS.CANCELLED,
+                    fulfillmentStatus: "cancelled",
+                    cancelledAt: new Date(),
+                    cancellationReason: "Payment cancelled by customer",
+                },
+            },
+            {
+                new: true,
+                runValidators: true,
+            }
+        ).lean();
+
+        // If the atomic update didn't match, reload order and report the current state
+        if (!updatedOrder) {
+            const reloadedOrder = await orderService.getOrderById(orderId);
+            if (
+                reloadedOrder.paymentStatus === PAYMENT_STATUS.SUCCEEDED ||
+                reloadedOrder.paymentStatus === "paid" ||
+                reloadedOrder.paymentStatus === "succeeded"
+            ) {
+                throw new AppError(
+                    httpStatus.BAD_REQUEST,
+                    "Payment completed while processing cancellation. Cancellation rejected."
+                );
+            }
+            return reloadedOrder;
+        }
+
+        return updatedOrder;
     }
 }
 
