@@ -24,6 +24,7 @@ const getAllowedOrigins = () => {
     "https://myinspiretag-frontend.vercel.app",
     "https://myinspiretag.com",
     "https://www.myinspiretag.com",
+    "https://myinspiretag.sardarit.cloud",
     env.clientUrl,
     process.env.FRONTEND_URL,
   ].filter(Boolean);
