@@ -25,7 +25,7 @@ router.get("/shop-hero", heroController.getShopHeroContent);
 router.get("/announcement-banner", heroController.getAnnouncementBanner);
 router.get("/announcement", heroController.getAnnouncementBanner);
 
-// Admin only — upload a new hero / shop-hero image to Cloudinary
+// Admin only — upload a new hero / shop-hero image to Cloudinary ----
 router.post(
   "/upload-image",
   auth(roles.ADMIN),

@@ -3,7 +3,7 @@ class AppError extends Error {
         super(message);
         this.statusCode = statusCode;
         this.isOperational = true;
-        // Optional machine-readable code (e.g. "TAG_NOT_FOUND").
+        // Optional machine-readable code ("TAG_NOT_FOUND").
         // Only set when explicitly passed, so existing callers are unaffected.
         this.errorCode = errorCode;
 
