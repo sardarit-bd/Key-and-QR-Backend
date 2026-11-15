@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import tagRepository from "./tag.repository.js";
@@ -172,20 +173,51 @@ const getMyTags = async (userId) => {
 // ================================
 
 /**
+ * SEC-04 Cryptographically Secure Crockford Base32 Alphabet
+ * 32 characters (2^5 = 32), excluding visually ambiguous characters (0, 1, I, O, L).
+ * Exactly 32 characters ensures 256 % 32 = 0 (ZERO modulo bias across byte values 0..255).
+ */
+const CROCKFORD_BASE32_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
+
+/**
+ * GENERATE SINGLE SECURE TAG CODE
+ * Generates 20 random Crockford Base32 characters formatted into 4 groups of 5:
+ * Total entropy: 20 characters * 5 bits/character = 100 bits of pure cryptographic entropy (>= 96 bits).
+ * Zero modulo bias: 256 % 32 = 0.
+ */
+const generateSecureTagCode = (cleanPrefix = "TAG") => {
+  const randomBytes = crypto.randomBytes(20);
+  let chars = "";
+  for (let i = 0; i < 20; i++) {
+    chars += CROCKFORD_BASE32_ALPHABET[randomBytes[i] % 32];
+  }
+  return `${cleanPrefix}-${chars.slice(0, 5)}-${chars.slice(5, 10)}-${chars.slice(10, 15)}-${chars.slice(15, 20)}`;
+};
+
+/**
  * GENERATE TAG CODES
- * Helper for bulk tag generation
+ * Helper for bulk tag generation using cryptographically secure random bytes
  */
 const generateTagCodes = (prefix = "TAG", count = 1) => {
-  const codes = [];
-  const timestamp = Date.now().toString(36).toUpperCase();
-  
-  for (let i = 0; i < count; i++) {
-    const random = Math.random().toString(36).substring(2, 8).toUpperCase();
-    const sequential = String(i + 1).padStart(4, '0');
-    codes.push(`${prefix}-${timestamp}-${sequential}`);
+  const cleanPrefix = (prefix || "TAG").trim().toUpperCase();
+  const codeSet = new Set();
+  const maxAttempts = count * 10;
+  let attempts = 0;
+
+  while (codeSet.size < count && attempts < maxAttempts) {
+    attempts++;
+    const code = generateSecureTagCode(cleanPrefix);
+    codeSet.add(code);
   }
-  
-  return codes;
+
+  if (codeSet.size < count) {
+    throw new AppError(
+      httpStatus.INTERNAL_SERVER_ERROR,
+      "Failed to generate sufficient unique tag codes"
+    );
+  }
+
+  return Array.from(codeSet);
 };
 
 /**
@@ -199,24 +231,37 @@ const bulkCreateTags = async (count, prefix = "TAG") => {
     );
   }
 
-  // Generate unique tag codes
-  const tagCodes = generateTagCodes(prefix, count);
-  
-  // Check for existing tags
-  const existingTags = await tagRepository.getAllTags({ 
-    search: prefix,
-    limit: 10000 
-  });
-  
-  const existingCodes = new Set(existingTags.data.map(t => t.tagCode));
-  const newCodes = tagCodes.filter(code => !existingCodes.has(code));
+  const cleanPrefix = (prefix || "TAG").trim().toUpperCase();
+  const uniqueCodes = new Set();
+  const MAX_RETRY_ROUNDS = 5;
+  let rounds = 0;
 
-  if (newCodes.length === 0) {
+  // Bounded collision regeneration loop against existing database records
+  while (uniqueCodes.size < count && rounds < MAX_RETRY_ROUNDS) {
+    rounds++;
+    const needed = count - uniqueCodes.size;
+    const candidates = generateTagCodes(cleanPrefix, needed);
+
+    // Check which candidate codes already exist in the database
+    const existing = await Tag.find({ tagCode: { $in: candidates } }).select("tagCode").lean();
+    const existingCodeSet = new Set(existing.map((t) => t.tagCode));
+
+    for (const code of candidates) {
+      if (!existingCodeSet.has(code)) {
+        uniqueCodes.add(code);
+        if (uniqueCodes.size === count) break;
+      }
+    }
+  }
+
+  if (uniqueCodes.size === 0) {
     throw new AppError(
       httpStatus.CONFLICT,
       "All generated tag codes already exist. Try a different prefix."
     );
   }
+
+  const newCodes = Array.from(uniqueCodes);
 
   // Create tags in batches
   const result = await tagRepository.bulkCreateTags(newCodes);
