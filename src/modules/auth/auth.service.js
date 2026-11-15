@@ -359,13 +359,14 @@ const registerUser = async (payload, metadata = {}) => {
   await storeRefreshToken(createdUser._id, authResponse.refreshToken, metadata);
 
   // 6. Claim scanned tag directly if tagCode was provided (non-blocking)
+  // Note: Only claims physical tag if user physically scanned the tag (tagCode provided).
   let tagClaimResult = null;
   if (tagCode) {
     tagClaimResult = await claimScannedTagIfExists(createdUser._id, tagCode);
   }
 
-  // 7. Claim guest resources (non-blocking)
-  await claimGuestResourcesIfExists(createdUser._id, createdUser.email);
+  // 7. Security Fix (SEC-02): Do NOT automatically claim unverified guest resources on registration!
+  // Guest orders and tags must not be claimed until the email is verified or authenticated via trusted provider/login.
 
   // 8. Return auth response
   return {

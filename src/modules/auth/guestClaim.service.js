@@ -22,8 +22,27 @@ class GuestAccountClaimService {
         };
 
         try {
+            // Security Guard (SEC-02): Verify user exists and has email verified
+            const user = await User.findById(userId).lean();
+            if (!user) {
+                logger.warn(`Guest claim rejected: User ${userId} not found`);
+                result.success = false;
+                result.errors.push({ error: "User not found" });
+                return result;
+            }
+
+            if (!user.isEmailVerified) {
+                logger.warn(`Guest claim rejected: User ${user.email} (${userId}) has unverified email`);
+                result.success = false;
+                result.errors.push({ error: "Email verification required" });
+                return result;
+            }
+
+            // Always enforce verified database email
+            const targetEmail = user.email || email;
+
             // ✅ 1. Find guest orders
-            const guestOrders = await this.findGuestOrdersByEmail(email);
+            const guestOrders = await this.findGuestOrdersByEmail(targetEmail);
             
             if (guestOrders.length === 0) {
                 logger.info(`No guest orders found for email: ${email}`);
