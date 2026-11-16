@@ -432,7 +432,7 @@ const getTagAvailabilityStatus = async () => {
  * BULK CREATE TAGS
  * For admin inventory management
  */
-const bulkCreateTags = async (tagCodes, batchSize = 100) => {
+const bulkCreateTags = async (tagCodes, batchSize = 250, batchId = null) => {
   const results = {
     success: [],
     failed: [],
@@ -441,33 +441,39 @@ const bulkCreateTags = async (tagCodes, batchSize = 100) => {
 
   for (let i = 0; i < tagCodes.length; i += batchSize) {
     const batch = tagCodes.slice(i, i + batchSize);
-    const tags = batch.map(code => ({
+    const tags = batch.map((code) => ({
       tagCode: code,
       isActive: true,
       isActivated: false,
+      owner: null,
+      assignedOrderId: null,
+      batchId: batchId || null,
     }));
 
     try {
       const inserted = await Tag.insertMany(tags, { ordered: false });
       results.success.push(...inserted);
       results.total += inserted.length;
-      logger.info(`✅ Created ${inserted.length} tags in batch ${i / batchSize + 1}`);
+      logger.info(`✅ Created ${inserted.length} tags in batch ${Math.floor(i / batchSize) + 1}`);
     } catch (error) {
       if (error.writeErrors) {
         for (const writeError of error.writeErrors) {
           if (writeError.code === 11000) {
             results.failed.push({
-              code: writeError.op.tagCode,
+              code: writeError.op?.tagCode || writeError.err?.op?.tagCode,
               error: "Duplicate tag code",
             });
           } else {
             results.failed.push({
-              code: writeError.op.tagCode,
+              code: writeError.op?.tagCode || writeError.err?.op?.tagCode,
               error: writeError.errmsg,
             });
           }
         }
-        results.total += error.insertedDocs?.length || 0;
+        if (error.insertedDocs && error.insertedDocs.length > 0) {
+          results.success.push(...error.insertedDocs);
+          results.total += error.insertedDocs.length;
+        }
       } else {
         throw error;
       }

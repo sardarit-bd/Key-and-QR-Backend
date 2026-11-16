@@ -48,6 +48,13 @@ const tagSchema = new mongoose.Schema(
       ref: "Order",
       default: null,
     },
+
+    batchId: {
+      type: String,
+      default: null,
+      index: true,
+      trim: true,
+    },
   },
   { timestamps: true }
 );

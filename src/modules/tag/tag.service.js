@@ -1,9 +1,13 @@
 import crypto from "crypto";
+import { ZipArchive } from "archiver";
+import QRCode from "qrcode";
 import httpStatus from "../../constants/httpStatus.js";
 import AppError from "../../utils/AppError.js";
 import tagRepository from "./tag.repository.js";
 import logger from "../../utils/logger.js";
 import Tag from "./tag.model.js";
+import TagBatch from "./tagBatch.model.js";
+import env from "../../config/env.js";
 
 import User from "../../models/user.model.js";
 
@@ -222,58 +226,93 @@ const generateTagCodes = (prefix = "TAG", count = 1) => {
 
 /**
  * BULK CREATE TAGS - Admin Feature
+ * Implements SEC-04 exact quantity guarantee with multi-round replenishment and batch tracking
  */
-const bulkCreateTags = async (count, prefix = "TAG") => {
-  if (count < 1 || count > 10000) {
+const bulkCreateTags = async (count, prefix = "TAG", adminUserId = null) => {
+  if (count < 1 || count > 5000) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
-      "Count must be between 1 and 10,000"
+      "Count must be between 1 and 5,000"
     );
   }
 
   const cleanPrefix = (prefix || "TAG").trim().toUpperCase();
-  const uniqueCodes = new Set();
+  const dateStr = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14);
+  const randomSuffix = crypto.randomBytes(4).toString("hex").toUpperCase();
+  const batchId = `BATCH-${dateStr}-${randomSuffix}`;
+
+  // Create initial batch tracking record in pending/processing state
+  let tagBatch;
+  try {
+    tagBatch = await TagBatch.create({
+      batchId,
+      prefix: cleanPrefix,
+      requestedQuantity: count,
+      createdQuantity: 0,
+      status: "processing",
+      createdBy: adminUserId || null,
+    });
+  } catch (err) {
+    logger.error("Failed to create TagBatch record:", err);
+    throw new AppError(httpStatus.INTERNAL_SERVER_ERROR, "Failed to initialize batch tracking");
+  }
+
+  let totalCreated = 0;
   const MAX_RETRY_ROUNDS = 5;
   let rounds = 0;
 
-  // Bounded collision regeneration loop against existing database records
-  while (uniqueCodes.size < count && rounds < MAX_RETRY_ROUNDS) {
-    rounds++;
-    const needed = count - uniqueCodes.size;
-    const candidates = generateTagCodes(cleanPrefix, needed);
+  try {
+    while (totalCreated < count && rounds < MAX_RETRY_ROUNDS) {
+      rounds++;
+      const needed = count - totalCreated;
+      const candidates = generateTagCodes(cleanPrefix, needed);
 
-    // Check which candidate codes already exist in the database
-    const existing = await Tag.find({ tagCode: { $in: candidates } }).select("tagCode").lean();
-    const existingCodeSet = new Set(existing.map((t) => t.tagCode));
+      // Pre-filter against existing codes in MongoDB
+      const existing = await Tag.find({ tagCode: { $in: candidates } }).select("tagCode").lean();
+      const existingCodeSet = new Set(existing.map((t) => t.tagCode));
+      const freshCandidates = candidates.filter((code) => !existingCodeSet.has(code));
 
-    for (const code of candidates) {
-      if (!existingCodeSet.has(code)) {
-        uniqueCodes.add(code);
-        if (uniqueCodes.size === count) break;
+      if (freshCandidates.length > 0) {
+        const insertResult = await tagRepository.bulkCreateTags(freshCandidates, 250, batchId);
+        totalCreated += insertResult.success.length;
       }
     }
+
+    if (totalCreated < count) {
+      tagBatch.status = "failed";
+      tagBatch.createdQuantity = totalCreated;
+      tagBatch.errorMessage = `Could not reach exact requested quantity ${count}. Inserted ${totalCreated} tags before retry exhaustion.`;
+      await tagBatch.save();
+
+      throw new AppError(
+        httpStatus.CONFLICT,
+        `Exact quantity could not be met. Created ${totalCreated} out of ${count} tags after ${rounds} retry rounds.`
+      );
+    }
+
+    // Success - update TagBatch record
+    tagBatch.status = "completed";
+    tagBatch.createdQuantity = totalCreated;
+    await tagBatch.save();
+
+    logger.info(`✅ Successfully bulk created exactly ${totalCreated} tags for ${batchId}`);
+
+    return {
+      batchId: tagBatch.batchId,
+      total: totalCreated,
+      created: totalCreated,
+      failed: [],
+      status: "completed",
+    };
+  } catch (error) {
+    if (tagBatch && tagBatch.status !== "failed" && tagBatch.status !== "completed") {
+      tagBatch.status = "failed";
+      tagBatch.createdQuantity = totalCreated;
+      tagBatch.errorMessage = error.message;
+      await tagBatch.save().catch(() => {});
+    }
+    throw error;
   }
-
-  if (uniqueCodes.size === 0) {
-    throw new AppError(
-      httpStatus.CONFLICT,
-      "All generated tag codes already exist. Try a different prefix."
-    );
-  }
-
-  const newCodes = Array.from(uniqueCodes);
-
-  // Create tags in batches
-  const result = await tagRepository.bulkCreateTags(newCodes);
-  
-  logger.info(`✅ Bulk created ${result.total} tags (${result.failed.length} failed)`);
-  
-  return {
-    total: result.total,
-    created: result.success.length,
-    failed: result.failed,
-    warning: result.failed.length > 0 ? "Some tags failed to create (duplicates)" : null,
-  };
 };
 
 /**
@@ -357,6 +396,140 @@ const getTagLifecycleStats = async () => {
   };
 };
 
+/**
+ * GET CANONICAL PUBLIC TAG URL
+ * Returns canonical public scan URL: ${clientUrl}/t/${tagCode}
+ */
+const getPublicTagUrl = (tagCode) => {
+  const base = (env.clientUrl || "https://myinspiretag-frontend.vercel.app").replace(/\/+$/, "");
+  return `${base}/t/${tagCode}`;
+};
+
+/**
+ * GET ALL BATCHES
+ */
+const getAllBatches = async (query = {}) => {
+  const { page = 1, limit = 10 } = query;
+  const skip = (Number(page) - 1) * Number(limit);
+
+  const [batches, total] = await Promise.all([
+    TagBatch.find()
+      .populate("createdBy", "name email")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(Number(limit))
+      .lean(),
+    TagBatch.countDocuments(),
+  ]);
+
+  return {
+    data: batches,
+    meta: {
+      page: Number(page),
+      limit: Number(limit),
+      total,
+      totalPage: Math.ceil(total / Number(limit)),
+    },
+  };
+};
+
+/**
+ * GET BATCH BY ID
+ */
+const getBatchById = async (batchId) => {
+  const batch = await TagBatch.findOne({ batchId }).populate("createdBy", "name email").lean();
+  if (!batch) {
+    throw new AppError(httpStatus.NOT_FOUND, "Batch not found");
+  }
+  return batch;
+};
+
+/**
+ * EXPORT BATCH CSV
+ * Generates UTF-8 CSV string with exact matching public URLs
+ */
+const exportBatchCsv = async (batchId) => {
+  const batch = await getBatchById(batchId);
+  const tags = await Tag.find({ batchId: batch.batchId })
+    .select("tagCode isActive isActivated createdAt")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!tags || tags.length === 0) {
+    throw new AppError(httpStatus.NOT_FOUND, "No tags found for this batch");
+  }
+
+  let csv = "Batch ID,Tag Code,Public QR URL,Status,Created At\n";
+  for (const tag of tags) {
+    const url = getPublicTagUrl(tag.tagCode);
+    const status = !tag.isActive ? "Disabled" : tag.isActivated ? "Claimed" : "Available";
+    const dateStr = tag.createdAt ? new Date(tag.createdAt).toISOString() : new Date().toISOString();
+    // Quote and escape strings if necessary
+    csv += `"${batch.batchId}","${tag.tagCode}","${url}","${status}","${dateStr}"\n`;
+  }
+
+  return {
+    csv,
+    filename: `MyInspireTag-Batch-${batch.batchId}.csv`,
+    count: tags.length,
+  };
+};
+
+/**
+ * STREAM BATCH ZIP
+ * Streams a ZIP archive directly to the response containing QR-Codes/*.png and manifest.csv
+ */
+const streamBatchZip = async (batchId, res) => {
+  const batch = await getBatchById(batchId);
+  const tags = await Tag.find({ batchId: batch.batchId })
+    .select("tagCode isActive isActivated createdAt")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!tags || tags.length === 0) {
+    throw new AppError(httpStatus.NOT_FOUND, "No tags found for this batch");
+  }
+
+  const filename = `MyInspireTag-Batch-${batch.batchId}.zip`;
+
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-cache");
+
+  const archive = new ZipArchive({ zlib: { level: 6 } });
+
+  archive.on("error", (err) => {
+    logger.error("ZIP streaming error:", err);
+    if (!res.headersSent) {
+      res.status(httpStatus.INTERNAL_SERVER_ERROR).send("Error generating ZIP");
+    }
+  });
+
+  archive.pipe(res);
+
+  let csvContent = "Batch ID,Tag Code,Public QR URL,Status,Created At\n";
+
+  for (const tag of tags) {
+    const url = getPublicTagUrl(tag.tagCode);
+    const status = !tag.isActive ? "Disabled" : tag.isActivated ? "Claimed" : "Available";
+    const dateStr = tag.createdAt ? new Date(tag.createdAt).toISOString() : new Date().toISOString();
+    csvContent += `"${batch.batchId}","${tag.tagCode}","${url}","${status}","${dateStr}"\n`;
+
+    // Generate high-resolution PNG buffer (width 400px, errorCorrection H)
+    const qrBuffer = await QRCode.toBuffer(url, {
+      type: "png",
+      width: 400,
+      margin: 2,
+      errorCorrectionLevel: "H",
+    });
+
+    archive.append(qrBuffer, { name: `QR-Codes/${tag.tagCode}.png` });
+  }
+
+  archive.append(csvContent, { name: "manifest.csv" });
+  await archive.finalize();
+};
+
 // ================================
 // EXPORTS
 // ================================
@@ -376,6 +549,11 @@ export default {
   
   // NEW FUNCTIONS
   bulkCreateTags,
+  getAllBatches,
+  getBatchById,
+  exportBatchCsv,
+  streamBatchZip,
+  getPublicTagUrl,
   getTagInventoryStatus,
   getUnassignedTagCount,
   checkTagAvailabilityForOrder,

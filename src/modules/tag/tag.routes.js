@@ -38,6 +38,38 @@ router.put(
 
 // ==================== ADMIN ONLY ROUTES ====================
 
+// Tag batches list
+router.get(
+  "/batches",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.getAllBatches
+);
+
+// Get single batch
+router.get(
+  "/batches/:batchId",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.getBatchById
+);
+
+// Export batch CSV
+router.get(
+  "/batches/:batchId/export/csv",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.exportBatchCsv
+);
+
+// Export batch ZIP (PNGs + manifest.csv)
+router.get(
+  "/batches/:batchId/export/zip",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.exportBatchZip
+);
+
 // Bulk generate tags
 router.post(
   "/bulk-generate",

@@ -257,7 +257,8 @@ const getMyTags = catchAsync(async (req, res) => {
 
 const bulkCreateTags = catchAsync(async (req, res) => {
   const { quantity, prefix } = req.body;
-  const result = await tagService.bulkCreateTags(quantity, prefix);
+  const adminUserId = req.user?.userId || null;
+  const result = await tagService.bulkCreateTags(quantity, prefix, adminUserId);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
@@ -265,6 +266,43 @@ const bulkCreateTags = catchAsync(async (req, res) => {
     message: "Tags generated successfully",
     data: result,
   });
+});
+
+const getAllBatches = catchAsync(async (req, res) => {
+  const result = await tagService.getAllBatches(req.query);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Batches retrieved successfully",
+    meta: result.meta,
+    data: result.data,
+  });
+});
+
+const getBatchById = catchAsync(async (req, res) => {
+  const result = await tagService.getBatchById(req.params.batchId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: "Batch retrieved successfully",
+    data: result,
+  });
+});
+
+const exportBatchCsv = catchAsync(async (req, res) => {
+  const { batchId } = req.params;
+  const result = await tagService.exportBatchCsv(batchId);
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+  res.status(httpStatus.OK).send(result.csv);
+});
+
+const exportBatchZip = catchAsync(async (req, res) => {
+  const { batchId } = req.params;
+  await tagService.streamBatchZip(batchId, res);
 });
 
 export default {
@@ -279,4 +317,8 @@ export default {
   getPersonalMessage,
   getMyTags,
   bulkCreateTags,
+  getAllBatches,
+  getBatchById,
+  exportBatchCsv,
+  exportBatchZip,
 };
