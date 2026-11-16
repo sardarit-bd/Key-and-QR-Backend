@@ -296,7 +296,7 @@ const generateTagCodes = (prefix = "TAG", count = 1) => {
  * BULK CREATE TAGS - Admin Feature
  * Implements SEC-04 exact quantity guarantee with multi-round replenishment and batch tracking
  */
-const bulkCreateTags = async (count, prefix = "TAG", adminUserId = null) => {
+const bulkCreateTags = async (count, prefix = "TAG", adminUserId = null, batchType = "production") => {
   if (count < 1 || count > 5000) {
     throw new AppError(
       httpStatus.BAD_REQUEST,
@@ -305,6 +305,7 @@ const bulkCreateTags = async (count, prefix = "TAG", adminUserId = null) => {
   }
 
   const cleanPrefix = (prefix || "TAG").trim().toUpperCase();
+  const validBatchType = batchType === "testing" ? "testing" : "production";
   const dateStr = new Date().toISOString().replace(/[-:T.]/g, "").slice(0, 14);
   const randomSuffix = crypto.randomBytes(4).toString("hex").toUpperCase();
   const batchId = `BATCH-${dateStr}-${randomSuffix}`;
@@ -318,6 +319,7 @@ const bulkCreateTags = async (count, prefix = "TAG", adminUserId = null) => {
       requestedQuantity: count,
       createdQuantity: 0,
       status: "processing",
+      batchType: validBatchType,
       createdBy: adminUserId || null,
     });
   } catch (err) {
@@ -475,6 +477,7 @@ const getPublicTagUrl = (tagCode) => {
 
 /**
  * GET ALL BATCHES
+ * Includes real-time tag counts (available, claimed, total remaining)
  */
 const getAllBatches = async (query = {}) => {
   const { page = 1, limit = 10 } = query;
@@ -490,8 +493,63 @@ const getAllBatches = async (query = {}) => {
     TagBatch.countDocuments(),
   ]);
 
+  // Aggregate current live tag counts for these batches
+  const batchIds = batches.map((b) => b.batchId);
+  const tagStats = await Tag.aggregate([
+    { $match: { batchId: { $in: batchIds } } },
+    {
+      $group: {
+        _id: "$batchId",
+        remainingCount: { $sum: 1 },
+        availableCount: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$isActive", true] },
+                  { $eq: ["$isActivated", false] },
+                  { $eq: ["$owner", null] },
+                  { $eq: ["$assignedOrderId", null] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+        claimedCount: {
+          $sum: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ["$isActivated", true] },
+                  { $ne: ["$owner", null] },
+                  { $ne: ["$assignedOrderId", null] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  const statsMap = new Map(tagStats.map((s) => [s._id, s]));
+
+  const enrichedBatches = batches.map((b) => {
+    const stat = statsMap.get(b.batchId) || { remainingCount: 0, availableCount: 0, claimedCount: 0 };
+    return {
+      ...b,
+      remainingCount: stat.remainingCount,
+      availableCount: stat.availableCount,
+      claimedCount: stat.claimedCount,
+    };
+  });
+
   return {
-    data: batches,
+    data: enrichedBatches,
     meta: {
       page: Number(page),
       limit: Number(limit),
@@ -509,7 +567,141 @@ const getBatchById = async (batchId) => {
   if (!batch) {
     throw new AppError(httpStatus.NOT_FOUND, "Batch not found");
   }
-  return batch;
+
+  const tagStats = await Tag.aggregate([
+    { $match: { batchId: batch.batchId } },
+    {
+      $group: {
+        _id: "$batchId",
+        remainingCount: { $sum: 1 },
+        availableCount: {
+          $sum: {
+            $cond: [
+              {
+                $and: [
+                  { $eq: ["$isActive", true] },
+                  { $eq: ["$isActivated", false] },
+                  { $eq: ["$owner", null] },
+                  { $eq: ["$assignedOrderId", null] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+        claimedCount: {
+          $sum: {
+            $cond: [
+              {
+                $or: [
+                  { $eq: ["$isActivated", true] },
+                  { $ne: ["$owner", null] },
+                  { $ne: ["$assignedOrderId", null] },
+                ],
+              },
+              1,
+              0,
+            ],
+          },
+        },
+      },
+    },
+  ]);
+
+  const stat = tagStats[0] || { remainingCount: 0, availableCount: 0, claimedCount: 0 };
+
+  return {
+    ...batch,
+    remainingCount: stat.remainingCount,
+    availableCount: stat.availableCount,
+    claimedCount: stat.claimedCount,
+  };
+};
+
+/**
+ * DELETE BATCH ELIGIBLE TAGS
+ * Safely deletes only eligible tags belonging to a batch while preserving protected/claimed/order tags.
+ * Updates batch statistics accurately.
+ */
+const deleteBatchTags = async (batchId) => {
+  const batch = await TagBatch.findOne({ batchId });
+  if (!batch) {
+    throw new AppError(httpStatus.NOT_FOUND, "Batch not found");
+  }
+
+  // Find all remaining tags belonging to this specific batch
+  const tags = await Tag.find({ batchId: batch.batchId });
+  if (tags.length === 0) {
+    return {
+      batchId: batch.batchId,
+      total: 0,
+      deleted: 0,
+      skipped: 0,
+      failures: [],
+      remainingCount: 0,
+    };
+  }
+
+  // Get all active order tag IDs in bulk
+  const assignedTagIdsSet = new Set(
+    (await tagRepository.getAssignedTagIdsFromActiveOrders()).map((id) => id.toString())
+  );
+
+  const eligibleIds = [];
+  const failures = [];
+
+  for (const tag of tags) {
+    const idStr = tag._id.toString();
+
+    if (tag.isActivated) {
+      failures.push({ tagCode: tag.tagCode, reason: "Tag is already activated" });
+      continue;
+    }
+
+    if (tag.owner) {
+      failures.push({ tagCode: tag.tagCode, reason: "Tag is assigned to a user" });
+      continue;
+    }
+
+    if (tag.assignedOrderId || assignedTagIdsSet.has(idStr)) {
+      failures.push({ tagCode: tag.tagCode, reason: "Tag is linked to an active order" });
+      continue;
+    }
+
+    eligibleIds.push(tag._id);
+  }
+
+  let deletedCount = 0;
+  // Chunked deletion (batches of 500) to protect database performance on large batches
+  const CHUNK_SIZE = 500;
+  for (let i = 0; i < eligibleIds.length; i += CHUNK_SIZE) {
+    const chunk = eligibleIds.slice(i, i + CHUNK_SIZE);
+    const deleteResult = await Tag.deleteMany({ _id: { $in: chunk } });
+    deletedCount += deleteResult.deletedCount || chunk.length;
+  }
+
+  const remainingCount = tags.length - deletedCount;
+
+  // Update TagBatch record with new live createdQuantity
+  batch.createdQuantity = remainingCount;
+  if (remainingCount === 0) {
+    batch.errorMessage = "All batch tags deleted by administrator";
+  }
+  await batch.save();
+
+  logger.info(
+    `Batch delete: batchId=${batch.batchId}, total=${tags.length}, deleted=${deletedCount}, skipped=${failures.length}, remaining=${remainingCount}`
+  );
+
+  return {
+    batchId: batch.batchId,
+    total: tags.length,
+    deleted: deletedCount,
+    skipped: failures.length,
+    failures,
+    remainingCount,
+  };
 };
 
 /**
@@ -708,6 +900,7 @@ export default {
   // NEW FUNCTIONS
   bulkCreateTags,
   bulkDeleteTags,
+  deleteBatchTags,
   getAllBatches,
   getBatchById,
   exportBatchCsv,

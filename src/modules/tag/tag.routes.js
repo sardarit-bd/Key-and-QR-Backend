@@ -71,6 +71,14 @@ router.get(
   tagController.exportBatchZip
 );
 
+// Delete batch eligible tags
+router.delete(
+  "/batches/:batchId/tags",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  tagController.deleteBatchTags
+);
+
 // Bulk delete selected tags
 router.post(
   "/bulk-delete",

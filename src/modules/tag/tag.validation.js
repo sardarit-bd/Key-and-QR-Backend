@@ -12,6 +12,7 @@ export const updateTagValidation = Joi.object({
 export const bulkCreateTagValidation = Joi.object({
   quantity: Joi.number().integer().min(1).max(5000).required(),
   prefix: Joi.string().max(20).optional().default("TAG"),
+  batchType: Joi.string().valid("production", "testing").optional().default("production"),
 });
 
 export const selectedTagIdsValidation = Joi.object({
