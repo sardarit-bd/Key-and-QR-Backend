@@ -256,9 +256,9 @@ const getMyTags = catchAsync(async (req, res) => {
 });
 
 const bulkCreateTags = catchAsync(async (req, res) => {
-  const { quantity, prefix } = req.body;
+  const { quantity, prefix, batchType } = req.body;
   const adminUserId = req.user?.userId || null;
-  const result = await tagService.bulkCreateTags(quantity, prefix, adminUserId);
+  const result = await tagService.bulkCreateTags(quantity, prefix, adminUserId, batchType);
 
   sendResponse(res, {
     statusCode: httpStatus.CREATED,
@@ -305,6 +305,18 @@ const exportBatchZip = catchAsync(async (req, res) => {
   await tagService.streamBatchZip(batchId, res);
 });
 
+const deleteBatchTags = catchAsync(async (req, res) => {
+  const { batchId } = req.params;
+  const result = await tagService.deleteBatchTags(batchId);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: `${result.deleted} tag(s) deleted from batch ${result.batchId}`,
+    data: result,
+  });
+});
+
 const bulkDeleteTags = catchAsync(async (req, res) => {
   const { tagIds } = req.body;
   const result = await tagService.bulkDeleteTags(tagIds);
@@ -344,6 +356,7 @@ export default {
   getMyTags,
   bulkCreateTags,
   bulkDeleteTags,
+  deleteBatchTags,
   getAllBatches,
   getBatchById,
   exportBatchCsv,

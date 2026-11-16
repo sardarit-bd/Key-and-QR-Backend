@@ -30,6 +30,12 @@ const tagBatchSchema = new mongoose.Schema(
       default: "pending",
       index: true,
     },
+    batchType: {
+      type: String,
+      enum: ["production", "testing"],
+      default: "production",
+      index: true,
+    },
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
