@@ -9,6 +9,7 @@ import {
   createTagValidation,
   updateTagValidation,
   bulkCreateTagValidation,
+  selectedTagIdsValidation,
 } from "./tag.validation.js";
 
 const router = express.Router();
@@ -68,6 +69,33 @@ router.get(
   auth(roles.ADMIN),
   roleMiddleware(roles.ADMIN),
   tagController.exportBatchZip
+);
+
+// Bulk delete selected tags
+router.post(
+  "/bulk-delete",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(selectedTagIdsValidation),
+  tagController.bulkDeleteTags
+);
+
+// Export selected tags CSV
+router.post(
+  "/export/csv",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(selectedTagIdsValidation),
+  tagController.exportSelectedCsv
+);
+
+// Export selected tags ZIP
+router.post(
+  "/export/zip",
+  auth(roles.ADMIN),
+  roleMiddleware(roles.ADMIN),
+  validateRequest(selectedTagIdsValidation),
+  tagController.exportSelectedZip
 );
 
 // Bulk generate tags

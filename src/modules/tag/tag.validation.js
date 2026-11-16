@@ -13,3 +13,7 @@ export const bulkCreateTagValidation = Joi.object({
   quantity: Joi.number().integer().min(1).max(5000).required(),
   prefix: Joi.string().max(20).optional().default("TAG"),
 });
+
+export const selectedTagIdsValidation = Joi.object({
+  tagIds: Joi.array().items(Joi.string().required()).min(1).max(5000).required(),
+});

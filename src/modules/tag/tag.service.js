@@ -87,6 +87,74 @@ const deleteTag = async (id) => {
   return tagRepository.deleteTagById(id);
 };
 
+/**
+ * BULK DELETE TAGS
+ * Safely deletes multiple tags, protecting claimed, activated, or order-assigned tags
+ */
+const bulkDeleteTags = async (tagIds) => {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) {
+    throw new AppError(httpStatus.BAD_REQUEST, "tagIds array is required");
+  }
+
+  if (tagIds.length > 5000) {
+    throw new AppError(httpStatus.BAD_REQUEST, "Cannot delete more than 5,000 tags in one operation");
+  }
+
+  // Fetch all tags requested
+  const tags = await Tag.find({ _id: { $in: tagIds } });
+  const foundMap = new Map(tags.map((t) => [t._id.toString(), t]));
+
+  // Check active order assignments in bulk
+  const assignedTagIdsSet = new Set(
+    (await tagRepository.getAssignedTagIdsFromActiveOrders()).map((id) => id.toString())
+  );
+
+  const eligibleIds = [];
+  const failures = [];
+
+  for (const id of tagIds) {
+    const idStr = id.toString();
+    const tag = foundMap.get(idStr);
+
+    if (!tag) {
+      failures.push({ tagId: idStr, tagCode: null, reason: "Tag not found" });
+      continue;
+    }
+
+    if (tag.isActivated) {
+      failures.push({ tagId: idStr, tagCode: tag.tagCode, reason: "Tag is already activated" });
+      continue;
+    }
+
+    if (tag.owner) {
+      failures.push({ tagId: idStr, tagCode: tag.tagCode, reason: "Tag is assigned to a user" });
+      continue;
+    }
+
+    if (tag.assignedOrderId || assignedTagIdsSet.has(idStr)) {
+      failures.push({ tagId: idStr, tagCode: tag.tagCode, reason: "Tag is linked to an order" });
+      continue;
+    }
+
+    eligibleIds.push(tag._id);
+  }
+
+  let deletedCount = 0;
+  if (eligibleIds.length > 0) {
+    const deleteResult = await Tag.deleteMany({ _id: { $in: eligibleIds } });
+    deletedCount = deleteResult.deletedCount || eligibleIds.length;
+  }
+
+  logger.info(`Bulk delete tags: requested=${tagIds.length}, deleted=${deletedCount}, failed=${failures.length}`);
+
+  return {
+    requested: tagIds.length,
+    deleted: deletedCount,
+    failed: failures.length,
+    failures,
+  };
+};
+
 const activateTag = async (tagCode, userId) => {
   const tag = await tagRepository.findByTagCode(tagCode);
 
@@ -530,6 +598,96 @@ const streamBatchZip = async (batchId, res) => {
   await archive.finalize();
 };
 
+/**
+ * EXPORT SELECTED TAGS CSV
+ * Generates UTF-8 CSV string for arbitrary list of tag IDs
+ */
+const exportSelectedCsv = async (tagIds) => {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) {
+    throw new AppError(httpStatus.BAD_REQUEST, "tagIds array is required");
+  }
+
+  const tags = await Tag.find({ _id: { $in: tagIds } })
+    .select("tagCode isActive isActivated createdAt")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!tags || tags.length === 0) {
+    throw new AppError(httpStatus.NOT_FOUND, "No tags found for the selected IDs");
+  }
+
+  let csv = "Tag Code,Public QR URL,Status,Created At\n";
+  for (const tag of tags) {
+    const url = getPublicTagUrl(tag.tagCode);
+    const status = !tag.isActive ? "Disabled" : tag.isActivated ? "Claimed" : "Available";
+    const dateStr = tag.createdAt ? new Date(tag.createdAt).toISOString() : new Date().toISOString();
+    csv += `"${tag.tagCode}","${url}","${status}","${dateStr}"\n`;
+  }
+
+  return {
+    csv,
+    filename: `myinspiretag-selected-tags.csv`,
+    count: tags.length,
+  };
+};
+
+/**
+ * STREAM SELECTED TAGS ZIP
+ * Streams a ZIP archive directly to the response containing QR-Codes/*.png and manifest.csv for selected tag IDs
+ */
+const streamSelectedZip = async (tagIds, res) => {
+  if (!Array.isArray(tagIds) || tagIds.length === 0) {
+    throw new AppError(httpStatus.BAD_REQUEST, "tagIds array is required");
+  }
+
+  const tags = await Tag.find({ _id: { $in: tagIds } })
+    .select("tagCode isActive isActivated createdAt")
+    .sort({ createdAt: 1 })
+    .lean();
+
+  if (!tags || tags.length === 0) {
+    throw new AppError(httpStatus.NOT_FOUND, "No tags found for the selected IDs");
+  }
+
+  const filename = "MyInspireTag-Selected-QR-Codes.zip";
+
+  res.setHeader("Content-Type", "application/zip");
+  res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+  res.setHeader("Cache-Control", "no-cache");
+
+  const archive = new ZipArchive({ zlib: { level: 6 } });
+
+  archive.on("error", (err) => {
+    logger.error("ZIP streaming error:", err);
+    if (!res.headersSent) {
+      res.status(httpStatus.INTERNAL_SERVER_ERROR).send("Error generating ZIP");
+    }
+  });
+
+  archive.pipe(res);
+
+  let csvContent = "Tag Code,Public QR URL,Status,Created At\n";
+
+  for (const tag of tags) {
+    const url = getPublicTagUrl(tag.tagCode);
+    const status = !tag.isActive ? "Disabled" : tag.isActivated ? "Claimed" : "Available";
+    const dateStr = tag.createdAt ? new Date(tag.createdAt).toISOString() : new Date().toISOString();
+    csvContent += `"${tag.tagCode}","${url}","${status}","${dateStr}"\n`;
+
+    const qrBuffer = await QRCode.toBuffer(url, {
+      type: "png",
+      width: 400,
+      margin: 2,
+      errorCorrectionLevel: "H",
+    });
+
+    archive.append(qrBuffer, { name: `QR-Codes/${tag.tagCode}.png` });
+  }
+
+  archive.append(csvContent, { name: "manifest.csv" });
+  await archive.finalize();
+};
+
 // ================================
 // EXPORTS
 // ================================
@@ -549,10 +707,13 @@ export default {
   
   // NEW FUNCTIONS
   bulkCreateTags,
+  bulkDeleteTags,
   getAllBatches,
   getBatchById,
   exportBatchCsv,
   streamBatchZip,
+  exportSelectedCsv,
+  streamSelectedZip,
   getPublicTagUrl,
   getTagInventoryStatus,
   getUnassignedTagCount,

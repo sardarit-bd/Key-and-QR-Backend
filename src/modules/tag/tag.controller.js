@@ -305,6 +305,32 @@ const exportBatchZip = catchAsync(async (req, res) => {
   await tagService.streamBatchZip(batchId, res);
 });
 
+const bulkDeleteTags = catchAsync(async (req, res) => {
+  const { tagIds } = req.body;
+  const result = await tagService.bulkDeleteTags(tagIds);
+
+  sendResponse(res, {
+    statusCode: httpStatus.OK,
+    success: true,
+    message: `${result.deleted} tag(s) deleted successfully`,
+    data: result,
+  });
+});
+
+const exportSelectedCsv = catchAsync(async (req, res) => {
+  const { tagIds } = req.body;
+  const result = await tagService.exportSelectedCsv(tagIds);
+
+  res.setHeader("Content-Type", "text/csv; charset=utf-8");
+  res.setHeader("Content-Disposition", `attachment; filename="${result.filename}"`);
+  res.status(httpStatus.OK).send(result.csv);
+});
+
+const exportSelectedZip = catchAsync(async (req, res) => {
+  const { tagIds } = req.body;
+  await tagService.streamSelectedZip(tagIds, res);
+});
+
 export default {
   createTag,
   getAllTags,
@@ -317,8 +343,11 @@ export default {
   getPersonalMessage,
   getMyTags,
   bulkCreateTags,
+  bulkDeleteTags,
   getAllBatches,
   getBatchById,
   exportBatchCsv,
   exportBatchZip,
+  exportSelectedCsv,
+  exportSelectedZip,
 };
